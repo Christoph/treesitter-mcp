@@ -1,0 +1,29 @@
+name: Rust CI Checks
+
+# Triggers the workflow on pushes and pull requests targeting the main branch
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  test_and_lint:
+    runs-on: ubuntu-latest # Use a Linux runner for efficiency
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+
+      - name: Run Unit Tests
+        run: cargo test
+        
+      - name: Run Rust Linter
+        run: cargo clippy -- -D warnings
