@@ -74,9 +74,7 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult> {
     let include_deps = arguments["include_deps"].as_bool().unwrap_or(false);
 
     log::info!(
-        "Extracting shape of file: {} (include_deps: {})",
-        file_path_str,
-        include_deps
+        "Extracting shape of file: {file_path_str} (include_deps: {include_deps})"
     );
 
     let path = Path::new(file_path_str);
@@ -370,7 +368,7 @@ fn find_rust_dependencies(source: &str, file_path: &Path, project_root: &Path) -
 
     let dir = file_path
         .parent()
-        .unwrap_or_else(|| project_root);
+        .unwrap_or(project_root);
 
     for line in source.lines() {
         let trimmed = line.trim_start();
@@ -427,23 +425,21 @@ fn find_python_dependencies(source: &str, file_path: &Path, project_root: &Path)
 
     let dir = file_path
         .parent()
-        .unwrap_or_else(|| project_root);
+        .unwrap_or(project_root);
 
     for line in source.lines() {
         let trimmed = line.trim_start();
 
-        if trimmed.starts_with("import ") {
-            let rest = &trimmed["import ".len()..];
+        if let Some(rest) = trimmed.strip_prefix("import ") {
             for part in rest.split(',') {
-                let name = part.trim().split_whitespace().next().unwrap_or("");
+                let name = part.split_whitespace().next().unwrap_or("");
                 if name.is_empty() {
                     continue;
                 }
 
                 push_python_module(&mut deps, name, dir, project_root);
             }
-        } else if trimmed.starts_with("from ") {
-            let rest = &trimmed["from ".len()..];
+        } else if let Some(rest) = trimmed.strip_prefix("from ") {
             let module = rest.split_whitespace().next().unwrap_or("");
             if module.is_empty() {
                 continue;
@@ -495,7 +491,7 @@ fn find_js_ts_dependencies(source: &str, file_path: &Path, project_root: &Path) 
 
     let dir = file_path
         .parent()
-        .unwrap_or_else(|| project_root);
+        .unwrap_or(project_root);
 
     for line in source.lines() {
         let trimmed = line.trim_start();
@@ -512,8 +508,7 @@ fn find_js_ts_dependencies(source: &str, file_path: &Path, project_root: &Path) 
         }
 
         // Handle bare side-effect imports: `import "module";`
-        if trimmed.starts_with("import ") {
-            let after = &trimmed["import ".len()..];
+        if let Some(after) = trimmed.strip_prefix("import ") {
             if let Some(spec) = extract_string_literal(after) {
                 if let Some(candidate) = resolve_js_ts_spec(&spec, dir, project_root) {
                     deps.push(candidate);

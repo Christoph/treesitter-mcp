@@ -139,8 +139,7 @@ edition = "2021"
     let dep_path = dep["path"].as_str().expect("dependency should have a path");
     assert!(
         dep_path.ends_with("src/utils.rs"),
-        "dependency path should point to utils.rs, got {}",
-        dep_path
+        "dependency path should point to utils.rs, got {dep_path}"
     );
 
     // Dependency should also expose its own functions
@@ -252,8 +251,7 @@ def add(a, b):
     let dep_path = dep["path"].as_str().expect("dependency should have a path");
     assert!(
         dep_path.ends_with("utils.py"),
-        "dependency path should point to utils.py, got {}",
-        dep_path
+        "dependency path should point to utils.py, got {dep_path}"
     );
 
     let dep_functions = dep["functions"]
@@ -327,8 +325,7 @@ export function add(a, b) {
     let dep_path = dep["path"].as_str().expect("dependency should have a path");
     assert!(
         dep_path.ends_with("utils.js"),
-        "dependency path should point to utils.js, got {}",
-        dep_path
+        "dependency path should point to utils.js, got {dep_path}"
     );
 
     let dep_functions = dep["functions"]

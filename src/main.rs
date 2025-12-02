@@ -25,7 +25,7 @@ fn main() -> Result<()> {
                     log::info!("Client disconnected (EOF)");
                     break;
                 }
-                log::error!("Failed to read message: {}", e);
+                log::error!("Failed to read message: {e}");
                 continue;
             }
         };
@@ -34,14 +34,14 @@ fn main() -> Result<()> {
         match server.process_message(message) {
             Ok(Some(response)) => {
                 if let Err(e) = write_message(&mut writer, &response) {
-                    log::error!("Failed to write response: {}", e);
+                    log::error!("Failed to write response: {e}");
                 }
             }
             Ok(None) => {
                 // Notification handling, no response required
             }
             Err(e) => {
-                log::error!("Internal error processing message: {}", e);
+                log::error!("Internal error processing message: {e}");
             }
         }
     }

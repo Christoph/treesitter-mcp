@@ -55,10 +55,10 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult> {
         .as_str()
         .ok_or_else(|| eyre::eyre!("Missing 'query' argument"))?;
 
-    log::info!("Executing query on file: {}", file_path);
+    log::info!("Executing query on file: {file_path}");
 
     let source = fs::read_to_string(file_path)
-        .wrap_err_with(|| format!("Failed to read file: {}", file_path))?;
+        .wrap_err_with(|| format!("Failed to read file: {file_path}"))?;
 
     let language = detect_language(file_path)?;
     let tree = parse_code(&source, language)?;

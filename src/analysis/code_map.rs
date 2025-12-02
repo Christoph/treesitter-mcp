@@ -62,7 +62,7 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult> {
         .as_i64()
         .unwrap_or(2000) as usize;
 
-    log::info!("Generating code map for: {} (max_tokens: {})", path_str, max_tokens);
+    log::info!("Generating code map for: {path_str} (max_tokens: {max_tokens})");
 
     let path = Path::new(path_str);
 

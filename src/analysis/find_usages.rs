@@ -55,7 +55,7 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult> {
         .as_str()
         .ok_or_else(|| eyre::eyre!("Missing 'path' argument"))?;
 
-    log::info!("Finding usages of '{}' in: {}", symbol, path_str);
+    log::info!("Finding usages of '{symbol}' in: {path_str}");
 
     let path = Path::new(path_str);
 

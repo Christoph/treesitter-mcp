@@ -58,7 +58,7 @@ fn test_code_map_single_file() {
 
     // Should contain file information
     assert!(map["files"].is_array());
-    assert!(map["files"].as_array().unwrap().len() > 0);
+    assert!(!map["files"].as_array().unwrap().is_empty());
 }
 
 #[test]
