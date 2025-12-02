@@ -16,8 +16,7 @@ use std::fs;
 pub fn tool_definition() -> ToolDefinition {
     ToolDefinition {
         name: "parse_file".to_string(),
-        description: "Parse a source file using tree-sitter and return the AST as an S-expression"
-            .to_string(),
+        description: "Use this tool to inspect the raw Abstract Syntax Tree (AST) structure of a file. The intent is to reveal the exact syntactic hierarchy as seen by Tree-sitter, which is essential for debugging parsing logic, understanding node relationships, or designing precise structural queries.".to_string(),
         input_schema: json!({
             "type": "object",
             "properties": {

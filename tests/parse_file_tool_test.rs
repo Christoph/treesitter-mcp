@@ -1,9 +1,10 @@
 use serde_json::json;
 use std::fs;
 use tempfile::TempDir;
+use treesitter_mcp::mcp::server::McpServer;
 
-fn create_test_server() -> treesitter_cli::mcp::server::McpServer {
-    let mut server = treesitter_cli::mcp::server::McpServer::new();
+fn create_test_server() -> McpServer {
+    let mut server = McpServer::new();
 
     // Initialize
     let init = json!({

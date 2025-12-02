@@ -9,8 +9,8 @@ use crate::mcp::types::ToolDefinition;
 ///
 /// # Example
 /// ```
-/// use treesitter_cli::mcp::tool_registry::ToolRegistry;
-/// use treesitter_cli::mcp::types::ToolDefinition;
+/// use treesitter_mcp::mcp::tool_registry::ToolRegistry;
+/// use treesitter_mcp::mcp::types::ToolDefinition;
 /// use serde_json::json;
 ///
 /// let mut registry = ToolRegistry::new();
@@ -34,7 +34,7 @@ impl ToolRegistry {
     ///
     /// # Example
     /// ```
-    /// use treesitter_cli::mcp::tool_registry::ToolRegistry;
+    /// use treesitter_mcp::mcp::tool_registry::ToolRegistry;
     ///
     /// let registry = ToolRegistry::new();
     /// assert_eq!(registry.list().len(), 0);
@@ -56,8 +56,8 @@ impl ToolRegistry {
     ///
     /// # Example
     /// ```
-    /// use treesitter_cli::mcp::tool_registry::ToolRegistry;
-    /// use treesitter_cli::mcp::types::ToolDefinition;
+    /// use treesitter_mcp::mcp::tool_registry::ToolRegistry;
+    /// use treesitter_mcp::mcp::types::ToolDefinition;
     /// use serde_json::json;
     ///
     /// let mut registry = ToolRegistry::new();
@@ -82,7 +82,7 @@ impl ToolRegistry {
     ///
     /// # Example
     /// ```
-    /// use treesitter_cli::mcp::tool_registry::ToolRegistry;
+    /// use treesitter_mcp::mcp::tool_registry::ToolRegistry;
     ///
     /// let registry = ToolRegistry::new();
     /// let tools = registry.list();
@@ -102,8 +102,8 @@ impl ToolRegistry {
     ///
     /// # Example
     /// ```
-    /// use treesitter_cli::mcp::tool_registry::ToolRegistry;
-    /// use treesitter_cli::mcp::types::ToolDefinition;
+    /// use treesitter_mcp::mcp::tool_registry::ToolRegistry;
+    /// use treesitter_mcp::mcp::types::ToolDefinition;
     /// use serde_json::json;
     ///
     /// let mut registry = ToolRegistry::new();
@@ -131,7 +131,7 @@ impl ToolRegistry {
     ///
     /// # Example
     /// ```
-    /// use treesitter_cli::mcp::tool_registry::ToolRegistry;
+    /// use treesitter_mcp::mcp::tool_registry::ToolRegistry;
     ///
     /// let registry = ToolRegistry::new();
     /// assert!(!registry.has_tool("test"));
@@ -144,7 +144,7 @@ impl ToolRegistry {
     ///
     /// # Example
     /// ```
-    /// use treesitter_cli::mcp::tool_registry::ToolRegistry;
+    /// use treesitter_mcp::mcp::tool_registry::ToolRegistry;
     ///
     /// let registry = ToolRegistry::new();
     /// assert_eq!(registry.count(), 0);

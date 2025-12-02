@@ -1,8 +1,9 @@
 use serde_json::json;
+use treesitter_mcp::mcp::server::McpServer;
 
 /// Helper to create and initialize a test server
-fn create_initialized_server() -> treesitter_cli::mcp::server::McpServer {
-    let mut server = treesitter_cli::mcp::server::McpServer::new();
+fn create_initialized_server() -> McpServer {
+    let mut server = McpServer::new();
 
     // Initialize
     let init_request = json!({
@@ -95,7 +96,7 @@ fn test_tools_call_invalid_params() {
 
 #[test]
 fn test_tools_list_before_initialization() {
-    let mut server = treesitter_cli::mcp::server::McpServer::new();
+    let mut server = McpServer::new();
 
     let request = json!({
         "jsonrpc": "2.0",
@@ -114,7 +115,7 @@ fn test_tools_list_before_initialization() {
 
 #[test]
 fn test_tools_call_before_initialization() {
-    let mut server = treesitter_cli::mcp::server::McpServer::new();
+    let mut server = McpServer::new();
 
     let request = json!({
         "jsonrpc": "2.0",

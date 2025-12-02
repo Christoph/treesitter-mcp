@@ -42,19 +42,19 @@ cargo build --release
 ### Adding to Claude Code CLI
 
 ```bash
-claude mcp add --transport stdio treesitter-mcp -- /absolute/path/to/treesitter-mcp/target/release/treesitter-mcp
+claude mcp add --transport stdio treesitter-mcp -- /absolute/path/to/treesitter-mcp
 ```
 
 ### Adding to Gemini CLI
 
 ```bash
-gemini mcp add treesitter-mcp -- /absolute/path/to/treesitter-mcp/target/release/treesitter-mcp
+gemini mcp add treesitter-mcp -- /absolute/path/to/treesitter-mcp
 ```
 
 ### Adding to Codex CLI
 
 ```bash
-codex mcp add treesitter-mcp -- /absolute/path/to/treesitter-mcp/target/release/treesitter-mcp
+codex mcp add treesitter-mcp -- /absolute/path/to/treesitter-mcp
 ```
 
 ## Available Tools
@@ -87,18 +87,20 @@ Extracts the high-level structure of a file (functions, classes, structs, import
 
 **Parameters**:
 - `file_path` (string, required): Path to the source file
-- `include_deps` (boolean, optional): Include dependencies (not yet implemented)
+- `include_deps` (boolean, optional): Include project dependencies as a tree of nested file shapes
 
 **Example**:
 ```json
 {
-  "file_path": "/path/to/lib.rs"
+  "file_path": "/path/to/lib.rs",
+  "include_deps": true
 }
 ```
 
 **Returns**: JSON object with:
 ```json
 {
+  "path": "src/lib.rs",
   "functions": [
     {"name": "add", "line": 5},
     {"name": "multiply", "line": 10}
@@ -108,6 +110,16 @@ Extracts the high-level structure of a file (functions, classes, structs, import
   ],
   "imports": [
     "use std::fmt;"
+  ],
+  "dependencies": [
+    {
+      "path": "src/utils.rs",
+      "functions": [
+        {"name": "add", "line": 3}
+      ],
+      "imports": [],
+      "dependencies": []
+    }
   ]
 }
 ```

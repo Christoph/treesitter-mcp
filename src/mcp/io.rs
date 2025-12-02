@@ -16,7 +16,7 @@ use crate::mcp::json_rpc::{Message, Response};
 /// # Example
 /// ```no_run
 /// use std::io::BufReader;
-/// use treesitter_cli::mcp::io::read_message;
+/// use treesitter_mcp::mcp::io::read_message;
 ///
 /// let stdin = std::io::stdin();
 /// let mut reader = BufReader::new(stdin.lock());
@@ -55,8 +55,8 @@ pub fn read_message<R: BufRead>(reader: &mut R) -> Result<Message> {
 /// # Example
 /// ```no_run
 /// use serde_json::json;
-/// use treesitter_cli::mcp::json_rpc::Response;
-/// use treesitter_cli::mcp::io::write_message;
+/// use treesitter_mcp::mcp::json_rpc::Response;
+/// use treesitter_mcp::mcp::io::write_message;
 ///
 /// let response = Response {
 ///     jsonrpc: "2.0".to_string(),

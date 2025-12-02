@@ -1,4 +1,5 @@
 use serde_json::json;
+use treesitter_mcp::mcp::{json_rpc::Message, types};
 
 #[test]
 fn test_initialize_request_deserialization() {
@@ -13,26 +14,25 @@ fn test_initialize_request_deserialization() {
         }
     }"#;
 
-    let msg: treesitter_cli::mcp::json_rpc::Message = serde_json::from_str(json_str).unwrap();
+    let msg: Message = serde_json::from_str(json_str).unwrap();
     assert_eq!(msg.method, "initialize");
 
     // Parse params into InitializeParams
-    let params: treesitter_cli::mcp::types::InitializeParams =
-        serde_json::from_value(msg.params.unwrap()).unwrap();
+    let params: types::InitializeParams = serde_json::from_value(msg.params.unwrap()).unwrap();
     assert_eq!(params.protocol_version, "2025-11-25");
     assert_eq!(params.client_info.name, "test-client");
 }
 
 #[test]
 fn test_initialize_response_serialization() {
-    let response = treesitter_cli::mcp::types::InitializeResult {
+    let response = types::InitializeResult {
         protocol_version: "2025-11-25".to_string(),
-        capabilities: treesitter_cli::mcp::types::ServerCapabilities {
-            tools: Some(treesitter_cli::mcp::types::ToolsCapability {}),
+        capabilities: types::ServerCapabilities {
+            tools: Some(types::ToolsCapability {}),
             resources: None,
             prompts: None,
         },
-        server_info: treesitter_cli::mcp::types::ServerInfo {
+        server_info: types::ServerInfo {
             name: "treesitter-mcp".to_string(),
             version: "0.1.0".to_string(),
         },
@@ -46,7 +46,7 @@ fn test_initialize_response_serialization() {
 
 #[test]
 fn test_tool_definition_schema() {
-    let tool = treesitter_cli::mcp::types::ToolDefinition {
+    let tool = types::ToolDefinition {
         name: "parse_file".to_string(),
         description: "Parse a source file using tree-sitter".to_string(),
         input_schema: json!({
@@ -72,23 +72,18 @@ fn test_tool_call_params() {
         }
     }"#;
 
-    let params: treesitter_cli::mcp::types::ToolCallParams =
-        serde_json::from_str(json_str).unwrap();
+    let params: types::ToolCallParams = serde_json::from_str(json_str).unwrap();
     assert_eq!(params.name, "parse_file");
     assert_eq!(params.arguments["file_path"], "src/main.rs");
 }
 
 #[test]
 fn test_tool_result_with_text_content() {
-    let result = treesitter_cli::mcp::types::CallToolResult {
-        content: vec![
-            treesitter_cli::mcp::types::Content::Text(
-                treesitter_cli::mcp::types::TextContent {
-                    type_: "text".to_string(),
-                    text: "Parse result here".to_string(),
-                }
-            )
-        ],
+    let result = types::CallToolResult {
+        content: vec![types::Content::Text(types::TextContent {
+            type_: "text".to_string(),
+            text: "Parse result here".to_string(),
+        })],
         is_error: false,
     };
 
@@ -100,8 +95,8 @@ fn test_tool_result_with_text_content() {
 
 #[test]
 fn test_server_capabilities_serialization() {
-    let caps = treesitter_cli::mcp::types::ServerCapabilities {
-        tools: Some(treesitter_cli::mcp::types::ToolsCapability {}),
+    let caps = types::ServerCapabilities {
+        tools: Some(types::ToolsCapability {}),
         resources: None,
         prompts: None,
     };
@@ -113,7 +108,7 @@ fn test_server_capabilities_serialization() {
 
 #[test]
 fn test_client_info_structure() {
-    let info = treesitter_cli::mcp::types::ClientInfo {
+    let info = types::ClientInfo {
         name: "claude-desktop".to_string(),
         version: "1.0.0".to_string(),
     };

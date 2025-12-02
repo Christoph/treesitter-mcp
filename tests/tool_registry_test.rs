@@ -1,10 +1,11 @@
 use serde_json::json;
+use treesitter_mcp::mcp::{tool_registry::ToolRegistry, types};
 
 #[test]
 fn test_register_tool() {
-    let mut registry = treesitter_cli::mcp::tool_registry::ToolRegistry::new();
+    let mut registry = ToolRegistry::new();
 
-    let tool = treesitter_cli::mcp::types::ToolDefinition {
+    let tool = types::ToolDefinition {
         name: "test_tool".to_string(),
         description: "A test tool".to_string(),
         input_schema: json!({
@@ -21,7 +22,7 @@ fn test_register_tool() {
 
 #[test]
 fn test_list_tools() {
-    let mut registry = treesitter_cli::mcp::tool_registry::ToolRegistry::new();
+    let mut registry = ToolRegistry::new();
 
     registry.register(create_tool("parse_file", "Parse a file"));
     registry.register(create_tool("file_shape", "Get file shape"));
@@ -36,7 +37,7 @@ fn test_list_tools() {
 
 #[test]
 fn test_get_tool_by_name() {
-    let mut registry = treesitter_cli::mcp::tool_registry::ToolRegistry::new();
+    let mut registry = ToolRegistry::new();
     registry.register(create_tool("parse_file", "Parse a file"));
 
     let tool = registry.get("parse_file");
@@ -46,14 +47,14 @@ fn test_get_tool_by_name() {
 
 #[test]
 fn test_tool_not_found() {
-    let registry = treesitter_cli::mcp::tool_registry::ToolRegistry::new();
+    let registry = ToolRegistry::new();
     let tool = registry.get("nonexistent");
     assert!(tool.is_none());
 }
 
 #[test]
 fn test_register_duplicate_tool_replaces() {
-    let mut registry = treesitter_cli::mcp::tool_registry::ToolRegistry::new();
+    let mut registry = ToolRegistry::new();
 
     registry.register(create_tool("test", "First version"));
     registry.register(create_tool("test", "Second version"));
@@ -65,13 +66,13 @@ fn test_register_duplicate_tool_replaces() {
 
 #[test]
 fn test_empty_registry() {
-    let registry = treesitter_cli::mcp::tool_registry::ToolRegistry::new();
+    let registry = ToolRegistry::new();
     assert_eq!(registry.list().len(), 0);
 }
 
 #[test]
 fn test_has_tool() {
-    let mut registry = treesitter_cli::mcp::tool_registry::ToolRegistry::new();
+    let mut registry = ToolRegistry::new();
 
     assert!(!registry.has_tool("parse_file"));
 
@@ -82,8 +83,8 @@ fn test_has_tool() {
 }
 
 // Helper function
-fn create_tool(name: &str, description: &str) -> treesitter_cli::mcp::types::ToolDefinition {
-    treesitter_cli::mcp::types::ToolDefinition {
+fn create_tool(name: &str, description: &str) -> types::ToolDefinition {
+    types::ToolDefinition {
         name: name.to_string(),
         description: description.to_string(),
         input_schema: json!({

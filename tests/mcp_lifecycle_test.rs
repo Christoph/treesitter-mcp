@@ -1,8 +1,9 @@
 use serde_json::json;
+use treesitter_mcp::mcp::server::McpServer;
 
 /// Helper to create a test server
-fn create_test_server() -> treesitter_cli::mcp::server::McpServer {
-    treesitter_cli::mcp::server::McpServer::new()
+fn create_test_server() -> McpServer {
+    McpServer::new()
 }
 
 #[test]
@@ -208,7 +209,7 @@ fn test_initialization_with_2024_version() {
 }
 
 // Helper function to initialize a server
-fn initialize_server(server: &mut treesitter_cli::mcp::server::McpServer) {
+fn initialize_server(server: &mut McpServer) {
     let init_request = json!({
         "jsonrpc": "2.0",
         "id": 1,

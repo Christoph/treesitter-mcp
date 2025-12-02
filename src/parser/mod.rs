@@ -71,7 +71,7 @@ impl Language {
 ///
 /// # Examples
 /// ```
-/// use treesitter_cli::parser::{detect_language, Language};
+/// use treesitter_mcp::parser::{detect_language, Language};
 ///
 /// let lang = detect_language("src/main.rs").unwrap();
 /// assert_eq!(lang, Language::Rust);
@@ -131,7 +131,7 @@ pub fn detect_language(path: impl AsRef<Path>) -> Result<Language> {
 ///
 /// # Examples
 /// ```
-/// use treesitter_cli::parser::{parse_code, Language};
+/// use treesitter_mcp::parser::{parse_code, Language};
 ///
 /// let code = "fn main() { println!(\"hello\"); }";
 /// let tree = parse_code(code, Language::Rust).unwrap();

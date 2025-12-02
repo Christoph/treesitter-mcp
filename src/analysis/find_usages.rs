@@ -28,8 +28,7 @@ struct Usage {
 pub fn tool_definition() -> ToolDefinition {
     ToolDefinition {
         name: "find_usages".to_string(),
-        description: "Find all usages of a symbol (function, struct, class) in a file or directory"
-            .to_string(),
+        description: "Use this tool to trace references to a specific symbol (function, class, variable) across the codebase. The intent is to perform impact analysis, safe refactoring, or to understand how a specific component is consumed by others. It locates every usage instance with context.".to_string(),
         input_schema: json!({
             "type": "object",
             "properties": {

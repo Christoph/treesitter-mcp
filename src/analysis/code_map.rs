@@ -34,7 +34,7 @@ struct FileEntry {
 pub fn tool_definition() -> ToolDefinition {
     ToolDefinition {
         name: "code_map".to_string(),
-        description: "Generate a high-level code map of a directory with token budget awareness".to_string(),
+        description: "Use this tool to build a mental model of the project's architecture. The intent is to generate a token-efficient, high-level summary of an entire directory tree, helping you identify key files and modules. Use this when you need to explore a new codebase or locate where specific functionality resides across multiple files.".to_string(),
         input_schema: json!({
             "type": "object",
             "properties": {

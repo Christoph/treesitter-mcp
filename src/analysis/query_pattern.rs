@@ -28,7 +28,7 @@ struct QueryMatch {
 pub fn tool_definition() -> ToolDefinition {
     ToolDefinition {
         name: "query_pattern".to_string(),
-        description: "Execute a custom tree-sitter query pattern on a source file".to_string(),
+        description: "Use this tool to perform surgical, structural search operations on code. The intent is to extract specific syntax patterns (e.g., 'all public functions returning Result') that regular expression searches cannot handle. Use this for advanced static analysis or custom data extraction tasks.".to_string(),
         input_schema: json!({
             "type": "object",
             "properties": {
