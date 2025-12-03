@@ -3,12 +3,12 @@
 //! Generates a high-level overview of a codebase with token budget awareness.
 //! Walks directory structure, extracts file shapes, and aggregates results.
 
-use eyre::{Result, WrapErr};
-use std::fs;
-use std::path::Path;
 use crate::mcp::types::{CallToolResult, ToolDefinition};
 use crate::parser::detect_language;
+use eyre::{Result, WrapErr};
 use serde_json::{json, Value};
+use std::fs;
+use std::path::Path;
 
 /// Approximate tokens per character (rough estimation)
 const CHARS_PER_TOKEN: usize = 4;
@@ -58,9 +58,7 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult> {
         .as_str()
         .ok_or_else(|| eyre::eyre!("Missing 'path' argument"))?;
 
-    let max_tokens = arguments["max_tokens"]
-        .as_i64()
-        .unwrap_or(2000) as usize;
+    let max_tokens = arguments["max_tokens"].as_i64().unwrap_or(2000) as usize;
 
     log::info!("Generating code map for: {path_str} (max_tokens: {max_tokens})");
 
@@ -82,7 +80,13 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult> {
         }
     } else if path.is_dir() {
         // Directory - walk and collect
-        collect_files(path, &mut files, &mut current_tokens, max_chars, &mut truncated)?;
+        collect_files(
+            path,
+            &mut files,
+            &mut current_tokens,
+            max_chars,
+            &mut truncated,
+        )?;
     }
 
     let code_map = CodeMap {

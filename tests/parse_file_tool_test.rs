@@ -135,7 +135,9 @@ fn test_parse_file_with_syntax_errors() {
 
     // Should still parse but tree contains errors
     assert!(response_json["result"]["content"].is_array());
-    let text = response_json["result"]["content"][0]["text"].as_str().unwrap();
+    let text = response_json["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap();
     // Tree-sitter marks syntax errors as ERROR or MISSING nodes
     assert!(text.contains("ERROR") || text.contains("MISSING"));
 }

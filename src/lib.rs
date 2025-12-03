@@ -1,3 +1,3 @@
+pub mod analysis;
 pub mod mcp;
 pub mod parser;
-pub mod analysis;

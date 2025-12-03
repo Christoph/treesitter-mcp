@@ -3,14 +3,14 @@
 //! Extracts the high-level structure of a source file (functions, classes, imports)
 //! without the implementation details.
 
+use crate::mcp::types::{CallToolResult, ToolDefinition};
+use crate::parser::{detect_language, parse_code, Language};
 use eyre::{Result, WrapErr};
+use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use tree_sitter::{Query, QueryCursor, Tree};
-use crate::mcp::types::{CallToolResult, ToolDefinition};
-use crate::parser::{detect_language, parse_code, Language};
-use serde_json::{json, Value};
 
 #[derive(Debug, serde::Serialize)]
 pub struct FileShape {
@@ -73,9 +73,7 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult> {
 
     let include_deps = arguments["include_deps"].as_bool().unwrap_or(false);
 
-    log::info!(
-        "Extracting shape of file: {file_path_str} (include_deps: {include_deps})"
-    );
+    log::info!("Extracting shape of file: {file_path_str} (include_deps: {include_deps})");
 
     let path = Path::new(file_path_str);
 
@@ -366,9 +364,7 @@ fn find_project_root(start: &Path) -> Option<PathBuf> {
 fn find_rust_dependencies(source: &str, file_path: &Path, project_root: &Path) -> Vec<PathBuf> {
     let mut deps = Vec::new();
 
-    let dir = file_path
-        .parent()
-        .unwrap_or(project_root);
+    let dir = file_path.parent().unwrap_or(project_root);
 
     for line in source.lines() {
         let trimmed = line.trim_start();
@@ -423,9 +419,7 @@ fn find_rust_dependencies(source: &str, file_path: &Path, project_root: &Path) -
 fn find_python_dependencies(source: &str, file_path: &Path, project_root: &Path) -> Vec<PathBuf> {
     let mut deps = Vec::new();
 
-    let dir = file_path
-        .parent()
-        .unwrap_or(project_root);
+    let dir = file_path.parent().unwrap_or(project_root);
 
     for line in source.lines() {
         let trimmed = line.trim_start();
@@ -457,12 +451,7 @@ fn find_python_dependencies(source: &str, file_path: &Path, project_root: &Path)
     deps
 }
 
-fn push_python_module(
-    deps: &mut Vec<PathBuf>,
-    module: &str,
-    dir: &Path,
-    project_root: &Path,
-) {
+fn push_python_module(deps: &mut Vec<PathBuf>, module: &str, dir: &Path, project_root: &Path) {
     let base = module.split('.').next().unwrap_or(module);
 
     let candidate_files = [
@@ -489,9 +478,7 @@ fn push_python_module(
 fn find_js_ts_dependencies(source: &str, file_path: &Path, project_root: &Path) -> Vec<PathBuf> {
     let mut deps = Vec::new();
 
-    let dir = file_path
-        .parent()
-        .unwrap_or(project_root);
+    let dir = file_path.parent().unwrap_or(project_root);
 
     for line in source.lines() {
         let trimmed = line.trim_start();

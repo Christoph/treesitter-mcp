@@ -29,11 +29,15 @@ fn create_test_server() -> McpServer {
 fn test_file_shape_rust() {
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("lib.rs");
-    fs::write(&file_path, r#"
+    fs::write(
+        &file_path,
+        r#"
         pub fn add(a: i32, b: i32) -> i32 { a + b }
         struct Point { x: i32 }
         use std::fmt;
-    "#).unwrap();
+    "#,
+    )
+    .unwrap();
 
     let mut server = create_test_server();
     let request = json!({
@@ -53,7 +57,9 @@ fn test_file_shape_rust() {
     let response_json: serde_json::Value = serde_json::from_str(&response).unwrap();
 
     assert!(response_json["result"]["content"].is_array());
-    let text = response_json["result"]["content"][0]["text"].as_str().unwrap();
+    let text = response_json["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap();
     let shape: serde_json::Value = serde_json::from_str(text).unwrap();
 
     assert!(shape["functions"].is_array());
@@ -124,7 +130,9 @@ edition = "2021"
     let response = server.handle_message(&request.to_string()).unwrap();
     let response_json: serde_json::Value = serde_json::from_str(&response).unwrap();
 
-    let text = response_json["result"]["content"][0]["text"].as_str().unwrap();
+    let text = response_json["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap();
     let shape: serde_json::Value = serde_json::from_str(text).unwrap();
 
     // Root file shape checks
@@ -132,7 +140,9 @@ edition = "2021"
     assert!(shape["imports"].is_array());
 
     // Dependencies should be present as a tree of shapes
-    let deps = shape["dependencies"].as_array().expect("dependencies should be an array");
+    let deps = shape["dependencies"]
+        .as_array()
+        .expect("dependencies should be an array");
     assert_eq!(deps.len(), 1, "expected exactly one project dependency");
 
     let dep = &deps[0];
@@ -147,9 +157,7 @@ edition = "2021"
         .as_array()
         .expect("dependency should have functions array");
     assert!(
-        dep_functions
-            .iter()
-            .any(|f| f["name"] == "add"),
+        dep_functions.iter().any(|f| f["name"] == "add"),
         "dependency should contain the 'add' function"
     );
 }
@@ -158,7 +166,9 @@ edition = "2021"
 fn test_file_shape_python() {
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("test.py");
-    fs::write(&file_path, r#"
+    fs::write(
+        &file_path,
+        r#"
 def hello():
     pass
 
@@ -167,7 +177,9 @@ class MyClass:
         pass
 
 import os
-    "#).unwrap();
+    "#,
+    )
+    .unwrap();
 
     let mut server = create_test_server();
     let request = json!({
@@ -186,7 +198,9 @@ import os
     let response = server.handle_message(&request.to_string()).unwrap();
     let response_json: serde_json::Value = serde_json::from_str(&response).unwrap();
 
-    let text = response_json["result"]["content"][0]["text"].as_str().unwrap();
+    let text = response_json["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap();
     let shape: serde_json::Value = serde_json::from_str(text).unwrap();
 
     assert!(shape["functions"].is_array());
@@ -237,14 +251,18 @@ def add(a, b):
     let response = server.handle_message(&request.to_string()).unwrap();
     let response_json: serde_json::Value = serde_json::from_str(&response).unwrap();
 
-    let text = response_json["result"]["content"][0]["text"].as_str().unwrap();
+    let text = response_json["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap();
     let shape: serde_json::Value = serde_json::from_str(text).unwrap();
 
     // Root file shape checks
     assert!(shape["functions"].is_array());
 
     // Dependencies should contain utils.py
-    let deps = shape["dependencies"].as_array().expect("dependencies should be an array");
+    let deps = shape["dependencies"]
+        .as_array()
+        .expect("dependencies should be an array");
     assert_eq!(deps.len(), 1, "expected exactly one python dependency");
 
     let dep = &deps[0];
@@ -258,9 +276,7 @@ def add(a, b):
         .as_array()
         .expect("dependency should have functions array");
     assert!(
-        dep_functions
-            .iter()
-            .any(|f| f["name"] == "add"),
+        dep_functions.iter().any(|f| f["name"] == "add"),
         "dependency should contain the 'add' function"
     );
 }
@@ -311,14 +327,18 @@ export function add(a, b) {
     let response = server.handle_message(&request.to_string()).unwrap();
     let response_json: serde_json::Value = serde_json::from_str(&response).unwrap();
 
-    let text = response_json["result"]["content"][0]["text"].as_str().unwrap();
+    let text = response_json["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap();
     let shape: serde_json::Value = serde_json::from_str(text).unwrap();
 
     // Root file shape checks
     assert!(shape["functions"].is_array());
 
     // Dependencies should contain utils.js
-    let deps = shape["dependencies"].as_array().expect("dependencies should be an array");
+    let deps = shape["dependencies"]
+        .as_array()
+        .expect("dependencies should be an array");
     assert_eq!(deps.len(), 1, "expected exactly one JS dependency");
 
     let dep = &deps[0];
@@ -332,9 +352,7 @@ export function add(a, b) {
         .as_array()
         .expect("dependency should have functions array");
     assert!(
-        dep_functions
-            .iter()
-            .any(|f| f["name"] == "add"),
+        dep_functions.iter().any(|f| f["name"] == "add"),
         "dependency should contain the 'add' function"
     );
 }

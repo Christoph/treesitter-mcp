@@ -1,6 +1,6 @@
-use std::io::{BufRead, Write};
-use eyre::{Result, WrapErr};
 use crate::mcp::json_rpc::{Message, Response};
+use eyre::{Result, WrapErr};
+use std::io::{BufRead, Write};
 
 /// Read a JSON-RPC message from a buffered reader
 ///
@@ -25,7 +25,8 @@ use crate::mcp::json_rpc::{Message, Response};
 /// ```
 pub fn read_message<R: BufRead>(reader: &mut R) -> Result<Message> {
     let mut line = String::new();
-    reader.read_line(&mut line)
+    reader
+        .read_line(&mut line)
         .wrap_err("Failed to read line from input")?;
 
     if line.is_empty() {
@@ -72,16 +73,13 @@ pub fn read_message<R: BufRead>(reader: &mut R) -> Result<Message> {
 /// ```
 pub fn write_message<W: Write>(writer: &mut W, response: &Response) -> Result<()> {
     // Serialize to compact JSON (no whitespace)
-    let json = serde_json::to_string(response)
-        .wrap_err("Failed to serialize response to JSON")?;
+    let json = serde_json::to_string(response).wrap_err("Failed to serialize response to JSON")?;
 
     // Write with newline delimiter
-    writeln!(writer, "{json}")
-        .wrap_err("Failed to write message to output")?;
+    writeln!(writer, "{json}").wrap_err("Failed to write message to output")?;
 
     // Flush immediately to ensure message is sent
-    writer.flush()
-        .wrap_err("Failed to flush output stream")?;
+    writer.flush().wrap_err("Failed to flush output stream")?;
 
     Ok(())
 }

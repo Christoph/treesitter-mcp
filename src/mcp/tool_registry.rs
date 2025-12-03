@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use crate::mcp::types::ToolDefinition;
+use std::collections::HashMap;
 
 /// Registry for MCP tools
 ///

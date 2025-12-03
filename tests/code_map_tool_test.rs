@@ -29,11 +29,15 @@ fn create_test_server() -> McpServer {
 fn test_code_map_single_file() {
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("lib.rs");
-    fs::write(&file_path, r#"
+    fs::write(
+        &file_path,
+        r#"
         pub fn add(a: i32, b: i32) -> i32 { a + b }
         struct Point { x: i32, y: i32 }
         use std::fmt;
-    "#).unwrap();
+    "#,
+    )
+    .unwrap();
 
     let mut server = create_test_server();
     let request = json!({
@@ -53,7 +57,9 @@ fn test_code_map_single_file() {
     let response_json: serde_json::Value = serde_json::from_str(&response).unwrap();
 
     assert!(response_json["result"]["content"].is_array());
-    let text = response_json["result"]["content"][0]["text"].as_str().unwrap();
+    let text = response_json["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap();
     let map: serde_json::Value = serde_json::from_str(text).unwrap();
 
     // Should contain file information
@@ -69,14 +75,22 @@ fn test_code_map_directory() {
     let src_dir = temp_dir.path().join("src");
     fs::create_dir(&src_dir).unwrap();
 
-    fs::write(src_dir.join("lib.rs"), r#"
+    fs::write(
+        src_dir.join("lib.rs"),
+        r#"
         pub mod helper;
         pub fn main() {}
-    "#).unwrap();
+    "#,
+    )
+    .unwrap();
 
-    fs::write(src_dir.join("helper.rs"), r#"
+    fs::write(
+        src_dir.join("helper.rs"),
+        r#"
         pub fn helper_fn() -> i32 { 42 }
-    "#).unwrap();
+    "#,
+    )
+    .unwrap();
 
     let mut server = create_test_server();
     let request = json!({
@@ -95,7 +109,9 @@ fn test_code_map_directory() {
     let response = server.handle_message(&request.to_string()).unwrap();
     let response_json: serde_json::Value = serde_json::from_str(&response).unwrap();
 
-    let text = response_json["result"]["content"][0]["text"].as_str().unwrap();
+    let text = response_json["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap();
     let map: serde_json::Value = serde_json::from_str(text).unwrap();
 
     // Should contain multiple files
@@ -112,7 +128,9 @@ fn test_code_map_respects_token_limit() {
     // Create a large file with many functions
     let mut content = String::new();
     for i in 0..100 {
-        content.push_str(&format!("pub fn function_{i}() {{ println!(\"test\"); }}\n"));
+        content.push_str(&format!(
+            "pub fn function_{i}() {{ println!(\"test\"); }}\n"
+        ));
     }
     fs::write(&file_path, content).unwrap();
 
@@ -133,7 +151,9 @@ fn test_code_map_respects_token_limit() {
     let response = server.handle_message(&request.to_string()).unwrap();
     let response_json: serde_json::Value = serde_json::from_str(&response).unwrap();
 
-    let text = response_json["result"]["content"][0]["text"].as_str().unwrap();
+    let text = response_json["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap();
 
     // The output should be limited (rough token count check)
     // Approximate: 1 token ~ 4 characters

@@ -1,6 +1,6 @@
+use eyre::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use eyre::Result;
 
 /// JSON-RPC 2.0 message (request or notification)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -56,8 +56,7 @@ pub fn parse_message(json_str: &str) -> Result<Message> {
 /// # Panics
 /// Panics if the response cannot be serialized (should never happen with valid Response)
 pub fn serialize_response(response: &Response) -> String {
-    serde_json::to_string(response)
-        .expect("Response should always be serializable")
+    serde_json::to_string(response).expect("Response should always be serializable")
 }
 
 /// Create a JSON-RPC error response

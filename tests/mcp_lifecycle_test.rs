@@ -31,7 +31,10 @@ fn test_initialization_sequence() {
     // Check initialize response
     assert_eq!(response_json["result"]["protocolVersion"], "2025-11-25");
     assert!(response_json["result"]["capabilities"]["tools"].is_object());
-    assert_eq!(response_json["result"]["serverInfo"]["name"], "treesitter-mcp");
+    assert_eq!(
+        response_json["result"]["serverInfo"]["name"],
+        "treesitter-mcp"
+    );
 
     // Server should still not be fully initialized (needs initialized notification)
     assert!(!server.is_initialized());
@@ -43,7 +46,9 @@ fn test_initialization_sequence() {
         "params": {}
     });
 
-    server.handle_message(&initialized_notification.to_string()).unwrap();
+    server
+        .handle_message(&initialized_notification.to_string())
+        .unwrap();
 
     // Now server should be initialized
     assert!(server.is_initialized());
@@ -227,5 +232,7 @@ fn initialize_server(server: &mut McpServer) {
         "method": "notifications/initialized",
         "params": {}
     });
-    server.handle_message(&initialized_notification.to_string()).unwrap();
+    server
+        .handle_message(&initialized_notification.to_string())
+        .unwrap();
 }

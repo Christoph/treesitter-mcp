@@ -31,7 +31,9 @@ fn test_find_usages_rust() {
     let file1 = temp_dir.path().join("lib.rs");
     let file2 = temp_dir.path().join("helper.rs");
 
-    fs::write(&file1, r#"
+    fs::write(
+        &file1,
+        r#"
         pub fn add(a: i32, b: i32) -> i32 {
             helper_fn() + a + b
         }
@@ -39,11 +41,17 @@ fn test_find_usages_rust() {
         fn test() {
             let result = helper_fn();
         }
-    "#).unwrap();
+    "#,
+    )
+    .unwrap();
 
-    fs::write(&file2, r#"
+    fs::write(
+        &file2,
+        r#"
         pub fn helper_fn() -> i32 { 42 }
-    "#).unwrap();
+    "#,
+    )
+    .unwrap();
 
     let mut server = create_test_server();
     let request = json!({
@@ -63,7 +71,9 @@ fn test_find_usages_rust() {
     let response_json: serde_json::Value = serde_json::from_str(&response).unwrap();
 
     assert!(response_json["result"]["content"].is_array());
-    let text = response_json["result"]["content"][0]["text"].as_str().unwrap();
+    let text = response_json["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap();
     let usages: serde_json::Value = serde_json::from_str(text).unwrap();
 
     // Should find usages in both files
@@ -77,7 +87,9 @@ fn test_find_usages_single_file() {
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("test.py");
 
-    fs::write(&file_path, r#"
+    fs::write(
+        &file_path,
+        r#"
 def calculate(x):
     return x * 2
 
@@ -85,7 +97,9 @@ def main():
     result = calculate(5)
     value = calculate(10)
     return calculate(result)
-    "#).unwrap();
+    "#,
+    )
+    .unwrap();
 
     let mut server = create_test_server();
     let request = json!({
@@ -104,7 +118,9 @@ def main():
     let response = server.handle_message(&request.to_string()).unwrap();
     let response_json: serde_json::Value = serde_json::from_str(&response).unwrap();
 
-    let text = response_json["result"]["content"][0]["text"].as_str().unwrap();
+    let text = response_json["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap();
     let usages: serde_json::Value = serde_json::from_str(text).unwrap();
 
     assert!(usages["usages"].is_array());
@@ -118,9 +134,13 @@ fn test_find_usages_not_found() {
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("lib.rs");
 
-    fs::write(&file_path, r#"
+    fs::write(
+        &file_path,
+        r#"
         pub fn add(a: i32, b: i32) -> i32 { a + b }
-    "#).unwrap();
+    "#,
+    )
+    .unwrap();
 
     let mut server = create_test_server();
     let request = json!({
@@ -139,7 +159,9 @@ fn test_find_usages_not_found() {
     let response = server.handle_message(&request.to_string()).unwrap();
     let response_json: serde_json::Value = serde_json::from_str(&response).unwrap();
 
-    let text = response_json["result"]["content"][0]["text"].as_str().unwrap();
+    let text = response_json["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap();
     let usages: serde_json::Value = serde_json::from_str(text).unwrap();
 
     // Should return empty usages array

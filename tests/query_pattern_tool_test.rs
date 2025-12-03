@@ -30,11 +30,15 @@ fn test_query_pattern_rust_functions() {
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("lib.rs");
 
-    fs::write(&file_path, r#"
+    fs::write(
+        &file_path,
+        r#"
         pub fn add(a: i32, b: i32) -> i32 { a + b }
         fn helper() -> i32 { 42 }
         pub fn multiply(x: i32, y: i32) -> i32 { x * y }
-    "#).unwrap();
+    "#,
+    )
+    .unwrap();
 
     let mut server = create_test_server();
     let request = json!({
@@ -54,7 +58,9 @@ fn test_query_pattern_rust_functions() {
     let response_json: serde_json::Value = serde_json::from_str(&response).unwrap();
 
     assert!(response_json["result"]["content"].is_array());
-    let text = response_json["result"]["content"][0]["text"].as_str().unwrap();
+    let text = response_json["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap();
     let matches: serde_json::Value = serde_json::from_str(text).unwrap();
 
     // Should find 3 function names
@@ -68,7 +74,9 @@ fn test_query_pattern_python_classes() {
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("test.py");
 
-    fs::write(&file_path, r#"
+    fs::write(
+        &file_path,
+        r#"
 class Person:
     def __init__(self):
         pass
@@ -76,7 +84,9 @@ class Person:
 class Animal:
     def speak(self):
         pass
-    "#).unwrap();
+    "#,
+    )
+    .unwrap();
 
     let mut server = create_test_server();
     let request = json!({
@@ -95,7 +105,9 @@ class Animal:
     let response = server.handle_message(&request.to_string()).unwrap();
     let response_json: serde_json::Value = serde_json::from_str(&response).unwrap();
 
-    let text = response_json["result"]["content"][0]["text"].as_str().unwrap();
+    let text = response_json["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap();
     let matches: serde_json::Value = serde_json::from_str(text).unwrap();
 
     // Should find 2 class names
@@ -109,10 +121,14 @@ fn test_query_pattern_with_capture() {
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("lib.rs");
 
-    fs::write(&file_path, r#"
+    fs::write(
+        &file_path,
+        r#"
         struct Point { x: i32, y: i32 }
         struct Rectangle { width: i32, height: i32 }
-    "#).unwrap();
+    "#,
+    )
+    .unwrap();
 
     let mut server = create_test_server();
     let request = json!({
@@ -131,7 +147,9 @@ fn test_query_pattern_with_capture() {
     let response = server.handle_message(&request.to_string()).unwrap();
     let response_json: serde_json::Value = serde_json::from_str(&response).unwrap();
 
-    let text = response_json["result"]["content"][0]["text"].as_str().unwrap();
+    let text = response_json["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap();
     let matches: serde_json::Value = serde_json::from_str(text).unwrap();
 
     // Should find 2 struct names
@@ -149,9 +167,13 @@ fn test_query_pattern_no_matches() {
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("lib.rs");
 
-    fs::write(&file_path, r#"
+    fs::write(
+        &file_path,
+        r#"
         pub fn add(a: i32, b: i32) -> i32 { a + b }
-    "#).unwrap();
+    "#,
+    )
+    .unwrap();
 
     let mut server = create_test_server();
     let request = json!({
@@ -170,7 +192,9 @@ fn test_query_pattern_no_matches() {
     let response = server.handle_message(&request.to_string()).unwrap();
     let response_json: serde_json::Value = serde_json::from_str(&response).unwrap();
 
-    let text = response_json["result"]["content"][0]["text"].as_str().unwrap();
+    let text = response_json["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap();
     let matches: serde_json::Value = serde_json::from_str(text).unwrap();
 
     // Should return empty matches
@@ -208,8 +232,16 @@ fn test_query_pattern_invalid_query() {
     let text = content["text"].as_str().unwrap();
 
     // Check if it's an error response (either in isError field or in the text)
-    if response_json["result"]["isError"].as_bool().unwrap_or(false) {
-        assert!(text.contains("error") || text.contains("Error") || text.contains("failed") || text.contains("Failed"));
+    if response_json["result"]["isError"]
+        .as_bool()
+        .unwrap_or(false)
+    {
+        assert!(
+            text.contains("error")
+                || text.contains("Error")
+                || text.contains("failed")
+                || text.contains("Failed")
+        );
     }
 }
 
