@@ -3,12 +3,12 @@
 //! Extracts the high-level structure of a source file (functions, classes, imports)
 //! without the implementation details.
 
-use crate::mcp::types::{CallToolResult, ToolDefinition};
+use crate::mcp_types::{CallToolResult, CallToolResultExt};
 use crate::parser::{detect_language, parse_code, Language};
-use eyre::{Result, WrapErr};
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::collections::HashSet;
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use tree_sitter::{Query, QueryCursor, Tree};
 
@@ -44,32 +44,13 @@ pub struct ClassInfo {
     pub line: usize,
 }
 
-pub fn tool_definition() -> ToolDefinition {
-    ToolDefinition {
-        name: "file_shape".to_string(),
-        description: "Use this tool to 'skeletonize' code files. The intent is to quickly understand the interface (functions, classes, structs) and dependencies (imports) of a file without reading the full implementation. This is primarily used for generating file summaries, mapping dependency graphs, and understanding the high-level organization of code.".to_string(),
-        input_schema: json!({
-            "type": "object",
-            "properties": {
-                "file_path": {
-                    "type": "string",
-                    "description": "Path to the source file"
-                },
-                "include_deps": {
-                    "type": "boolean",
-                    "description": "Include project dependencies as nested file shapes",
-                    "default": false
-                }
-            },
-            "required": ["file_path"]
-        }),
-    }
-}
-
-pub fn execute(arguments: &Value) -> Result<CallToolResult> {
-    let file_path_str = arguments["file_path"]
-        .as_str()
-        .ok_or_else(|| eyre::eyre!("Missing 'file_path' argument"))?;
+pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
+    let file_path_str = arguments["file_path"].as_str().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Missing or invalid 'file_path' argument",
+        )
+    })?;
 
     let include_deps = arguments["include_deps"].as_bool().unwrap_or(false);
 
@@ -86,12 +67,21 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult> {
 
     let mut visited = HashSet::new();
     let shape = build_shape_tree(path, &project_root, include_deps, &mut visited)?;
-    let shape_json = serde_json::to_string_pretty(&shape)?;
+    let shape_json = serde_json::to_string_pretty(&shape).map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Failed to serialize shape to JSON: {e}"),
+        )
+    })?;
 
     Ok(CallToolResult::success(shape_json))
 }
 
-pub fn extract_shape(tree: &Tree, source: &str, language: Language) -> Result<FileShape> {
+pub fn extract_shape(
+    tree: &Tree,
+    source: &str,
+    language: Language,
+) -> Result<FileShape, io::Error> {
     match language {
         Language::Rust => extract_rust_shape(tree, source),
         Language::Python => extract_python_shape(tree, source),
@@ -107,7 +97,7 @@ pub fn extract_shape(tree: &Tree, source: &str, language: Language) -> Result<Fi
     }
 }
 
-fn extract_rust_shape(tree: &Tree, source: &str) -> Result<FileShape> {
+fn extract_rust_shape(tree: &Tree, source: &str) -> Result<FileShape, io::Error> {
     let mut functions = Vec::new();
     let mut structs = Vec::new();
     let mut imports = Vec::new();
@@ -119,7 +109,13 @@ fn extract_rust_shape(tree: &Tree, source: &str) -> Result<FileShape> {
         (struct_item name: (type_identifier) @struct.name) @struct
         (use_declaration) @import
         "#,
-    )?;
+    )
+    .map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Failed to create tree-sitter query: {e}"),
+        )
+    })?;
 
     let mut cursor = QueryCursor::new();
     let matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
@@ -131,19 +127,37 @@ fn extract_rust_shape(tree: &Tree, source: &str) -> Result<FileShape> {
 
             match query.capture_names()[name as usize] {
                 "func.name" => {
+                    let text = node.utf8_text(source.as_bytes()).map_err(|e| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("Invalid UTF-8 in function name: {e}"),
+                        )
+                    })?;
                     functions.push(FunctionInfo {
-                        name: node.utf8_text(source.as_bytes())?.to_string(),
+                        name: text.to_string(),
                         line: node.start_position().row + 1,
                     });
                 }
                 "struct.name" => {
+                    let text = node.utf8_text(source.as_bytes()).map_err(|e| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("Invalid UTF-8 in struct name: {e}"),
+                        )
+                    })?;
                     structs.push(StructInfo {
-                        name: node.utf8_text(source.as_bytes())?.to_string(),
+                        name: text.to_string(),
                         line: node.start_position().row + 1,
                     });
                 }
                 "import" => {
-                    imports.push(node.utf8_text(source.as_bytes())?.to_string());
+                    let text = node.utf8_text(source.as_bytes()).map_err(|e| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("Invalid UTF-8 in import: {e}"),
+                        )
+                    })?;
+                    imports.push(text.to_string());
                 }
                 _ => {}
             }
@@ -160,7 +174,7 @@ fn extract_rust_shape(tree: &Tree, source: &str) -> Result<FileShape> {
     })
 }
 
-fn extract_python_shape(tree: &Tree, source: &str) -> Result<FileShape> {
+fn extract_python_shape(tree: &Tree, source: &str) -> Result<FileShape, io::Error> {
     let mut functions = Vec::new();
     let mut classes = Vec::new();
     let mut imports = Vec::new();
@@ -173,7 +187,13 @@ fn extract_python_shape(tree: &Tree, source: &str) -> Result<FileShape> {
         (import_statement) @import
         (import_from_statement) @import
         "#,
-    )?;
+    )
+    .map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Failed to create tree-sitter query: {e}"),
+        )
+    })?;
 
     let mut cursor = QueryCursor::new();
     let matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
@@ -185,19 +205,37 @@ fn extract_python_shape(tree: &Tree, source: &str) -> Result<FileShape> {
 
             match query.capture_names()[name as usize] {
                 "func.name" => {
+                    let text = node.utf8_text(source.as_bytes()).map_err(|e| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("Invalid UTF-8 in function name: {e}"),
+                        )
+                    })?;
                     functions.push(FunctionInfo {
-                        name: node.utf8_text(source.as_bytes())?.to_string(),
+                        name: text.to_string(),
                         line: node.start_position().row + 1,
                     });
                 }
                 "class.name" => {
+                    let text = node.utf8_text(source.as_bytes()).map_err(|e| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("Invalid UTF-8 in class name: {e}"),
+                        )
+                    })?;
                     classes.push(ClassInfo {
-                        name: node.utf8_text(source.as_bytes())?.to_string(),
+                        name: text.to_string(),
                         line: node.start_position().row + 1,
                     });
                 }
                 "import" => {
-                    imports.push(node.utf8_text(source.as_bytes())?.to_string());
+                    let text = node.utf8_text(source.as_bytes()).map_err(|e| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("Invalid UTF-8 in import: {e}"),
+                        )
+                    })?;
+                    imports.push(text.to_string());
                 }
                 _ => {}
             }
@@ -214,7 +252,7 @@ fn extract_python_shape(tree: &Tree, source: &str) -> Result<FileShape> {
     })
 }
 
-fn extract_js_shape(tree: &Tree, source: &str) -> Result<FileShape> {
+fn extract_js_shape(tree: &Tree, source: &str) -> Result<FileShape, io::Error> {
     let mut functions = Vec::new();
     let mut classes = Vec::new();
     let mut imports = Vec::new();
@@ -226,7 +264,13 @@ fn extract_js_shape(tree: &Tree, source: &str) -> Result<FileShape> {
         (class_declaration name: (identifier) @class.name) @class
         (import_statement) @import
         "#,
-    )?;
+    )
+    .map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Failed to create tree-sitter query: {e}"),
+        )
+    })?;
 
     let mut cursor = QueryCursor::new();
     let matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
@@ -238,19 +282,37 @@ fn extract_js_shape(tree: &Tree, source: &str) -> Result<FileShape> {
 
             match query.capture_names()[name as usize] {
                 "func.name" => {
+                    let text = node.utf8_text(source.as_bytes()).map_err(|e| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("Invalid UTF-8 in function name: {e}"),
+                        )
+                    })?;
                     functions.push(FunctionInfo {
-                        name: node.utf8_text(source.as_bytes())?.to_string(),
+                        name: text.to_string(),
                         line: node.start_position().row + 1,
                     });
                 }
                 "class.name" => {
+                    let text = node.utf8_text(source.as_bytes()).map_err(|e| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("Invalid UTF-8 in class name: {e}"),
+                        )
+                    })?;
                     classes.push(ClassInfo {
-                        name: node.utf8_text(source.as_bytes())?.to_string(),
+                        name: text.to_string(),
                         line: node.start_position().row + 1,
                     });
                 }
                 "import" => {
-                    imports.push(node.utf8_text(source.as_bytes())?.to_string());
+                    let text = node.utf8_text(source.as_bytes()).map_err(|e| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("Invalid UTF-8 in import: {e}"),
+                        )
+                    })?;
+                    imports.push(text.to_string());
                 }
                 _ => {}
             }
@@ -273,26 +335,54 @@ fn build_shape_tree(
     project_root: &Path,
     include_deps: bool,
     visited: &mut HashSet<PathBuf>,
-) -> Result<FileShape> {
+) -> Result<FileShape, io::Error> {
     // Avoid infinite recursion in case of cyclic module structures
     let canonical = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     if visited.contains(&canonical) {
         // Already processed – just return the flat shape
-        let source = fs::read_to_string(path)
-            .wrap_err_with(|| format!("Failed to read file: {}", path.display()))?;
-        let language = detect_language(path)?;
-        let tree = parse_code(&source, language)?;
+        let source = fs::read_to_string(path).map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("Failed to read file {}: {e}", path.display()),
+            )
+        })?;
+        let language = detect_language(path).map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::Unsupported,
+                format!("Cannot detect language for file {}: {e}", path.display()),
+            )
+        })?;
+        let tree = parse_code(&source, language).map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Failed to parse {} code: {e}", language.name()),
+            )
+        })?;
         let mut shape = extract_shape(&tree, &source, language)?;
         shape.path = Some(path.to_string_lossy().to_string());
         return Ok(shape);
     }
     visited.insert(canonical);
 
-    let source = fs::read_to_string(path)
-        .wrap_err_with(|| format!("Failed to read file: {}", path.display()))?;
+    let source = fs::read_to_string(path).map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("Failed to read file {}: {e}", path.display()),
+        )
+    })?;
 
-    let language = detect_language(path)?;
-    let tree = parse_code(&source, language)?;
+    let language = detect_language(path).map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!("Cannot detect language for file {}: {e}", path.display()),
+        )
+    })?;
+    let tree = parse_code(&source, language).map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Failed to parse {} code: {e}", language.name()),
+        )
+    })?;
 
     let mut shape = extract_shape(&tree, &source, language)?;
     shape.path = Some(path.to_string_lossy().to_string());

@@ -3,11 +3,11 @@
 //! Searches for all usages of a symbol (function, struct, class) across files.
 //! Uses tree-sitter to parse and search for identifier nodes.
 
-use crate::mcp::types::{CallToolResult, ToolDefinition};
+use crate::mcp_types::{CallToolResult, CallToolResultExt};
 use crate::parser::{detect_language, parse_code};
-use eyre::{Result, WrapErr};
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::fs;
+use std::io;
 use std::path::Path;
 use tree_sitter::Tree;
 
@@ -25,42 +25,30 @@ struct Usage {
     context: String,
 }
 
-pub fn tool_definition() -> ToolDefinition {
-    ToolDefinition {
-        name: "find_usages".to_string(),
-        description: "Use this tool to trace references to a specific symbol (function, class, variable) across the codebase. The intent is to perform impact analysis, safe refactoring, or to understand how a specific component is consumed by others. It locates every usage instance with context.".to_string(),
-        input_schema: json!({
-            "type": "object",
-            "properties": {
-                "symbol": {
-                    "type": "string",
-                    "description": "Symbol name to search for"
-                },
-                "path": {
-                    "type": "string",
-                    "description": "File or directory path to search in"
-                }
-            },
-            "required": ["symbol", "path"]
-        }),
-    }
-}
+pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
+    let symbol = arguments["symbol"].as_str().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Missing or invalid 'symbol' argument",
+        )
+    })?;
 
-pub fn execute(arguments: &Value) -> Result<CallToolResult> {
-    let symbol = arguments["symbol"]
-        .as_str()
-        .ok_or_else(|| eyre::eyre!("Missing 'symbol' argument"))?;
-
-    let path_str = arguments["path"]
-        .as_str()
-        .ok_or_else(|| eyre::eyre!("Missing 'path' argument"))?;
+    let path_str = arguments["path"].as_str().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Missing or invalid 'path' argument",
+        )
+    })?;
 
     log::info!("Finding usages of '{symbol}' in: {path_str}");
 
     let path = Path::new(path_str);
 
     if !path.exists() {
-        return Err(eyre::eyre!("Path does not exist: {}", path_str));
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("Path does not exist: {}", path_str),
+        ));
     }
 
     let mut usages = Vec::new();
@@ -76,14 +64,23 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult> {
         usages,
     };
 
-    let result_json = serde_json::to_string_pretty(&result)?;
+    let result_json = serde_json::to_string_pretty(&result).map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Failed to serialize result to JSON: {e}"),
+        )
+    })?;
     Ok(CallToolResult::success(result_json))
 }
 
 /// Recursively search directory for symbol usages
-fn search_directory(dir: &Path, symbol: &str, usages: &mut Vec<Usage>) -> Result<()> {
-    let entries = fs::read_dir(dir)
-        .wrap_err_with(|| format!("Failed to read directory: {}", dir.display()))?;
+fn search_directory(dir: &Path, symbol: &str, usages: &mut Vec<Usage>) -> Result<(), io::Error> {
+    let entries = fs::read_dir(dir).map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("Failed to read directory {}: {e}", dir.display()),
+        )
+    })?;
 
     for entry in entries {
         let entry = entry?;
@@ -111,12 +108,26 @@ fn search_directory(dir: &Path, symbol: &str, usages: &mut Vec<Usage>) -> Result
 }
 
 /// Search for symbol usages in a single file
-fn search_file(path: &Path, symbol: &str, usages: &mut Vec<Usage>) -> Result<()> {
-    let source = fs::read_to_string(path)
-        .wrap_err_with(|| format!("Failed to read file: {}", path.display()))?;
+fn search_file(path: &Path, symbol: &str, usages: &mut Vec<Usage>) -> Result<(), io::Error> {
+    let source = fs::read_to_string(path).map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("Failed to read file {}: {e}", path.display()),
+        )
+    })?;
 
-    let language = detect_language(path)?;
-    let tree = parse_code(&source, language)?;
+    let language = detect_language(path).map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!("Cannot detect language for file {}: {e}", path.display()),
+        )
+    })?;
+    let tree = parse_code(&source, language).map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Failed to parse {} code: {e}", language.name()),
+        )
+    })?;
 
     find_identifiers(&tree, &source, symbol, path, usages);
 

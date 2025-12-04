@@ -1,49 +1,63 @@
-use color_eyre::Result;
-use std::io::{stdin, stdout, BufReader};
-use treesitter_mcp::mcp::io::{read_message, write_message};
-use treesitter_mcp::mcp::server::McpServer;
+mod analysis;
+mod handler;
+mod mcp_types;
+mod parser;
+mod tools;
 
-fn main() -> Result<()> {
-    color_eyre::install()?;
+use handler::TreesitterServerHandler;
+use rust_mcp_sdk::schema::{
+    Implementation, InitializeResult, ServerCapabilities, ServerCapabilitiesTools,
+    LATEST_PROTOCOL_VERSION,
+};
+use rust_mcp_sdk::{
+    error::SdkResult,
+    mcp_server::{server_runtime, ServerRuntime},
+    McpServer, StdioTransport, TransportOptions,
+};
+use std::sync::Arc;
+
+#[tokio::main]
+async fn main() -> SdkResult<()> {
+    color_eyre::install().ok();
     env_logger::init();
 
     log::info!("Tree-sitter MCP Server starting");
 
-    let mut server = McpServer::new();
-    let stdin = stdin();
-    let mut reader = BufReader::new(stdin.lock());
-    let stdout = stdout();
-    let mut writer = stdout.lock();
+    // Define server details and capabilities
+    let server_details = InitializeResult {
+        server_info: Implementation {
+            name: env!("CARGO_PKG_NAME").to_string(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            title: Some("Tree-sitter MCP Server".to_string()),
+        },
+        capabilities: ServerCapabilities {
+            tools: Some(ServerCapabilitiesTools { list_changed: None }),
+            ..Default::default()
+        },
+        meta: None,
+        instructions: Some(
+            "A high-performance MCP server for tree-sitter code analysis operations.".to_string(),
+        ),
+        protocol_version: LATEST_PROTOCOL_VERSION.to_string(),
+    };
 
-    loop {
-        // Read message from stdin
-        let message = match read_message(&mut reader) {
-            Ok(msg) => msg,
-            Err(e) => {
-                // Check for EOF
-                if e.to_string().contains("Reached end of input stream") {
-                    log::info!("Client disconnected (EOF)");
-                    break;
-                }
-                log::error!("Failed to read message: {e}");
-                continue;
-            }
-        };
+    // Create stdio transport
+    let transport = StdioTransport::new(TransportOptions::default())?;
 
-        // Process message and send response if needed
-        match server.process_message(message) {
-            Ok(Some(response)) => {
-                if let Err(e) = write_message(&mut writer, &response) {
-                    log::error!("Failed to write response: {e}");
-                }
-            }
-            Ok(None) => {
-                // Notification handling, no response required
-            }
-            Err(e) => {
-                log::error!("Internal error processing message: {e}");
-            }
-        }
+    // Create handler
+    let handler = TreesitterServerHandler::new();
+
+    // Create and start MCP server
+    let server: Arc<ServerRuntime> =
+        server_runtime::create_server(server_details, transport, handler);
+
+    if let Err(start_error) = server.start().await {
+        eprintln!(
+            "{}",
+            start_error
+                .rpc_error_message()
+                .unwrap_or(&start_error.to_string())
+        );
     }
 
     log::info!("Tree-sitter MCP Server stopping");

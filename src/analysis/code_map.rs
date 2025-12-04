@@ -3,11 +3,11 @@
 //! Generates a high-level overview of a codebase with token budget awareness.
 //! Walks directory structure, extracts file shapes, and aggregates results.
 
-use crate::mcp::types::{CallToolResult, ToolDefinition};
+use crate::mcp_types::{CallToolResult, CallToolResultExt};
 use crate::parser::detect_language;
-use eyre::{Result, WrapErr};
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::fs;
+use std::io;
 use std::path::Path;
 
 /// Approximate tokens per character (rough estimation)
@@ -31,32 +31,13 @@ struct FileEntry {
     classes: Option<Vec<String>>,
 }
 
-pub fn tool_definition() -> ToolDefinition {
-    ToolDefinition {
-        name: "code_map".to_string(),
-        description: "Use this tool to build a mental model of the project's architecture. The intent is to generate a token-efficient, high-level summary of an entire directory tree, helping you identify key files and modules. Use this when you need to explore a new codebase or locate where specific functionality resides across multiple files.".to_string(),
-        input_schema: json!({
-            "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "Path to file or directory"
-                },
-                "max_tokens": {
-                    "type": "integer",
-                    "description": "Maximum tokens for output (approximate)",
-                    "default": 2000
-                }
-            },
-            "required": ["path"]
-        }),
-    }
-}
-
-pub fn execute(arguments: &Value) -> Result<CallToolResult> {
-    let path_str = arguments["path"]
-        .as_str()
-        .ok_or_else(|| eyre::eyre!("Missing 'path' argument"))?;
+pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
+    let path_str = arguments["path"].as_str().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Missing or invalid 'path' argument",
+        )
+    })?;
 
     let max_tokens = arguments["max_tokens"].as_i64().unwrap_or(2000) as usize;
 
@@ -65,7 +46,10 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult> {
     let path = Path::new(path_str);
 
     if !path.exists() {
-        return Err(eyre::eyre!("Path does not exist: {}", path_str));
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("Path does not exist: {}", path_str),
+        ));
     }
 
     let mut files = Vec::new();
@@ -94,7 +78,12 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult> {
         truncated: if truncated { Some(true) } else { None },
     };
 
-    let map_json = serde_json::to_string_pretty(&code_map)?;
+    let map_json = serde_json::to_string_pretty(&code_map).map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Failed to serialize code map to JSON: {e}"),
+        )
+    })?;
     Ok(CallToolResult::success(map_json))
 }
 
@@ -105,9 +94,13 @@ fn collect_files(
     current_tokens: &mut usize,
     max_chars: usize,
     truncated: &mut bool,
-) -> Result<()> {
-    let entries = fs::read_dir(dir)
-        .wrap_err_with(|| format!("Failed to read directory: {}", dir.display()))?;
+) -> Result<(), io::Error> {
+    let entries = fs::read_dir(dir).map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("Failed to read directory {}: {e}", dir.display()),
+        )
+    })?;
 
     for entry in entries {
         let entry = entry?;
@@ -125,7 +118,12 @@ fn collect_files(
             // Check if we can detect language (skip non-source files)
             if detect_language(&path).is_ok() {
                 if let Ok(entry) = process_file(&path) {
-                    let entry_json = serde_json::to_string(&entry)?;
+                    let entry_json = serde_json::to_string(&entry).map_err(|e| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("Failed to serialize entry to JSON: {e}"),
+                        )
+                    })?;
                     let entry_size = entry_json.len();
 
                     if *current_tokens + entry_size > max_chars {
@@ -149,12 +147,26 @@ fn collect_files(
 }
 
 /// Process a single file and extract its shape
-fn process_file(path: &Path) -> Result<FileEntry> {
-    let source = fs::read_to_string(path)
-        .wrap_err_with(|| format!("Failed to read file: {}", path.display()))?;
+fn process_file(path: &Path) -> Result<FileEntry, io::Error> {
+    let source = fs::read_to_string(path).map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("Failed to read file {}: {e}", path.display()),
+        )
+    })?;
 
-    let language = detect_language(path)?;
-    let tree = crate::parser::parse_code(&source, language)?;
+    let language = detect_language(path).map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!("Cannot detect language for file {}: {e}", path.display()),
+        )
+    })?;
+    let tree = crate::parser::parse_code(&source, language).map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Failed to parse {} code: {e}", language.name()),
+        )
+    })?;
 
     // Use the file_shape extraction logic
     let shape = crate::analysis::file_shape::extract_shape(&tree, &source, language)?;
