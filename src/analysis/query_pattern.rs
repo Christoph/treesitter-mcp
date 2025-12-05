@@ -45,20 +45,25 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
     let source = fs::read_to_string(file_path).map_err(|e| {
         io::Error::new(
             io::ErrorKind::NotFound,
-            format!("Failed to read file {file_path}: {e}"),
+            format!("Failed to read file '{}': {}", file_path, e),
         )
     })?;
 
     let language = detect_language(file_path).map_err(|e| {
         io::Error::new(
             io::ErrorKind::Unsupported,
-            format!("Cannot detect language for file {file_path}: {e}"),
+            format!("Cannot detect language for file '{}': {}", file_path, e),
         )
     })?;
     let tree = parse_code(&source, language).map_err(|e| {
         io::Error::new(
             io::ErrorKind::InvalidData,
-            format!("Failed to parse {} code: {e}", language.name()),
+            format!(
+                "Failed to parse {} code from file '{}': {}",
+                language.name(),
+                file_path,
+                e
+            ),
         )
     })?;
 
@@ -66,7 +71,7 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
     let query = Query::new(&ts_language, query_str).map_err(|e| {
         io::Error::new(
             io::ErrorKind::InvalidInput,
-            format!("Failed to parse query: {e}"),
+            format!("Failed to parse query '{}': {}", query_str, e),
         )
     })?;
 
@@ -111,7 +116,10 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
     let result_json = serde_json::to_string(&result).map_err(|e| {
         io::Error::new(
             io::ErrorKind::InvalidData,
-            format!("Failed to serialize result to JSON: {e}"),
+            format!(
+                "Failed to serialize query results for query '{}' on file '{}': {}",
+                query_str, file_path, e
+            ),
         )
     })?;
     Ok(CallToolResult::success(result_json))

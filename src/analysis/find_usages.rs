@@ -213,12 +213,13 @@ fn visit_node(
 }
 
 /// Classify the usage type based on the node and its context
+/// Checks parent, grandparent, and great-grandparent nodes for better classification
 fn classify_usage_type(node: &Node, _source: &str) -> String {
     // Check parent node to determine usage type
     if let Some(parent) = node.parent() {
         let parent_kind = parent.kind();
 
-        // Definition: function_item, struct_item, class_definition, variable_declarator, etc.
+        // Definition: function_item, struct_item, class_definition, etc.
         if parent_kind == "function_item"
             || parent_kind == "function_declaration"
             || parent_kind == "method_definition"
@@ -228,6 +229,16 @@ fn classify_usage_type(node: &Node, _source: &str) -> String {
             || parent_kind == "enum_item"
             || parent_kind == "interface_declaration"
             || parent_kind == "type_alias_declaration"
+        {
+            return "definition".to_string();
+        }
+
+        // Variable declarations: let, const, var
+        if parent_kind == "let_declaration"
+            || parent_kind == "const_item"
+            || parent_kind == "static_item"
+            || parent_kind == "variable_declarator"
+            || parent_kind == "lexical_declaration"
         {
             return "definition".to_string();
         }
@@ -263,6 +274,14 @@ fn classify_usage_type(node: &Node, _source: &str) -> String {
         if let Some(grandparent) = parent.parent() {
             let grandparent_kind = grandparent.kind();
 
+            // Variable declarations in grandparent
+            if grandparent_kind == "let_declaration"
+                || grandparent_kind == "const_item"
+                || grandparent_kind == "variable_declaration"
+            {
+                return "definition".to_string();
+            }
+
             // Type reference in function parameters or return types
             if grandparent_kind == "parameter"
                 || grandparent_kind == "formal_parameter"
@@ -275,6 +294,19 @@ fn classify_usage_type(node: &Node, _source: &str) -> String {
             if grandparent_kind == "call_expression" || grandparent_kind == "method_call_expression"
             {
                 return "call".to_string();
+            }
+
+            // Check great-grandparent for destructuring patterns
+            if let Some(great_grandparent) = grandparent.parent() {
+                let great_grandparent_kind = great_grandparent.kind();
+
+                // Destructuring in variable declarations
+                if great_grandparent_kind == "let_declaration"
+                    || great_grandparent_kind == "const_item"
+                    || great_grandparent_kind == "variable_declaration"
+                {
+                    return "definition".to_string();
+                }
             }
         }
     }

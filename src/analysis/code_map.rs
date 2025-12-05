@@ -7,13 +7,18 @@
 use crate::analysis::shape::{EnhancedClassInfo, EnhancedFunctionInfo, EnhancedStructInfo};
 use crate::mcp_types::{CallToolResult, CallToolResultExt};
 use crate::parser::detect_language;
+use globset::Glob;
 use serde_json::{json, Value};
 use std::fs;
 use std::io;
 use std::path::Path;
 
-/// Approximate tokens per character (rough estimation)
-const CHARS_PER_TOKEN: usize = 4;
+// Token estimation for code: Using 3 chars/token as a conservative estimate.
+// This is an approximation - actual tokenization varies by language and content.
+const CHARS_PER_TOKEN: usize = 3;
+
+/// Directories to ignore during traversal
+const IGNORE_DIRS: &[&str] = &["target", "node_modules", "dist", "build"];
 
 /// Detail level for code map output
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -139,7 +144,7 @@ fn collect_files(
         // Skip hidden files and common ignore patterns
         if let Some(name) = path.file_name() {
             let name_str = name.to_string_lossy();
-            if name_str.starts_with('.') || name_str == "target" || name_str == "node_modules" {
+            if name_str.starts_with('.') || IGNORE_DIRS.contains(&name_str.as_ref()) {
                 continue;
             }
         }
@@ -369,17 +374,29 @@ fn filter_class_by_detail(cls: &EnhancedClassInfo, detail_level: DetailLevel) ->
 }
 
 /// Check if a file path matches a glob pattern
+/// Supports full glob syntax including:
+/// - `*.ext` for file extensions
+/// - `**/*.ext` for recursive patterns
+/// - `test_*.rs` for prefix/suffix patterns
+/// - Character classes like `[abc].rs`
 fn matches_pattern(path: &Path, pattern: &str) -> bool {
-    if let Some(file_name) = path.file_name() {
-        let file_str = file_name.to_string_lossy();
-        // Simple glob matching for *.ext patterns
-        if pattern.starts_with("*.") {
-            let ext = &pattern[1..];
-            file_str.ends_with(ext)
-        } else {
-            file_str == pattern
+    // Try to compile the glob pattern
+    match Glob::new(pattern) {
+        Ok(glob) => {
+            let matcher = glob.compile_matcher();
+            // Match against the full path for patterns with path separators
+            // Otherwise match against just the filename
+            if pattern.contains('/') || pattern.contains("**") {
+                matcher.is_match(path)
+            } else if let Some(file_name) = path.file_name() {
+                matcher.is_match(file_name)
+            } else {
+                false
+            }
         }
-    } else {
-        false
+        Err(e) => {
+            log::warn!("Invalid glob pattern '{}': {}", pattern, e);
+            false
+        }
     }
 }

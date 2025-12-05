@@ -526,52 +526,65 @@ fn find_project_root(start: &Path) -> Option<PathBuf> {
 
 /// For Rust files, find module dependencies that live in this project.
 ///
-/// This currently looks for `mod foo;` or `pub mod foo;` declarations and resolves
-/// them to `foo.rs` or `foo/mod.rs` under the same directory, constrained to
+/// Uses tree-sitter to parse `mod foo;` or `pub mod foo;` declarations (not inline modules)
+/// and resolves them to `foo.rs` or `foo/mod.rs` under the same directory, constrained to
 /// `project_root` so that only project files are included.
 fn find_rust_dependencies(source: &str, file_path: &Path, project_root: &Path) -> Vec<PathBuf> {
     let mut deps = Vec::new();
 
     let dir = file_path.parent().unwrap_or(project_root);
 
-    for line in source.lines() {
-        let trimmed = line.trim_start();
+    // Parse the source with tree-sitter
+    let language = tree_sitter_rust::LANGUAGE.into();
+    let mut parser = tree_sitter::Parser::new();
+    if parser.set_language(&language).is_err() {
+        log::warn!("Failed to set Rust language for parser");
+        return deps;
+    }
 
-        if !(trimmed.starts_with("mod ") || trimmed.starts_with("pub mod ")) {
-            continue;
+    let tree = match parser.parse(source, None) {
+        Some(t) => t,
+        None => {
+            log::warn!("Failed to parse Rust source for module dependencies");
+            return deps;
         }
+    };
 
-        // Normalize to start after `mod `
-        let after_pub = if let Some(rest) = trimmed.strip_prefix("pub ") {
-            rest
-        } else {
-            trimmed
-        };
+    // Query for mod declarations (excluding inline modules with bodies)
+    // We want: `mod foo;` or `pub mod foo;`
+    // We don't want: `mod foo { ... }`
+    let query_str = r#"
+        (mod_item
+            name: (identifier) @mod.name
+            !body
+        )
+    "#;
 
-        let after_mod = if let Some(rest) = after_pub.strip_prefix("mod ") {
-            rest
-        } else {
-            continue;
-        };
-
-        let name: String = after_mod
-            .chars()
-            .take_while(|c| c.is_alphanumeric() || *c == '_')
-            .collect();
-
-        if name.is_empty() {
-            continue;
+    let query = match Query::new(&language, query_str) {
+        Ok(q) => q,
+        Err(e) => {
+            log::warn!("Failed to create mod query: {}", e);
+            return deps;
         }
+    };
 
-        let candidate_files = [
-            dir.join(format!("{name}.rs")),
-            dir.join(name).join("mod.rs"),
-        ];
+    let mut cursor = QueryCursor::new();
+    let matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
 
-        for candidate in candidate_files {
-            if candidate.is_file() && candidate.starts_with(project_root) {
-                deps.push(candidate);
-                break;
+    for match_ in matches {
+        for capture in match_.captures {
+            if let Ok(name) = capture.node.utf8_text(source.as_bytes()) {
+                let candidate_files = [
+                    dir.join(format!("{name}.rs")),
+                    dir.join(name).join("mod.rs"),
+                ];
+
+                for candidate in candidate_files {
+                    if candidate.is_file() && candidate.starts_with(project_root) {
+                        deps.push(candidate);
+                        break;
+                    }
+                }
             }
         }
     }
@@ -640,32 +653,65 @@ fn push_python_module(deps: &mut Vec<PathBuf>, module: &str, dir: &Path, project
 /// For JavaScript/TypeScript files, find relative import dependencies that live
 /// in this project.
 ///
-/// This looks for ESM-style `import` statements with a string literal module
-/// specifier and resolves relative paths like `./utils.js` against the current
-/// file directory, constrained to `project_root`.
+/// Uses tree-sitter to parse ESM-style `import` and `export` statements with string
+/// literal module specifiers and resolves relative paths like `./utils.js` against
+/// the current file directory, constrained to `project_root`.
 fn find_js_ts_dependencies(source: &str, file_path: &Path, project_root: &Path) -> Vec<PathBuf> {
     let mut deps = Vec::new();
 
     let dir = file_path.parent().unwrap_or(project_root);
 
-    for line in source.lines() {
-        let trimmed = line.trim_start();
+    // Determine language based on file extension
+    let is_typescript = file_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e == "ts" || e == "tsx")
+        .unwrap_or(false);
 
-        // Handle `import ... from "module"` and `export ... from "module"`
-        if let Some(idx) = trimmed.find(" from ") {
-            let after = &trimmed[idx + " from ".len()..];
-            if let Some(spec) = extract_string_literal(after) {
-                if let Some(candidate) = resolve_js_ts_spec(&spec, dir, project_root) {
-                    deps.push(candidate);
-                }
-            }
-            continue;
+    let language = if is_typescript {
+        tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()
+    } else {
+        tree_sitter_javascript::LANGUAGE.into()
+    };
+
+    let mut parser = tree_sitter::Parser::new();
+    if parser.set_language(&language).is_err() {
+        log::warn!("Failed to set JS/TS language for parser");
+        return deps;
+    }
+
+    let tree = match parser.parse(source, None) {
+        Some(t) => t,
+        None => {
+            log::warn!("Failed to parse JS/TS source for dependencies");
+            return deps;
         }
+    };
 
-        // Handle bare side-effect imports: `import "module";`
-        if let Some(after) = trimmed.strip_prefix("import ") {
-            if let Some(spec) = extract_string_literal(after) {
-                if let Some(candidate) = resolve_js_ts_spec(&spec, dir, project_root) {
+    // Query for import/export statements with string sources
+    // Handles: import ... from "module", export ... from "module", import "module"
+    let query_str = r#"
+        (import_statement source: (string) @import.source)
+        (export_statement source: (string) @export.source)
+    "#;
+
+    let query = match Query::new(&language, query_str) {
+        Ok(q) => q,
+        Err(e) => {
+            log::warn!("Failed to create import query: {}", e);
+            return deps;
+        }
+    };
+
+    let mut cursor = QueryCursor::new();
+    let matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
+
+    for match_ in matches {
+        for capture in match_.captures {
+            if let Ok(text) = capture.node.utf8_text(source.as_bytes()) {
+                // Extract the string content (remove quotes)
+                let spec = text.trim_matches(|c| c == '"' || c == '\'' || c == '`');
+                if let Some(candidate) = resolve_js_ts_spec(spec, dir, project_root) {
                     deps.push(candidate);
                 }
             }
@@ -673,33 +719,6 @@ fn find_js_ts_dependencies(source: &str, file_path: &Path, project_root: &Path) 
     }
 
     deps
-}
-
-fn extract_string_literal(source: &str) -> Option<String> {
-    let bytes = source.as_bytes();
-    let mut i = 0;
-
-    // Find first quote
-    while i < bytes.len() {
-        let c = bytes[i] as char;
-        if c == '"' || c == '\'' {
-            let quote = c;
-            i += 1;
-            let start = i;
-            while i < bytes.len() {
-                let c2 = bytes[i] as char;
-                if c2 == quote {
-                    let end = i;
-                    return Some(source[start..end].to_string());
-                }
-                i += 1;
-            }
-            break;
-        }
-        i += 1;
-    }
-
-    None
 }
 
 fn resolve_js_ts_spec(spec: &str, dir: &Path, project_root: &Path) -> Option<PathBuf> {

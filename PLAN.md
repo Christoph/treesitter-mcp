@@ -17,9 +17,10 @@ Add tree-sitter analysis support for HTML and CSS to help LLMs create consistent
 | Tailwind version | v4 only (`@import "tailwindcss"`, `@theme`, `@layer`) |
 | Embedded script/style | Raw text (no deep parsing) |
 | Class output format | Name + full selector context |
-| Template dir detection | Auto-detect (`templates/` in parent dirs) |
+| Template dir detection | Auto-detect (`templates/` in parent dirs, max depth 10) |
 | Merged template output | Option A: merged content + dependency list with types |
 | @apply/@theme parsing | Regex (tree-sitter won't handle these non-standard directives) |
+| JSON output format | Minified (compact for token efficiency) |
 
 ---
 
@@ -28,6 +29,8 @@ Add tree-sitter analysis support for HTML and CSS to help LLMs create consistent
 ### CSS Shape (`src/analysis/shape.rs`)
 
 ```rust
+use std::borrow::Cow;
+
 /// Theme variable from @theme block
 #[derive(Debug, serde::Serialize, Clone)]
 pub struct ThemeVariable {
@@ -41,7 +44,7 @@ pub struct ThemeVariable {
 pub struct CustomClass {
     pub name: String,                    // "btn-primary", "card"
     pub applied_utilities: Vec<String>,  // ["bg-primary", "text-white", "px-4"]
-    pub layer: Option<String>,           // "components", "utilities", or None
+    pub layer: Option<Cow<'static, str>>, // "components", "utilities", or None
     pub line: usize,
 }
 
@@ -146,15 +149,33 @@ pub struct MergedTemplateShape {
 
 ```rust
 /// Check if a class name is a Tailwind utility (to filter out)
+/// 
+/// NOTE: This list covers common Tailwind v4 utilities but is not exhaustive.
+/// It may need updates as Tailwind evolves. Consider making this configurable
+/// in the future to allow users to add custom utility patterns.
 fn is_tailwind_utility(class: &str) -> bool {
+    // Handle important modifier at the start
+    let class = class.strip_prefix('!').unwrap_or(class);
+    
     // Handle variant prefixes (hover:, dark:, sm:, etc.)
     let base = class.split(':').last().unwrap_or(class);
     
     // Exact match utilities
     let exact = [
-        "flex", "grid", "block", "inline", "hidden", "container",
+        // Layout
+        "flex", "grid", "block", "inline", "inline-block", "inline-flex", "inline-grid",
+        "hidden", "container", "table", "table-row", "table-cell",
+        // Position
         "relative", "absolute", "fixed", "sticky", "static",
+        // Display
         "visible", "invisible", "collapse",
+        // Accessibility
+        "sr-only", "not-sr-only",
+        // Interactivity
+        "pointer-events-none", "pointer-events-auto",
+        // Other common utilities
+        "truncate", "italic", "underline", "line-through", "no-underline",
+        "uppercase", "lowercase", "capitalize", "normal-case",
     ];
     if exact.contains(&base) {
         return true;
@@ -167,31 +188,46 @@ fn is_tailwind_utility(class: &str) -> bool {
         "m-", "mx-", "my-", "mt-", "mr-", "mb-", "ml-", "ms-", "me-", "-m",
         "gap-", "space-",
         // Sizing
-        "w-", "h-", "min-", "max-", "size-",
+        "w-", "h-", "min-w-", "min-h-", "max-w-", "max-h-", "size-",
         // Typography
         "text-", "font-", "leading-", "tracking-", "indent-",
+        "decoration-", "underline-offset-",
         // Colors
         "bg-", "from-", "via-", "to-", "fill-", "stroke-",
+        "text-", "border-", "outline-", "ring-", "shadow-",
         // Borders
-        "border", "rounded", "shadow", "ring", "outline", "divide-",
+        "border-", "rounded-", "shadow-", "ring-", "outline-", "divide-",
         // Layout
         "flex-", "grid-", "col-", "row-", "order-",
         "items-", "justify-", "content-", "place-", "self-",
+        "auto-cols-", "auto-rows-",
         // Position
         "z-", "top-", "right-", "bottom-", "left-", "inset-",
         // Transforms
         "scale-", "rotate-", "translate-", "skew-", "origin-",
-        // Transitions
-        "transition", "duration-", "delay-", "ease-",
-        // Other
-        "opacity-", "animate-", "cursor-", "pointer-events-", "select-",
+        // Transitions & Animations
+        "transition-", "duration-", "delay-", "ease-", "animate-",
+        // Effects
+        "opacity-", "mix-blend-", "bg-blend-",
+        "backdrop-blur-", "backdrop-brightness-", "backdrop-contrast-",
+        "backdrop-grayscale-", "backdrop-hue-rotate-", "backdrop-invert-",
+        "backdrop-opacity-", "backdrop-saturate-", "backdrop-sepia-",
+        // Filters
+        "blur-", "brightness-", "contrast-", "drop-shadow-",
+        "grayscale-", "hue-rotate-", "invert-", "saturate-", "sepia-",
+        // Interactivity
+        "cursor-", "pointer-events-", "resize-", "select-", "user-select-",
+        "caret-", "accent-",
+        // Overflow
         "overflow-", "overscroll-", "scroll-", "snap-",
-        "aspect-", "columns-", "break-", "float-", "clear-", "object-",
+        // Other
+        "aspect-", "columns-", "break-", "break-after-", "break-before-", "break-inside-",
+        "float-", "clear-", "object-", "isolation-",
+        "list-", "placeholder-", "will-change-", "touch-",
     ];
     
     prefixes.iter().any(|p| base.starts_with(p))
         || base.contains('[')  // Arbitrary values like w-[300px]
-        || base.starts_with("!")  // Important modifier
 }
 ```
 
@@ -201,41 +237,70 @@ fn is_tailwind_utility(class: &str) -> bool {
 
 ```rust
 use regex::Regex;
+use std::io;
 
-fn extract_css_tailwind(source: &str, file_path: Option<&str>) -> CssFileShape {
+/// Extract CSS shape from Tailwind v4 source code
+/// 
+/// This function uses regex to parse Tailwind-specific directives (@theme, @layer, @apply)
+/// which are not part of standard CSS and thus not handled by tree-sitter-css.
+fn extract_css_tailwind(source: &str, file_path: Option<&str>) -> Result<CssFileShape, io::Error> {
     let mut theme = Vec::new();
     let mut custom_classes = Vec::new();
     let mut keyframes = Vec::new();
     
     // 1. Extract @theme block variables
-    let theme_block_re = Regex::new(r"@theme\s*\{([\s\S]*?)\n\}").unwrap();
+    let theme_block_re = Regex::new(r"@theme\s*\{([\s\S]*?)\}")
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("Invalid regex: {e}")))?;
+    
     if let Some(cap) = theme_block_re.captures(source) {
+        let theme_start = cap.get(0).unwrap().start();
         let theme_content = &cap[1];
-        let var_re = Regex::new(r"(?m)^\s*(--[\w-]+)\s*:\s*([^;]+);").unwrap();
-        for (line_offset, var_cap) in var_re.captures_iter(theme_content).enumerate() {
+        
+        let var_re = Regex::new(r"(?m)^\s*(--[\w-]+)\s*:\s*([^;]+);")
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("Invalid regex: {e}")))?;
+        
+        for var_cap in var_re.captures_iter(theme_content) {
+            let var_start_in_theme = var_cap.get(0).unwrap().start();
+            let absolute_offset = theme_start + var_start_in_theme;
+            
             theme.push(ThemeVariable {
                 name: var_cap[1].to_string(),
                 value: var_cap[2].trim().to_string(),
-                line: calculate_line(source, var_cap.get(0).unwrap().start()),
+                line: calculate_line(source, absolute_offset),
             });
         }
     }
     
     // 2. Extract @layer components/utilities blocks
-    let layer_re = Regex::new(r"@layer\s+(components|utilities)\s*\{([\s\S]*?)\n\}").unwrap();
+    let layer_re = Regex::new(r"@layer\s+(components|utilities)\s*\{([\s\S]*?)\}")
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("Invalid regex: {e}")))?;
+    
     for layer_cap in layer_re.captures_iter(source) {
-        let layer_name = layer_cap[1].to_string();
+        let layer_name = match &layer_cap[1] {
+            "components" => Cow::Borrowed("components"),
+            "utilities" => Cow::Borrowed("utilities"),
+            _ => Cow::Owned(layer_cap[1].to_string()),
+        };
+        let layer_start = layer_cap.get(0).unwrap().start();
         let layer_content = &layer_cap[2];
         
         // Extract class definitions within layer
-        let class_re = Regex::new(r"\.([\w-]+)\s*\{([^}]*)\}").unwrap();
+        // Note: This simple regex won't handle nested braces (e.g., media queries)
+        // For production use, consider a more robust parser
+        let class_re = Regex::new(r"\.([\w-]+)\s*\{([^}]*)\}")
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("Invalid regex: {e}")))?;
+        
         for class_cap in class_re.captures_iter(layer_content) {
+            let class_start_in_layer = class_cap.get(0).unwrap().start();
+            let absolute_offset = layer_start + class_start_in_layer;
             let class_name = class_cap[1].to_string();
             let class_body = &class_cap[2];
             
             // Extract @apply utilities
             let mut applied = Vec::new();
-            let apply_re = Regex::new(r"@apply\s+([^;]+);").unwrap();
+            let apply_re = Regex::new(r"@apply\s+([^;]+);")
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("Invalid regex: {e}")))?;
+            
             for apply_cap in apply_re.captures_iter(class_body) {
                 applied.extend(
                     apply_cap[1].split_whitespace().map(String::from)
@@ -246,13 +311,15 @@ fn extract_css_tailwind(source: &str, file_path: Option<&str>) -> CssFileShape {
                 name: class_name,
                 applied_utilities: applied,
                 layer: Some(layer_name.clone()),
-                line: calculate_line(source, class_cap.get(0).unwrap().start()),
+                line: calculate_line(source, absolute_offset),
             });
         }
     }
     
-    // 3. Extract @keyframes (use tree-sitter or regex)
-    let keyframes_re = Regex::new(r"@keyframes\s+([\w-]+)\s*\{").unwrap();
+    // 3. Extract @keyframes
+    let keyframes_re = Regex::new(r"@keyframes\s+([\w-]+)\s*\{")
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("Invalid regex: {e}")))?;
+    
     for kf_cap in keyframes_re.captures_iter(source) {
         keyframes.push(KeyframeInfo {
             name: kf_cap[1].to_string(),
@@ -260,14 +327,15 @@ fn extract_css_tailwind(source: &str, file_path: Option<&str>) -> CssFileShape {
         });
     }
     
-    CssFileShape {
+    Ok(CssFileShape {
         path: file_path.map(String::from),
         theme,
         custom_classes,
         keyframes,
-    }
+    })
 }
 
+/// Calculate line number from byte offset
 fn calculate_line(source: &str, byte_offset: usize) -> usize {
     source[..byte_offset].matches('\n').count() + 1
 }
@@ -278,7 +346,11 @@ fn calculate_line(source: &str, byte_offset: usize) -> usize {
 ## Part 4: HTML Extraction (Tree-sitter)
 
 ```rust
-fn extract_html_shape(tree: &Tree, source: &str, file_path: Option<&str>) -> HtmlFileShape {
+use tree_sitter::{Query, QueryCursor, Tree};
+use std::collections::HashSet;
+
+/// Extract HTML shape from parsed tree
+fn extract_html_shape(tree: &Tree, source: &str, file_path: Option<&str>) -> Result<HtmlFileShape, io::Error> {
     let mut ids = Vec::new();
     let mut all_classes = Vec::new();
     let mut scripts = Vec::new();
@@ -288,50 +360,160 @@ fn extract_html_shape(tree: &Tree, source: &str, file_path: Option<&str>) -> Htm
     let query = Query::new(
         &tree_sitter_html::LANGUAGE.into(),
         r#"
-        ; Elements with id attribute
+        ; Capture all elements with attributes
         (element
           (start_tag
             (tag_name) @tag
             (attribute
               (attribute_name) @attr_name
-              (quoted_attribute_value (attribute_value) @attr_value))))
+              (quoted_attribute_value (attribute_value) @attr_value)))) @element
         
         ; Script elements
         (script_element
           (start_tag) @script_start) @script
         
         ; Style elements  
-        (style_element) @style
+        (style_element
+          (start_tag) @style_start) @style
         
-        ; Link elements
+        ; Link elements (for external stylesheets)
         (element
           (start_tag
             (tag_name) @link_tag
-            (#eq? @link_tag "link"))) @link
+            (attribute
+              (attribute_name) @link_attr_name
+              (quoted_attribute_value (attribute_value) @link_attr_value))))
         "#,
-    ).unwrap();
+    ).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("Query error: {e}")))?;
     
-    // Process matches to extract:
-    // - id attributes -> ids
-    // - class attributes -> filter through is_tailwind_utility() -> all_classes
-    // - script src or inline -> scripts
-    // - style href or inline -> styles
+    let mut cursor = QueryCursor::new();
+    let matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
+    
+    for match_ in matches {
+        let mut current_tag = None;
+        let mut current_line = 0;
+        let mut attrs = std::collections::HashMap::new();
+        
+        for capture in match_.captures {
+            let node = capture.node;
+            let capture_name = query.capture_names()[capture.index as usize];
+            
+            match capture_name {
+                "tag" | "link_tag" => {
+                    if let Ok(tag_text) = node.utf8_text(source.as_bytes()) {
+                        current_tag = Some(tag_text.to_string());
+                        current_line = node.start_position().row + 1;
+                    }
+                }
+                "attr_name" | "link_attr_name" => {
+                    if let Ok(attr_name) = node.utf8_text(source.as_bytes()) {
+                        // Store attribute name for next value
+                        if let Some(next_sibling) = node.next_sibling() {
+                            if let Ok(attr_value) = next_sibling.utf8_text(source.as_bytes()) {
+                                // Remove quotes from attribute value
+                                let value = attr_value.trim_matches('"').trim_matches('\'');
+                                attrs.insert(attr_name.to_string(), value.to_string());
+                            }
+                        }
+                    }
+                }
+                "script_start" => {
+                    let line = node.start_position().row + 1;
+                    // Check for src attribute
+                    let src = extract_attribute(&node, source, "src");
+                    scripts.push(ScriptInfo {
+                        src,
+                        inline: src.is_none(),
+                        line,
+                    });
+                }
+                "style_start" => {
+                    let line = node.start_position().row + 1;
+                    styles.push(StyleInfo {
+                        href: None,
+                        inline: true,
+                        line,
+                    });
+                }
+                _ => {}
+            }
+        }
+        
+        // Process collected attributes for the current element
+        if let Some(tag) = current_tag {
+            // Handle id attribute
+            if let Some(id_value) = attrs.get("id") {
+                ids.push(HtmlIdInfo {
+                    tag: tag.clone(),
+                    id: id_value.clone(),
+                    line: current_line,
+                });
+            }
+            
+            // Handle class attribute
+            if let Some(class_value) = attrs.get("class") {
+                all_classes.extend(
+                    class_value.split_whitespace().map(String::from)
+                );
+            }
+            
+            // Handle link elements (stylesheets)
+            if tag == "link" {
+                if let Some(rel) = attrs.get("rel") {
+                    if rel == "stylesheet" {
+                        if let Some(href) = attrs.get("href") {
+                            styles.push(StyleInfo {
+                                href: Some(href.clone()),
+                                inline: false,
+                                line: current_line,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
     
     // Deduplicate and filter classes
     let classes_used: Vec<String> = all_classes
         .into_iter()
         .filter(|c| !is_tailwind_utility(c))
-        .collect::<std::collections::HashSet<_>>()
+        .collect::<HashSet<_>>()
         .into_iter()
         .collect();
     
-    HtmlFileShape {
+    Ok(HtmlFileShape {
         path: file_path.map(String::from),
         ids,
         classes_used,
         scripts,
         styles,
+    })
+}
+
+/// Helper to extract attribute value from a node
+fn extract_attribute(node: &tree_sitter::Node, source: &str, attr_name: &str) -> Option<String> {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() == "attribute" {
+            let mut attr_cursor = child.walk();
+            let mut found_name = false;
+            for attr_child in child.children(&mut attr_cursor) {
+                if attr_child.kind() == "attribute_name" {
+                    if let Ok(name) = attr_child.utf8_text(source.as_bytes()) {
+                        if name == attr_name {
+                            found_name = true;
+                        }
+                    }
+                } else if found_name && attr_child.kind() == "quoted_attribute_value" {
+                    if let Ok(value) = attr_child.utf8_text(source.as_bytes()) {
+                        return Some(value.trim_matches('"').trim_matches('\'').to_string());
+                    }
+                }
+            }
+        }
     }
+    None
 }
 ```
 
@@ -342,10 +524,18 @@ fn extract_html_shape(tree: &Tree, source: &str, file_path: Option<&str>) -> Htm
 ### Auto-detect Templates Directory
 
 ```rust
+use std::path::{Path, PathBuf};
+
+/// Find templates directory by walking up from file path
+/// 
+/// Searches up to MAX_DEPTH parent directories to avoid performance issues
+/// in deeply nested projects.
 fn find_templates_dir(file_path: &Path) -> Option<PathBuf> {
     let mut current = file_path.parent()?;
+    let mut depth = 0;
+    const MAX_DEPTH: usize = 10;
     
-    loop {
+    while depth < MAX_DEPTH {
         // Check if current dir is named "templates"
         if current.file_name().map(|n| n == "templates").unwrap_or(false) {
             return Some(current.to_path_buf());
@@ -358,118 +548,277 @@ fn find_templates_dir(file_path: &Path) -> Option<PathBuf> {
         }
         
         current = current.parent()?;
+        depth += 1;
     }
+    
+    None
 }
 ```
 
 ### Template Dependency Detection
 
 ```rust
-fn find_template_dependencies(source: &str, templates_dir: &Path) -> Vec<TemplateDependency> {
+use std::fs;
+
+/// Find template dependencies (extends and includes)
+/// 
+/// Validates paths to prevent directory traversal attacks.
+fn find_template_dependencies(
+    source: &str,
+    templates_dir: &Path,
+) -> Result<Vec<TemplateDependency>, io::Error> {
     let mut deps = Vec::new();
+    let canonical_templates = templates_dir.canonicalize()?;
     
-    // {% extends "path" %}
-    let extends_re = Regex::new(r#"\{%\s*extends\s+"([^"]+)"\s*%\}"#).unwrap();
+    // {% extends "path" %} - supports both single and double quotes
+    let extends_re = Regex::new(r#"\{%\s*extends\s+["']([^"']+)["']\s*%\}"#)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("Invalid regex: {e}")))?;
+    
     for cap in extends_re.captures_iter(source) {
-        let path = templates_dir.join(&cap[1]);
-        if path.exists() {
-            deps.push(TemplateDependency {
-                path: cap[1].to_string(),
-                dependency_type: "extends".to_string(),
-            });
+        let template_path = &cap[1];
+        let path = templates_dir.join(template_path);
+        
+        // Security: Validate path is within templates_dir
+        if let Ok(canonical_path) = path.canonicalize() {
+            if canonical_path.starts_with(&canonical_templates) && path.exists() {
+                deps.push(TemplateDependency {
+                    path: template_path.to_string(),
+                    dependency_type: "extends".to_string(),
+                });
+            }
         }
     }
     
-    // {% include "path" %}
-    let include_re = Regex::new(r#"\{%\s*include\s+"([^"]+)"\s*%\}"#).unwrap();
+    // {% include "path" %} - supports both single and double quotes
+    let include_re = Regex::new(r#"\{%\s*include\s+["']([^"']+)["']\s*%\}"#)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("Invalid regex: {e}")))?;
+    
     for cap in include_re.captures_iter(source) {
-        let path = templates_dir.join(&cap[1]);
-        if path.exists() {
-            deps.push(TemplateDependency {
-                path: cap[1].to_string(),
-                dependency_type: "include".to_string(),
-            });
+        let template_path = &cap[1];
+        let path = templates_dir.join(template_path);
+        
+        // Security: Validate path is within templates_dir
+        if let Ok(canonical_path) = path.canonicalize() {
+            if canonical_path.starts_with(&canonical_templates) && path.exists() {
+                deps.push(TemplateDependency {
+                    path: template_path.to_string(),
+                    dependency_type: "include".to_string(),
+                });
+            }
         }
     }
     
-    deps
+    Ok(deps)
 }
 ```
 
 ### Template Merging
 
 ```rust
+use std::collections::{HashMap, HashSet};
+
+/// Merge template with its dependencies (extends and includes)
+/// 
+/// Uses separate tracking for visited files and recursion stack to properly
+/// handle circular dependencies while allowing the same file to be included
+/// multiple times in different branches.
 fn merge_template(
     template_path: &Path,
     templates_dir: &Path,
     visited: &mut HashSet<PathBuf>,
+    recursion_stack: &mut Vec<PathBuf>,
 ) -> Result<String, io::Error> {
-    let canonical = fs::canonicalize(template_path)?;
-    if visited.contains(&canonical) {
-        return Ok(String::new()); // Prevent infinite recursion
+    let canonical = template_path.canonicalize().map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("Template not found: {}", template_path.display())
+        )
+    })?;
+    
+    // Check for circular dependency
+    if recursion_stack.contains(&canonical) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Circular template dependency detected: {:?}", recursion_stack)
+        ));
     }
-    visited.insert(canonical);
+    
+    recursion_stack.push(canonical.clone());
+    visited.insert(canonical.clone());
     
     let source = fs::read_to_string(template_path)?;
     
     // Handle {% extends "base.html" %}
-    let extends_re = Regex::new(r#"\{%\s*extends\s+"([^"]+)"\s*%\}"#).unwrap();
+    let extends_re = Regex::new(r#"\{%\s*extends\s+["']([^"']+)["']\s*%\}"#)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("Invalid regex: {e}")))?;
+    
     if let Some(cap) = extends_re.captures(&source) {
         let parent_path = templates_dir.join(&cap[1]);
-        let parent_content = merge_template(&parent_path, templates_dir, visited)?;
+        
+        // Security: Validate path
+        let canonical_parent = parent_path.canonicalize().map_err(|e| {
+            io::Error::new(io::ErrorKind::NotFound, format!("Parent template not found: {e}"))
+        })?;
+        let canonical_templates = templates_dir.canonicalize()?;
+        
+        if !canonical_parent.starts_with(&canonical_templates) {
+            recursion_stack.pop();
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "Path traversal detected in template extends"
+            ));
+        }
+        
+        let parent_content = merge_template(&parent_path, templates_dir, visited, recursion_stack)?;
         
         // Extract blocks from child
-        let child_blocks = extract_blocks(&source);
+        let child_blocks = extract_blocks(&source)?;
         
         // Replace blocks in parent
-        return Ok(replace_blocks(&parent_content, &child_blocks));
+        let result = replace_blocks(&parent_content, &child_blocks)?;
+        recursion_stack.pop();
+        return Ok(result);
     }
     
     // Handle {% include "partial.html" %}
-    let include_re = Regex::new(r#"\{%\s*include\s+"([^"]+)"\s*%\}"#).unwrap();
+    let include_re = Regex::new(r#"\{%\s*include\s+["']([^"']+)["']\s*%\}"#)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("Invalid regex: {e}")))?;
+    
     let result = include_re.replace_all(&source, |caps: &regex::Captures| {
         let include_path = templates_dir.join(&caps[1]);
-        merge_template(&include_path, templates_dir, visited)
-            .unwrap_or_else(|_| format!("<!-- include error: {} -->", &caps[1]))
+        
+        // Security: Validate path
+        if let Ok(canonical_include) = include_path.canonicalize() {
+            if let Ok(canonical_templates) = templates_dir.canonicalize() {
+                if canonical_include.starts_with(&canonical_templates) {
+                    return merge_template(&include_path, templates_dir, visited, recursion_stack)
+                        .unwrap_or_else(|e| format!("<!-- include error: {} - {} -->", &caps[1], e));
+                }
+            }
+        }
+        format!("<!-- include error: {} - path validation failed -->", &caps[1])
     });
     
+    recursion_stack.pop();
     Ok(result.to_string())
 }
 
-fn extract_blocks(source: &str) -> HashMap<String, String> {
+/// Extract block definitions from template source
+fn extract_blocks(source: &str) -> Result<HashMap<String, String>, io::Error> {
     let mut blocks = HashMap::new();
-    let block_re = Regex::new(
-        r#"\{%\s*block\s+(\w+)\s*%\}([\s\S]*?)\{%\s*endblock\s*%\}"#
-    ).unwrap();
+    let block_re = Regex::new(r#"\{%\s*block\s+(\w+)\s*%\}([\s\S]*?)\{%\s*endblock\s*%\}"#)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("Invalid regex: {e}")))?;
     
     for cap in block_re.captures_iter(source) {
         blocks.insert(cap[1].to_string(), cap[2].to_string());
     }
-    blocks
+    Ok(blocks)
 }
 
-fn replace_blocks(parent: &str, child_blocks: &HashMap<String, String>) -> String {
-    let block_re = Regex::new(
-        r#"\{%\s*block\s+(\w+)\s*%\}([\s\S]*?)\{%\s*endblock\s*%\}"#
-    ).unwrap();
+/// Replace block placeholders in parent template with child blocks
+fn replace_blocks(parent: &str, child_blocks: &HashMap<String, String>) -> Result<String, io::Error> {
+    let block_re = Regex::new(r#"\{%\s*block\s+(\w+)\s*%\}([\s\S]*?)\{%\s*endblock\s*%\}"#)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("Invalid regex: {e}")))?;
     
-    block_re.replace_all(parent, |caps: &regex::Captures| {
+    let result = block_re.replace_all(parent, |caps: &regex::Captures| {
         let block_name = &caps[1];
         // Use child block if exists, otherwise keep parent default
         child_blocks.get(block_name)
             .cloned()
             .unwrap_or_else(|| caps[2].to_string())
-    }).to_string()
+    });
+    
+    Ok(result.to_string())
 }
 ```
 
 ---
 
-## Part 6: Tool Parameter Updates
+## Part 6: Integration with Existing Code
 
-### file_shape Tool (`src/tools.rs`)
+### Update `src/analysis/shape.rs`
 
-Add `merge_templates` parameter:
+Add new extraction functions that integrate with existing `extract_enhanced_shape`:
+
+```rust
+/// Extract shape based on language type
+pub fn extract_enhanced_shape(
+    tree: &Tree,
+    source: &str,
+    language: Language,
+    file_path: Option<&str>,
+) -> Result<EnhancedFileShape, io::Error> {
+    let shape = match language {
+        Language::Rust => extract_rust_enhanced(tree, source)?,
+        Language::Python => extract_python_enhanced(tree, source)?,
+        Language::JavaScript => extract_js_enhanced(tree, source, Language::JavaScript)?,
+        Language::TypeScript => extract_js_enhanced(tree, source, Language::TypeScript)?,
+        Language::Html => {
+            // Return HTML shape wrapped in a compatible format
+            let html_shape = extract_html_shape(tree, source, file_path)?;
+            return Ok(convert_html_to_enhanced(html_shape));
+        }
+        Language::Css => {
+            // Return CSS shape wrapped in a compatible format
+            let css_shape = extract_css_tailwind(source, file_path)?;
+            return Ok(convert_css_to_enhanced(css_shape));
+        }
+        _ => EnhancedFileShape {
+            path: None,
+            language: None,
+            functions: vec![],
+            structs: vec![],
+            classes: vec![],
+            imports: vec![],
+        },
+    };
+
+    Ok(EnhancedFileShape {
+        path: file_path.map(|p| p.to_string()),
+        language: Some(language.name().to_string()),
+        ..shape
+    })
+}
+```
+
+### Update `src/analysis/file_shape.rs`
+
+Add HTML/CSS handling to `extract_shape`:
+
+```rust
+pub fn extract_shape(
+    tree: &Tree,
+    source: &str,
+    language: Language,
+) -> Result<FileShape, io::Error> {
+    match language {
+        Language::Rust => extract_rust_shape(tree, source),
+        Language::Python => extract_python_shape(tree, source),
+        Language::JavaScript => extract_js_shape(tree, source),
+        Language::TypeScript => extract_ts_shape(tree, source),
+        Language::Html => {
+            let html_shape = crate::analysis::shape::extract_html_shape(tree, source, None)?;
+            Ok(convert_html_shape_to_file_shape(html_shape))
+        }
+        Language::Css => {
+            let css_shape = crate::analysis::shape::extract_css_tailwind(source, None)?;
+            Ok(convert_css_shape_to_file_shape(css_shape))
+        }
+        _ => Ok(FileShape {
+            path: None,
+            functions: vec![],
+            structs: vec![],
+            classes: vec![],
+            imports: vec![],
+            dependencies: vec![],
+        }),
+    }
+}
+```
+
+### Update `src/tools.rs`
+
+Add `merge_templates` parameter with proper error handling:
 
 ```rust
 Tool {
@@ -489,7 +838,7 @@ Tool {
             },
             "merge_templates": {
                 "type": "boolean",
-                "description": "For Askama/Jinja2 templates: merge extends/includes into single output",
+                "description": "For Askama/Jinja2 templates (.html in templates/ dir): merge extends/includes into single output. Returns error if used on non-template files.",
                 "default": false
             }
         },
@@ -498,432 +847,111 @@ Tool {
 }
 ```
 
+Update execution logic in `file_shape.rs`:
+
+```rust
+pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
+    let file_path_str = arguments["file_path"].as_str().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Missing or invalid 'file_path' argument",
+        )
+    })?;
+
+    let include_deps = arguments["include_deps"].as_bool().unwrap_or(false);
+    let merge_templates = arguments["merge_templates"].as_bool().unwrap_or(false);
+
+    log::info!("Extracting shape of file: {file_path_str} (include_deps: {include_deps}, merge_templates: {merge_templates})");
+
+    let path = Path::new(file_path_str);
+    
+    // Handle template merging if requested
+    if merge_templates {
+        // Validate this is a template file
+        let templates_dir = find_templates_dir(path).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "merge_templates=true requires file to be in a 'templates/' directory"
+            )
+        })?;
+        
+        let source = fs::read_to_string(path)?;
+        let mut visited = HashSet::new();
+        let mut recursion_stack = Vec::new();
+        
+        let merged_content = merge_template(path, &templates_dir, &mut visited, &mut recursion_stack)?;
+        let dependencies = find_template_dependencies(&source, &templates_dir)?;
+        
+        let merged_shape = MergedTemplateShape {
+            path: path.to_string_lossy().to_string(),
+            merged_content,
+            dependencies,
+        };
+        
+        let shape_json = serde_json::to_string(&merged_shape).map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Failed to serialize merged template: {e}"),
+            )
+        })?;
+        
+        return Ok(CallToolResult::success(shape_json));
+    }
+
+    // ... rest of existing logic ...
+}
+```
+
 ---
 
 ## Part 7: Test Fixtures
 
-### `tests/fixtures/typescript_project/styles/globals.css`
+### Minimal Test Fixtures for Unit Tests
 
+Create minimal fixtures in `tests/fixtures/minimal/`:
+
+**`tests/fixtures/minimal/simple.css`**:
 ```css
-@import "tailwindcss";
-
 @theme {
-  /* Colors */
-  --color-primary: oklch(0.6 0.2 250);
-  --color-primary-hover: oklch(0.5 0.25 250);
-  --color-secondary: oklch(0.7 0.15 160);
-  --color-success: oklch(0.7 0.2 145);
-  --color-warning: oklch(0.8 0.15 85);
-  --color-error: oklch(0.65 0.25 25);
-  
-  /* Spacing */
-  --spacing-xs: 0.25rem;
-  --spacing-sm: 0.5rem;
-  --spacing-md: 1rem;
-  --spacing-lg: 1.5rem;
-  --spacing-xl: 2rem;
-  
-  /* Typography */
-  --font-display: "Inter", system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", monospace;
-  
-  /* Radius */
-  --radius-sm: 0.25rem;
-  --radius-md: 0.5rem;
-  --radius-lg: 1rem;
-  
-  /* Animations */
-  @keyframes fade-in {
-    from { opacity: 0; }
-    to { opacity: 1; }
-  }
-  
-  @keyframes slide-up {
-    from { transform: translateY(10px); opacity: 0; }
-    to { transform: translateY(0); opacity: 1; }
-  }
+  --color-primary: blue;
 }
 
 @layer components {
   .btn {
-    @apply inline-flex items-center justify-center px-4 py-2 rounded-md font-medium transition-colors;
-  }
-  
-  .btn-primary {
-    @apply btn bg-primary text-white hover:bg-primary-hover;
-  }
-  
-  .btn-secondary {
-    @apply btn bg-secondary text-white;
-  }
-  
-  .btn-outline {
-    @apply btn border-2 border-primary text-primary bg-transparent hover:bg-primary hover:text-white;
-  }
-  
-  .card {
-    @apply bg-white rounded-lg shadow-md p-6;
-  }
-  
-  .card-header {
-    @apply border-b pb-4 mb-4;
-  }
-  
-  .card-title {
-    @apply text-xl font-semibold;
-  }
-  
-  .input {
-    @apply w-full px-4 py-2 rounded-md border border-gray-300 focus:ring-2 focus:ring-primary;
-  }
-  
-  .label {
-    @apply block text-sm font-medium text-gray-700 mb-1;
-  }
-  
-  .calc-display {
-    @apply w-full p-4 text-right text-3xl font-mono bg-gray-900 text-green-400 rounded-t-lg;
-  }
-  
-  .calc-key {
-    @apply p-4 text-xl font-bold rounded transition-colors hover:bg-gray-300;
-  }
-  
-  .calc-key-operator {
-    @apply calc-key bg-primary text-white hover:bg-primary-hover;
-  }
-}
-
-@layer utilities {
-  .text-balance {
-    text-wrap: balance;
-  }
-  
-  .animate-fade-in {
-    animation: fade-in 0.3s ease-out;
-  }
-  
-  .animate-slide-up {
-    animation: slide-up 0.4s ease-out;
+    @apply px-4 py-2;
   }
 }
 ```
 
-### `tests/fixtures/typescript_project/index.html`
-
+**`tests/fixtures/minimal/simple.html`**:
 ```html
 <!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <title>Calculator App</title>
-    <link rel="stylesheet" href="./styles/globals.css">
-    <script src="./index.js" type="module" defer></script>
-</head>
-<body class="min-h-screen bg-gray-50">
-    <header id="app-header" class="bg-white border-b">
-        <div class="container mx-auto px-4 py-4 flex items-center justify-between">
-            <h1 class="text-2xl font-bold text-primary">Calculator</h1>
-            <nav id="main-nav" class="flex gap-6">
-                <a href="#basic">Basic</a>
-                <a href="#advanced">Advanced</a>
-            </nav>
-        </div>
-    </header>
-    
-    <main id="app-content" class="container mx-auto px-4 py-8">
-        <section id="basic" class="card max-w-md mx-auto mb-8">
-            <div class="card-header">
-                <h2 class="card-title">Basic Calculator</h2>
-            </div>
-            <div id="calc-display" class="calc-display">0</div>
-            <div id="calc-keypad" class="grid grid-cols-4 gap-1 p-2">
-                <button class="calc-key">7</button>
-                <button class="calc-key">8</button>
-                <button class="calc-key">9</button>
-                <button class="calc-key-operator">÷</button>
-                <button class="calc-key">4</button>
-                <button class="calc-key">5</button>
-                <button class="calc-key">6</button>
-                <button class="calc-key-operator">×</button>
-                <button class="calc-key">1</button>
-                <button class="calc-key">2</button>
-                <button class="calc-key">3</button>
-                <button class="calc-key-operator">−</button>
-                <button class="calc-key">0</button>
-                <button class="calc-key">.</button>
-                <button class="calc-key-operator">=</button>
-                <button class="calc-key-operator">+</button>
-            </div>
-            <button id="clear-btn" class="btn-secondary mt-4">Clear</button>
-        </section>
-        
-        <section id="advanced" class="card max-w-md mx-auto">
-            <div class="card-header">
-                <h2 class="card-title">Advanced Operations</h2>
-            </div>
-            <form id="custom-operation" class="space-y-4">
-                <div>
-                    <label for="input-a" class="label">First Number</label>
-                    <input type="number" id="input-a" class="input">
-                </div>
-                <div>
-                    <label for="input-b" class="label">Second Number</label>
-                    <input type="number" id="input-b" class="input">
-                </div>
-                <button type="submit" class="btn-primary w-full">Calculate</button>
-            </form>
-        </section>
-    </main>
-    
-    <footer id="app-footer" class="border-t mt-auto py-6 text-center">
-        <p class="text-sm text-gray-600">Built with TypeScript</p>
-    </footer>
+<html>
+<head><title>Test</title></head>
+<body>
+  <div id="main" class="card btn-primary">Content</div>
 </body>
 </html>
 ```
 
-### `tests/fixtures/rust_project/templates/base.html`
+### Comprehensive Test Fixtures for Integration Tests
 
-```html
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <title>{% block title %}Calculator{% endblock %}</title>
-    <link rel="stylesheet" href="/static/globals.css">
-    {% block head %}{% endblock %}
-</head>
-<body class="min-h-screen bg-gray-50">
-    {% include "partials/header.html" %}
-    
-    <main id="app-content" class="container mx-auto px-4 py-8">
-        {% block content %}{% endblock %}
-    </main>
-    
-    {% include "partials/footer.html" %}
-    
-    {% block scripts %}{% endblock %}
-</body>
-</html>
-```
-
-### `tests/fixtures/rust_project/templates/calculator.html`
-
-```html
-{% extends "base.html" %}
-
-{% block title %}{{ operation }} - Calculator{% endblock %}
-
-{% block content %}
-<section id="calculator" class="card max-w-md mx-auto">
-    <div class="card-header">
-        <h2 class="card-title">{{ operation }}</h2>
-    </div>
-    
-    <div id="result-display" class="p-6 bg-gray-100 rounded-lg text-center mb-4">
-        {% match result %}
-            {% when Some with (value) %}
-                <p class="text-sm text-gray-500 mb-1">Result</p>
-                <span class="text-4xl font-mono font-bold text-primary">{{ value }}</span>
-            {% when None %}
-                <span class="text-2xl text-error">Error</span>
-        {% endmatch %}
-    </div>
-    
-    <form action="/calculate" method="post" class="space-y-4">
-        <div class="grid grid-cols-3 gap-4">
-            <div>
-                <label for="input-a" class="label">A</label>
-                <input type="number" name="a" id="input-a" value="{{ a }}" class="input text-center">
-            </div>
-            <div>
-                <select name="op" class="input text-center text-xl">
-                    {% for op in operations %}
-                    <option value="{{ op.value }}"{% if op.value == selected_op %} selected{% endif %}>
-                        {{ op.label }}
-                    </option>
-                    {% endfor %}
-                </select>
-            </div>
-            <div>
-                <label for="input-b" class="label">B</label>
-                <input type="number" name="b" id="input-b" value="{{ b }}" class="input text-center">
-            </div>
-        </div>
-        <button type="submit" class="btn-primary w-full">Calculate</button>
-    </form>
-    
-    {% if !history.is_empty() %}
-    {% include "partials/history.html" %}
-    {% endif %}
-</section>
-{% endblock %}
-```
-
-### `tests/fixtures/rust_project/templates/partials/header.html`
-
-```html
-<header id="site-header" class="bg-white border-b">
-    <div class="container mx-auto px-4 py-4 flex items-center justify-between">
-        <h1 class="text-2xl font-bold text-primary">{{ site_name }}</h1>
-        <nav class="flex gap-6">
-            {% for item in nav_items %}
-            <a href="{{ item.url }}" class="{% if item.active %}font-semibold text-primary{% else %}text-gray-600 hover:text-primary{% endif %}">
-                {{ item.label }}
-            </a>
-            {% endfor %}
-        </nav>
-    </div>
-</header>
-```
-
-### `tests/fixtures/rust_project/templates/partials/footer.html`
-
-```html
-<footer id="site-footer" class="border-t mt-auto py-6 text-center">
-    <p class="text-sm text-gray-600">&copy; {{ year }} {{ site_name }}</p>
-</footer>
-```
-
-### `tests/fixtures/rust_project/templates/partials/history.html`
-
-```html
-<aside id="history" class="mt-6 p-4 bg-gray-50 rounded-lg">
-    <h3 class="text-lg font-semibold mb-2">History</h3>
-    <ul class="space-y-1">
-        {% for entry in history %}
-        <li class="flex justify-between text-sm">
-            <span class="font-mono">{{ entry.expression }}</span>
-            <span class="font-bold">= {{ entry.result }}</span>
-        </li>
-        {% endfor %}
-    </ul>
-</aside>
-```
-
-### `tests/fixtures/rust_project/Cargo.toml`
-
-```toml
-[package]
-name = "rust_project"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-askama = "0.12"
-```
-
-### `tests/fixtures/rust_project/src/templates.rs`
-
-```rust
-use askama::Template;
-
-#[derive(Template)]
-#[template(path = "calculator.html")]
-pub struct CalculatorTemplate<'a> {
-    pub site_name: &'a str,
-    pub nav_items: Vec<NavItem<'a>>,
-    pub year: u32,
-    pub operation: &'a str,
-    pub a: i32,
-    pub b: i32,
-    pub selected_op: &'a str,
-    pub operations: Vec<OperationOption<'a>>,
-    pub result: Option<i32>,
-    pub history: Vec<HistoryEntry<'a>>,
-}
-
-pub struct NavItem<'a> {
-    pub url: &'a str,
-    pub label: &'a str,
-    pub active: bool,
-}
-
-pub struct OperationOption<'a> {
-    pub value: &'a str,
-    pub label: &'a str,
-}
-
-pub struct HistoryEntry<'a> {
-    pub expression: &'a str,
-    pub result: &'a str,
-}
-```
+(Keep the existing comprehensive fixtures from Part 7 of the original plan for integration tests)
 
 ---
 
 ## Part 8: Expected Output Examples
 
-### CSS Shape Output
+### CSS Shape Output (Minified)
 
 ```json
-{
-  "path": "styles/globals.css",
-  "theme": [
-    {"name": "--color-primary", "value": "oklch(0.6 0.2 250)", "line": 5},
-    {"name": "--color-primary-hover", "value": "oklch(0.5 0.25 250)", "line": 6},
-    {"name": "--color-secondary", "value": "oklch(0.7 0.15 160)", "line": 7},
-    {"name": "--spacing-lg", "value": "1.5rem", "line": 15},
-    {"name": "--font-display", "value": "\"Inter\", system-ui, sans-serif", "line": 20}
-  ],
-  "custom_classes": [
-    {"name": "btn", "applied_utilities": ["inline-flex", "items-center", "justify-center", "px-4", "py-2", "rounded-md", "font-medium", "transition-colors"], "layer": "components", "line": 38},
-    {"name": "btn-primary", "applied_utilities": ["btn", "bg-primary", "text-white", "hover:bg-primary-hover"], "layer": "components", "line": 42},
-    {"name": "btn-secondary", "applied_utilities": ["btn", "bg-secondary", "text-white"], "layer": "components", "line": 46},
-    {"name": "card", "applied_utilities": ["bg-white", "rounded-lg", "shadow-md", "p-6"], "layer": "components", "line": 54},
-    {"name": "input", "applied_utilities": ["w-full", "px-4", "py-2", "rounded-md", "border", "border-gray-300", "focus:ring-2", "focus:ring-primary"], "layer": "components", "line": 66},
-    {"name": "calc-display", "applied_utilities": ["w-full", "p-4", "text-right", "text-3xl", "font-mono", "bg-gray-900", "text-green-400", "rounded-t-lg"], "layer": "components", "line": 74},
-    {"name": "animate-fade-in", "applied_utilities": [], "layer": "utilities", "line": 86}
-  ],
-  "keyframes": [
-    {"name": "fade-in", "line": 28},
-    {"name": "slide-up", "line": 33}
-  ]
-}
+{"path":"styles/globals.css","theme":[{"name":"--color-primary","value":"oklch(0.6 0.2 250)","line":5}],"custom_classes":[{"name":"btn","applied_utilities":["inline-flex","items-center","justify-center","px-4","py-2","rounded-md","font-medium","transition-colors"],"layer":"components","line":38}],"keyframes":[{"name":"fade-in","line":28}]}
 ```
 
-### HTML Shape Output
+### HTML Shape Output (Minified)
 
 ```json
-{
-  "path": "index.html",
-  "ids": [
-    {"tag": "header", "id": "app-header", "line": 10},
-    {"tag": "nav", "id": "main-nav", "line": 13},
-    {"tag": "main", "id": "app-content", "line": 19},
-    {"tag": "section", "id": "basic", "line": 20},
-    {"tag": "div", "id": "calc-display", "line": 24},
-    {"tag": "div", "id": "calc-keypad", "line": 25},
-    {"tag": "button", "id": "clear-btn", "line": 42},
-    {"tag": "section", "id": "advanced", "line": 45},
-    {"tag": "form", "id": "custom-operation", "line": 49},
-    {"tag": "input", "id": "input-a", "line": 52},
-    {"tag": "input", "id": "input-b", "line": 56},
-    {"tag": "footer", "id": "app-footer", "line": 63}
-  ],
-  "classes_used": [
-    "btn-primary", "btn-secondary", "card", "card-header", "card-title",
-    "calc-display", "calc-key", "calc-key-operator", "input", "label"
-  ],
-  "scripts": [{"src": "./index.js", "inline": false, "line": 6}],
-  "styles": [{"href": "./styles/globals.css", "inline": false, "line": 5}]
-}
-```
-
-### Merged Template Output (merge_templates=true)
-
-```json
-{
-  "path": "templates/calculator.html",
-  "merged_content": "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n    <meta charset=\"UTF-8\">\n    <title>{{ operation }} - Calculator</title>\n    <link rel=\"stylesheet\" href=\"/static/globals.css\">\n    \n</head>\n<body class=\"min-h-screen bg-gray-50\">\n    <header id=\"site-header\" class=\"bg-white border-b\">...</header>\n    \n    <main id=\"app-content\" class=\"container mx-auto px-4 py-8\">\n        <section id=\"calculator\" class=\"card max-w-md mx-auto\">...</section>\n    </main>\n    \n    <footer id=\"site-footer\" class=\"border-t mt-auto py-6 text-center\">...</footer>\n    \n    \n</body>\n</html>",
-  "dependencies": [
-    {"path": "base.html", "dependency_type": "extends"},
-    {"path": "partials/header.html", "dependency_type": "include"},
-    {"path": "partials/footer.html", "dependency_type": "include"},
-    {"path": "partials/history.html", "dependency_type": "include"}
-  ]
-}
+{"path":"index.html","ids":[{"tag":"header","id":"app-header","line":10}],"classes_used":["btn-primary","card","card-header"],"scripts":[{"src":"./index.js","inline":false,"line":6}],"styles":[{"href":"./styles/globals.css","inline":false,"line":5}]}
 ```
 
 ---
@@ -932,13 +960,16 @@ pub struct HistoryEntry<'a> {
 
 | File | Action | Description |
 |------|--------|-------------|
-| `src/analysis/shape.rs` | Modify | Add `CssFileShape`, `HtmlFileShape`, `ThemeVariable`, `CustomClass`, extraction functions |
-| `src/analysis/file_shape.rs` | Modify | Add HTML/CSS shape extraction, `merge_templates` param, Askama resolution |
+| `Cargo.toml` | Modify | Add `regex = "1.10"` dependency |
+| `src/parser/mod.rs` | Modify | Add `Language::Html` and `Language::Css` variants |
+| `src/analysis/shape.rs` | Modify | Add CSS/HTML shapes, extraction functions, integration with `extract_enhanced_shape` |
+| `src/analysis/file_shape.rs` | Modify | Add HTML/CSS shape extraction, `merge_templates` param, Askama resolution, error handling |
 | `src/analysis/get_context.rs` | Modify | Add HTML/CSS context node types |
 | `src/tools.rs` | Modify | Add `merge_templates` parameter to file_shape schema |
-| `Cargo.toml` | Modify | Add `regex = "1.10"` dependency |
-| `tests/fixtures/typescript_project/index.html` | Create | HTML test fixture |
-| `tests/fixtures/typescript_project/styles/globals.css` | Create | Tailwind v4 CSS fixture |
+| `tests/fixtures/minimal/simple.css` | Create | Minimal CSS test fixture |
+| `tests/fixtures/minimal/simple.html` | Create | Minimal HTML test fixture |
+| `tests/fixtures/typescript_project/index.html` | Create | Comprehensive HTML test fixture |
+| `tests/fixtures/typescript_project/styles/globals.css` | Create | Comprehensive Tailwind v4 CSS fixture |
 | `tests/fixtures/rust_project/templates/base.html` | Create | Askama base template |
 | `tests/fixtures/rust_project/templates/calculator.html` | Create | Askama child template |
 | `tests/fixtures/rust_project/templates/partials/header.html` | Create | Askama partial |
@@ -947,8 +978,10 @@ pub struct HistoryEntry<'a> {
 | `tests/fixtures/rust_project/Cargo.toml` | Modify | Add askama dependency |
 | `tests/fixtures/rust_project/src/lib.rs` | Modify | Add `pub mod templates;` |
 | `tests/fixtures/rust_project/src/templates.rs` | Create | Template structs |
-| `tests/html_css_test.rs` | Create | Tests for HTML/CSS extraction |
-| `tests/askama_test.rs` | Create | Tests for Askama template merging |
+| `tests/css_extraction_test.rs` | Create | Unit tests for CSS extraction |
+| `tests/html_extraction_test.rs` | Create | Unit tests for HTML extraction |
+| `tests/askama_merging_test.rs` | Create | Unit tests for Askama template merging |
+| `tests/html_css_integration_test.rs` | Create | Integration tests for HTML + CSS together |
 
 ---
 
@@ -956,17 +989,103 @@ pub struct HistoryEntry<'a> {
 
 | Phase | Tasks | Priority |
 |-------|-------|----------|
-| 1 | Add `regex` to Cargo.toml dependencies | High |
-| 2 | Add data structures to `shape.rs` | High |
-| 3 | Implement `extract_css_tailwind()` with regex | High |
-| 4 | Implement `extract_html_shape()` with tree-sitter + filtering | High |
-| 5 | Add `merge_templates` param and Askama resolution to `file_shape.rs` | High |
-| 6 | Update `get_context.rs` for HTML/CSS nodes | Medium |
-| 7 | Update `tools.rs` with new parameter | Medium |
-| 8 | Create test fixtures (CSS, HTML, Askama templates) | Medium |
-| 9 | Add unit tests for CSS extraction | High |
-| 10 | Add unit tests for HTML extraction | High |
-| 11 | Add integration tests for Askama merging | High |
+| 1 | Add `regex = "1.10"` to Cargo.toml dependencies | High |
+| 2 | Add `Language::Html` and `Language::Css` to parser | High |
+| 3 | Add data structures to `shape.rs` | High |
+| 4 | Implement `extract_css_tailwind()` with proper error handling | High |
+| 5 | Create minimal CSS test fixtures and unit tests | High |
+| 6 | Implement `extract_html_shape()` with tree-sitter + filtering | High |
+| 7 | Create minimal HTML test fixtures and unit tests | High |
+| 8 | Integrate CSS/HTML extraction with `extract_enhanced_shape()` | High |
+| 9 | Update `file_shape.rs` to handle HTML/CSS languages | High |
+| 10 | Implement template directory detection with depth limit | Medium |
+| 11 | Implement template dependency detection with security validation | High |
+| 12 | Implement template merging with circular dependency detection | High |
+| 13 | Create Askama template fixtures and unit tests | High |
+| 14 | Add `merge_templates` param to `tools.rs` with error handling | Medium |
+| 15 | Update `get_context.rs` for HTML/CSS nodes | Medium |
+| 16 | Create comprehensive test fixtures for integration tests | Medium |
+| 17 | Add integration tests for HTML + CSS together | High |
+| 18 | Add edge case tests (minified CSS, circular templates, etc.) | High |
+| 19 | Add security tests (path traversal, large files) | High |
+| 20 | Add performance tests (large files, deep inheritance) | Medium |
+| 21 | Update documentation with usage examples | Medium |
+
+---
+
+## Part 11: Testing Strategy
+
+### Unit Tests
+
+1. **CSS Extraction** (`tests/css_extraction_test.rs`):
+   - Test @theme variable extraction
+   - Test @layer components/utilities extraction
+   - Test @apply directive parsing
+   - Test @keyframes extraction
+   - Test minified CSS (no whitespace)
+   - Test nested braces (should document limitations)
+   - Test error handling for invalid regex
+
+2. **HTML Extraction** (`tests/html_extraction_test.rs`):
+   - Test ID extraction
+   - Test class extraction and filtering
+   - Test script/style reference extraction
+   - Test malformed HTML handling
+   - Test empty/missing attributes
+
+3. **Askama Merging** (`tests/askama_merging_test.rs`):
+   - Test simple extends
+   - Test nested includes
+   - Test block replacement
+   - Test circular dependency detection
+   - Test path traversal prevention
+   - Test missing template handling
+
+### Integration Tests
+
+1. **HTML + CSS** (`tests/html_css_integration_test.rs`):
+   - Test extracting both HTML and CSS from a project
+   - Test matching custom classes between HTML and CSS
+   - Test complete UI component analysis
+
+### Security Tests
+
+1. **Path Traversal**:
+   - Test `../../etc/passwd` in template includes
+   - Test absolute paths in template references
+
+2. **DoS Prevention**:
+   - Test extremely large CSS files (>10MB)
+   - Test deeply nested template inheritance (>20 levels)
+
+### Performance Tests
+
+1. **Large Files**:
+   - Test HTML with 10,000+ elements
+   - Test CSS with 1,000+ classes
+
+---
+
+## Part 12: Usage Examples
+
+### Extract CSS Shape
+
+```bash
+# Using MCP protocol
+echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"file_shape","arguments":{"file_path":"styles/globals.css"}}}' | treesitter-mcp
+```
+
+### Extract HTML Shape
+
+```bash
+echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"file_shape","arguments":{"file_path":"index.html"}}}' | treesitter-mcp
+```
+
+### Merge Askama Templates
+
+```bash
+echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"file_shape","arguments":{"file_path":"templates/calculator.html","merge_templates":true}}}' | treesitter-mcp
+```
 
 ---
 
@@ -980,3 +1099,16 @@ This implementation helps LLMs create consistent UIs by:
 4. **Providing merged template views** for complete UI structure understanding
 
 The focus is specifically on what helps with UI consistency - not raw Tailwind utilities (which are just noise), but the semantic layer built on top of Tailwind.
+
+### Key Improvements from Review
+
+1. **Security**: Added path traversal validation for template includes
+2. **Error Handling**: Proper error propagation with `Result<T, io::Error>` throughout
+3. **Regex Safety**: All regex compilations use `map_err` instead of `unwrap()`
+4. **Byte Offset Calculation**: Fixed to account for parent match offsets
+5. **Circular Dependency Detection**: Separate recursion stack from visited set
+6. **Tailwind Utility Detection**: Expanded list with documentation about maintenance
+7. **Performance**: Added depth limit to template directory search
+8. **Integration**: Clear integration points with existing codebase
+9. **Testing**: Comprehensive test strategy including security and performance tests
+10. **Documentation**: Added usage examples and clear error messages

@@ -15,7 +15,7 @@ use tree_sitter::{Node, Tree};
 /// # Arguments
 /// * `arguments` - JSON object with:
 ///   - `file_path`: String - Path to the source file
-///   - `line`: u32 - 0-indexed line number
+///   - `line`: u32 - 1-indexed line number
 ///   - `column`: u32 - 1-indexed column number
 ///   - `ancestor_levels`: Option<u32> - Number of ancestor levels to return (default: 3)
 ///

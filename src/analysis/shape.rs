@@ -463,77 +463,71 @@ fn extract_js_enhanced(
 }
 
 /// Extract the signature line of a function or struct
+/// Uses tree-sitter to find the body node and extract signature efficiently
 fn extract_signature(node: Node, source: &str) -> Result<String, io::Error> {
     let source_bytes = source.as_bytes();
-    let node_end_byte = node.end_byte();
-    let node_text = String::from_utf8_lossy(&source_bytes[node.start_byte()..node_end_byte]);
 
-    // Find where the actual declaration starts (after attributes)
-    let mut start_offset = 0;
-    let mut declaration_line = "";
-    for line in node_text.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("fn ")
-            || trimmed.starts_with("pub fn ")
-            || trimmed.starts_with("struct ")
-            || trimmed.starts_with("pub struct ")
-            || trimmed.starts_with("class ")
-            || trimmed.starts_with("def ")
+    // Try to find the body node using tree-sitter
+    // Body node types: block, statement_block, body, compound_statement
+    let mut body_start_byte = None;
+    let mut cursor = node.walk();
+
+    for child in node.children(&mut cursor) {
+        let kind = child.kind();
+        if kind == "block"
+            || kind == "statement_block"
+            || kind == "body"
+            || kind == "compound_statement"
+            || kind == "field_declaration_list"
+        // For structs
         {
-            // Found the declaration line
-            start_offset = node_text.find(line).unwrap_or(0);
-            declaration_line = line;
+            body_start_byte = Some(child.start_byte());
             break;
         }
     }
 
-    let start_byte = node.start_byte() + start_offset;
+    // Determine the end of the signature
+    let end_byte = if let Some(body_start) = body_start_byte {
+        // Signature is everything before the body
+        body_start
+    } else {
+        // No body found (e.g., trait method declaration), use the entire node
+        node.end_byte()
+    };
 
-    // Find the end of the signature - look for opening brace or colon
-    // For Rust: stop at { (function body start)
-    // For Python: stop at : (function body start)
-    // For JS/TS: stop at { (function body start)
-    let mut end_byte = start_byte;
-    let mut found_end = false;
-    let mut paren_depth = 0;
-    let mut bracket_depth = 0;
+    // Extract the signature text
+    let start_byte = node.start_byte();
+    let signature_bytes = &source_bytes[start_byte..end_byte];
+    let signature_text = String::from_utf8_lossy(signature_bytes);
 
-    #[allow(clippy::needless_range_loop)]
-    for i in start_byte..node_end_byte.min(source_bytes.len()) {
-        match source_bytes[i] {
-            b'(' => paren_depth += 1,
-            b')' => paren_depth -= 1,
-            b'<' => bracket_depth += 1,
-            b'>' => bracket_depth -= 1,
-            b'{' => {
-                // Only stop at { if we're not inside parentheses or brackets
-                if paren_depth == 0 && bracket_depth == 0 {
-                    end_byte = i;
-                    found_end = true;
-                    break;
-                }
-            }
-            b':' => {
-                // For Python, stop at : only if we're not inside parentheses
-                // (to avoid stopping at type annotations in function parameters)
-                if paren_depth == 0 && bracket_depth == 0 {
-                    end_byte = i;
-                    found_end = true;
-                    break;
-                }
-            }
-            _ => {}
+    // Find where the actual declaration starts (after attributes/decorators)
+    // Look for keywords that indicate the start of the declaration
+    let mut lines: Vec<&str> = signature_text.lines().collect();
+    let mut declaration_start_idx = 0;
+
+    for (idx, line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("fn ")
+            || trimmed.starts_with("pub fn ")
+            || trimmed.starts_with("async fn ")
+            || trimmed.starts_with("pub async fn ")
+            || trimmed.starts_with("struct ")
+            || trimmed.starts_with("pub struct ")
+            || trimmed.starts_with("class ")
+            || trimmed.starts_with("def ")
+            || trimmed.starts_with("async def ")
+            || trimmed.starts_with("function ")
+            || trimmed.starts_with("export function ")
+            || trimmed.starts_with("export async function ")
+        {
+            declaration_start_idx = idx;
+            break;
         }
     }
 
-    if !found_end {
-        // If we didn't find a brace or colon, just use the first line
-        end_byte = start_byte + declaration_line.len();
-    }
-
-    // Extract and trim the signature (up to but not including the opening brace)
-    let signature_bytes = &source_bytes[start_byte..end_byte];
-    let signature = String::from_utf8_lossy(signature_bytes).trim().to_string();
+    // Take lines from declaration start onwards
+    let signature_lines: Vec<&str> = lines.drain(declaration_start_idx..).collect();
+    let signature = signature_lines.join("\n").trim().to_string();
 
     Ok(signature)
 }
