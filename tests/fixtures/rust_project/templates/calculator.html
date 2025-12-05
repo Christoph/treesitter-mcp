@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+
+{% block title %}Calculator{% endblock %}
+
+{% block content %}
+<div class="calculator-container">
+    <h1>Calculator</h1>
+    <div class="calculator">
+        <input type="text" id="display" readonly>
+        <div class="buttons">
+            <button class="btn">7</button>
+            <button class="btn">8</button>
+            <button class="btn">9</button>
+            <button class="btn operator">+</button>
+        </div>
+    </div>
+    {% include "partials/history.html" %}
+</div>
+{% endblock %}

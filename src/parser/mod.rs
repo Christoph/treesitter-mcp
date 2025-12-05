@@ -1,4 +1,4 @@
-use eyre::{Result, bail};
+use eyre::{bail, Result};
 use std::path::Path;
 use tree_sitter::{Parser, Tree};
 

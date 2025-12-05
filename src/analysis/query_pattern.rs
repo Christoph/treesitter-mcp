@@ -3,12 +3,12 @@
 //! Executes custom tree-sitter queries on source files.
 //! Allows users to specify arbitrary S-expression patterns to extract information.
 
-use crate::mcp::types::{CallToolResult, ToolDefinition};
+use crate::mcp_types::{CallToolResult, CallToolResultExt};
 use crate::parser::{detect_language, parse_code};
-use eyre::{Result, WrapErr};
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
+use std::io;
 use tree_sitter::{Query, QueryCursor};
 
 #[derive(Debug, serde::Serialize)]
@@ -25,46 +25,55 @@ struct QueryMatch {
     captures: HashMap<String, String>,
 }
 
-pub fn tool_definition() -> ToolDefinition {
-    ToolDefinition {
-        name: "query_pattern".to_string(),
-        description: "Use this tool to perform surgical, structural search operations on code. The intent is to extract specific syntax patterns (e.g., 'all public functions returning Result') that regular expression searches cannot handle. Use this for advanced static analysis or custom data extraction tasks.".to_string(),
-        input_schema: json!({
-            "type": "object",
-            "properties": {
-                "file_path": {
-                    "type": "string",
-                    "description": "Path to the source file"
-                },
-                "query": {
-                    "type": "string",
-                    "description": "Tree-sitter query pattern in S-expression format"
-                }
-            },
-            "required": ["file_path", "query"]
-        }),
-    }
-}
+pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
+    let file_path = arguments["file_path"].as_str().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Missing or invalid 'file_path' argument",
+        )
+    })?;
 
-pub fn execute(arguments: &Value) -> Result<CallToolResult> {
-    let file_path = arguments["file_path"]
-        .as_str()
-        .ok_or_else(|| eyre::eyre!("Missing 'file_path' argument"))?;
-
-    let query_str = arguments["query"]
-        .as_str()
-        .ok_or_else(|| eyre::eyre!("Missing 'query' argument"))?;
+    let query_str = arguments["query"].as_str().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Missing or invalid 'query' argument",
+        )
+    })?;
 
     log::info!("Executing query on file: {file_path}");
 
-    let source = fs::read_to_string(file_path)
-        .wrap_err_with(|| format!("Failed to read file: {file_path}"))?;
+    let source = fs::read_to_string(file_path).map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("Failed to read file '{}': {}", file_path, e),
+        )
+    })?;
 
-    let language = detect_language(file_path)?;
-    let tree = parse_code(&source, language)?;
+    let language = detect_language(file_path).map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!("Cannot detect language for file '{}': {}", file_path, e),
+        )
+    })?;
+    let tree = parse_code(&source, language).map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "Failed to parse {} code from file '{}': {}",
+                language.name(),
+                file_path,
+                e
+            ),
+        )
+    })?;
 
     let ts_language = language.tree_sitter_language();
-    let query = Query::new(&ts_language, query_str).wrap_err("Failed to parse query")?;
+    let query = Query::new(&ts_language, query_str).map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("Failed to parse query '{}': {}", query_str, e),
+        )
+    })?;
 
     let mut cursor = QueryCursor::new();
     let matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
@@ -104,6 +113,14 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult> {
         matches: results,
     };
 
-    let result_json = serde_json::to_string_pretty(&result)?;
+    let result_json = serde_json::to_string(&result).map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "Failed to serialize query results for query '{}' on file '{}': {}",
+                query_str, file_path, e
+            ),
+        )
+    })?;
     Ok(CallToolResult::success(result_json))
 }

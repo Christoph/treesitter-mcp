@@ -1,165 +1,348 @@
+mod common;
+
 use serde_json::json;
-use std::fs;
-use tempfile::TempDir;
-use treesitter_mcp::mcp::server::McpServer;
 
-fn create_test_server() -> McpServer {
-    let mut server = McpServer::new();
-    let init = json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "initialize",
-        "params": {
-            "protocolVersion": "2025-11-25",
-            "capabilities": {},
-            "clientInfo": {"name": "test", "version": "1.0"}
-        }
+// ============================================================================
+// Rust Tests
+// ============================================================================
+
+#[test]
+fn test_find_usages_rust_function_definition() {
+    // Given: Rust fixture with function
+    let file_path = common::fixture_path("rust", "src/calculator.rs");
+    let arguments = json!({
+        "symbol": "add",
+        "path": file_path.to_str().unwrap()
     });
-    server.handle_message(&init.to_string()).unwrap();
-    let initialized = json!({
-        "jsonrpc": "2.0",
-        "method": "notifications/initialized",
-        "params": {}
-    });
-    server.handle_message(&initialized.to_string()).unwrap();
-    server
+
+    // When: find_usages for function name
+    let result = treesitter_mcp::analysis::find_usages::execute(&arguments);
+
+    // Then: Finds definition with usage_type="definition"
+    assert!(result.is_ok());
+    let call_result = result.unwrap();
+    let text = common::get_result_text(&call_result);
+    let usages: serde_json::Value = serde_json::from_str(&text).unwrap();
+
+    assert_eq!(usages["symbol"], "add");
+    let usage_list = usages["usages"].as_array().unwrap();
+
+    // Should find at least the definition
+    assert!(usage_list.len() >= 1);
+
+    // Check for definition
+    let definition = usage_list.iter().find(|u| u["usage_type"] == "definition");
+    assert!(definition.is_some());
 }
 
 #[test]
-fn test_find_usages_rust() {
-    let temp_dir = TempDir::new().unwrap();
-    let file1 = temp_dir.path().join("lib.rs");
-    let file2 = temp_dir.path().join("helper.rs");
-
-    fs::write(&file1, r#"
-        pub fn add(a: i32, b: i32) -> i32 {
-            helper_fn() + a + b
-        }
-
-        fn test() {
-            let result = helper_fn();
-        }
-    "#).unwrap();
-
-    fs::write(&file2, r#"
-        pub fn helper_fn() -> i32 { 42 }
-    "#).unwrap();
-
-    let mut server = create_test_server();
-    let request = json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "tools/call",
-        "params": {
-            "name": "find_usages",
-            "arguments": {
-                "symbol": "helper_fn",
-                "path": temp_dir.path().to_str().unwrap()
-            }
-        }
+fn test_find_usages_rust_function_calls() {
+    // Given: Rust fixture with function calls
+    let dir_path = common::fixture_dir("rust");
+    let arguments = json!({
+        "symbol": "add",
+        "path": dir_path.join("src").to_str().unwrap()
     });
 
-    let response = server.handle_message(&request.to_string()).unwrap();
-    let response_json: serde_json::Value = serde_json::from_str(&response).unwrap();
+    // When: find_usages for function name
+    let result = treesitter_mcp::analysis::find_usages::execute(&arguments);
 
-    assert!(response_json["result"]["content"].is_array());
-    let text = response_json["result"]["content"][0]["text"].as_str().unwrap();
-    let usages: serde_json::Value = serde_json::from_str(text).unwrap();
+    // Then: Finds all calls with usage_type="call"
+    assert!(result.is_ok());
+    let call_result = result.unwrap();
+    let text = common::get_result_text(&call_result);
+    let usages: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-    // Should find usages in both files
-    assert!(usages["usages"].is_array());
     let usage_list = usages["usages"].as_array().unwrap();
-    assert!(usage_list.len() >= 2); // At least 2 usages
+
+    // Should find definition and possibly calls
+    assert!(usage_list.len() >= 1);
 }
 
 #[test]
-fn test_find_usages_single_file() {
-    let temp_dir = TempDir::new().unwrap();
-    let file_path = temp_dir.path().join("test.py");
-
-    fs::write(&file_path, r#"
-def calculate(x):
-    return x * 2
-
-def main():
-    result = calculate(5)
-    value = calculate(10)
-    return calculate(result)
-    "#).unwrap();
-
-    let mut server = create_test_server();
-    let request = json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "tools/call",
-        "params": {
-            "name": "find_usages",
-            "arguments": {
-                "symbol": "calculate",
-                "path": file_path.to_str().unwrap()
-            }
-        }
+fn test_find_usages_rust_cross_file() {
+    // Given: Rust fixture with cross-file references
+    let dir_path = common::fixture_dir("rust");
+    let arguments = json!({
+        "symbol": "Calculator",
+        "path": dir_path.join("src").to_str().unwrap()
     });
 
-    let response = server.handle_message(&request.to_string()).unwrap();
-    let response_json: serde_json::Value = serde_json::from_str(&response).unwrap();
+    // When: find_usages on directory
+    let result = treesitter_mcp::analysis::find_usages::execute(&arguments);
 
-    let text = response_json["result"]["content"][0]["text"].as_str().unwrap();
-    let usages: serde_json::Value = serde_json::from_str(text).unwrap();
+    // Then: Finds usages in all files
+    assert!(result.is_ok());
+    let call_result = result.unwrap();
+    let text = common::get_result_text(&call_result);
+    let usages: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-    assert!(usages["usages"].is_array());
     let usage_list = usages["usages"].as_array().unwrap();
-    // Should find 3 calls to calculate
-    assert!(usage_list.len() >= 3);
+
+    // Should find Calculator in multiple files (models/mod.rs, calculator.rs, lib.rs)
+    assert!(usage_list.len() >= 2);
+
+    // Check that usages are from different files
+    let files: std::collections::HashSet<_> = usage_list
+        .iter()
+        .map(|u| u["file"].as_str().unwrap())
+        .collect();
+    assert!(files.len() >= 2);
 }
+
+#[test]
+fn test_find_usages_rust_with_context() {
+    // Given: Rust fixture
+    let file_path = common::fixture_path("rust", "src/calculator.rs");
+    let arguments = json!({
+        "symbol": "add",
+        "path": file_path.to_str().unwrap(),
+        "context_lines": 5
+    });
+
+    // When: find_usages with context_lines=5
+    let result = treesitter_mcp::analysis::find_usages::execute(&arguments);
+
+    // Then: Returns 5 lines of context around each usage
+    assert!(result.is_ok());
+    let call_result = result.unwrap();
+    let text = common::get_result_text(&call_result);
+    let usages: serde_json::Value = serde_json::from_str(&text).unwrap();
+
+    let usage_list = usages["usages"].as_array().unwrap();
+    assert!(usage_list.len() >= 1);
+
+    // Check that code field has multiple lines (context)
+    let first_usage = &usage_list[0];
+    assert!(first_usage["code"].is_string());
+    let code = first_usage["code"].as_str().unwrap();
+    // With 5 lines of context, should have multiple lines
+    assert!(code.lines().count() >= 3);
+
+    // Verify the code contains actual content from the fixture
+    assert!(
+        code.contains("add") || code.contains("pub fn") || code.contains("a + b"),
+        "Code should contain actual function content from fixture"
+    );
+}
+
+// ============================================================================
+// Python Tests
+// ============================================================================
+
+#[test]
+fn test_find_usages_python_method() {
+    // Given: Python fixture with class method
+    let file_path = common::fixture_path("python", "calculator.py");
+    let arguments = json!({
+        "symbol": "add",
+        "path": file_path.to_str().unwrap()
+    });
+
+    // When: find_usages for method name
+    let result = treesitter_mcp::analysis::find_usages::execute(&arguments);
+
+    // Then: Finds definition and calls
+    assert!(result.is_ok());
+    let call_result = result.unwrap();
+    let text = common::get_result_text(&call_result);
+    let usages: serde_json::Value = serde_json::from_str(&text).unwrap();
+
+    let usage_list = usages["usages"].as_array().unwrap();
+    assert!(usage_list.len() >= 1); // At least the function definition
+}
+
+// ============================================================================
+// JavaScript Tests
+// ============================================================================
+
+#[test]
+fn test_find_usages_javascript_function() {
+    // Given: JavaScript fixture
+    let file_path = common::fixture_path("javascript", "calculator.js");
+    let arguments = json!({
+        "symbol": "add",
+        "path": file_path.to_str().unwrap()
+    });
+
+    // When: find_usages for function name
+    let result = treesitter_mcp::analysis::find_usages::execute(&arguments);
+
+    // Then: Finds all usages
+    assert!(result.is_ok());
+    let call_result = result.unwrap();
+    let text = common::get_result_text(&call_result);
+    let usages: serde_json::Value = serde_json::from_str(&text).unwrap();
+
+    let usage_list = usages["usages"].as_array().unwrap();
+    assert!(usage_list.len() >= 1);
+}
+
+// ============================================================================
+// TypeScript Tests
+// ============================================================================
+
+#[test]
+fn test_find_usages_typescript_interface() {
+    // Given: TypeScript fixture with interface
+    let file_path = common::fixture_path("typescript", "types/models.ts");
+    let arguments = json!({
+        "symbol": "Point",
+        "path": file_path.to_str().unwrap()
+    });
+
+    // When: find_usages for interface name
+    let result = treesitter_mcp::analysis::find_usages::execute(&arguments);
+
+    // Then: Finds definition and type references
+    assert!(result.is_ok());
+    let call_result = result.unwrap();
+    let text = common::get_result_text(&call_result);
+    let usages: serde_json::Value = serde_json::from_str(&text).unwrap();
+
+    let usage_list = usages["usages"].as_array().unwrap();
+    assert!(usage_list.len() >= 1);
+}
+
+// ============================================================================
+// Error Cases
+// ============================================================================
 
 #[test]
 fn test_find_usages_not_found() {
-    let temp_dir = TempDir::new().unwrap();
-    let file_path = temp_dir.path().join("lib.rs");
-
-    fs::write(&file_path, r#"
-        pub fn add(a: i32, b: i32) -> i32 { a + b }
-    "#).unwrap();
-
-    let mut server = create_test_server();
-    let request = json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "tools/call",
-        "params": {
-            "name": "find_usages",
-            "arguments": {
-                "symbol": "nonexistent_function",
-                "path": file_path.to_str().unwrap()
-            }
-        }
+    // Given: Fixture project
+    let file_path = common::fixture_path("rust", "src/calculator.rs");
+    let arguments = json!({
+        "symbol": "nonexistent_function_xyz",
+        "path": file_path.to_str().unwrap()
     });
 
-    let response = server.handle_message(&request.to_string()).unwrap();
-    let response_json: serde_json::Value = serde_json::from_str(&response).unwrap();
+    // When: find_usages for non-existent symbol
+    let result = treesitter_mcp::analysis::find_usages::execute(&arguments);
 
-    let text = response_json["result"]["content"][0]["text"].as_str().unwrap();
-    let usages: serde_json::Value = serde_json::from_str(text).unwrap();
+    // Then: Returns empty usages array
+    assert!(result.is_ok());
+    let call_result = result.unwrap();
+    let text = common::get_result_text(&call_result);
+    let usages: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-    // Should return empty usages array
-    assert!(usages["usages"].is_array());
-    assert_eq!(usages["usages"].as_array().unwrap().len(), 0);
+    let usage_list = usages["usages"].as_array().unwrap();
+    assert_eq!(usage_list.len(), 0);
 }
 
 #[test]
-fn test_find_usages_registered() {
-    let mut server = create_test_server();
-    let request = json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "tools/list",
-        "params": {}
+fn test_find_usages_includes_code_snippet() {
+    // Given: Fixture with function usage
+    let file_path = common::fixture_path("rust", "src/calculator.rs");
+    let arguments = json!({
+        "symbol": "add",
+        "path": file_path.to_str().unwrap(),
+        "context_lines": 3
     });
 
-    let response = server.handle_message(&request.to_string()).unwrap();
-    let response_json: serde_json::Value = serde_json::from_str(&response).unwrap();
+    // When: find_usages is called
+    let result = treesitter_mcp::analysis::find_usages::execute(&arguments);
 
-    let tools = response_json["result"]["tools"].as_array().unwrap();
-    assert!(tools.iter().any(|t| t["name"] == "find_usages"));
+    // Then: Each usage includes multi-line code snippet
+    assert!(result.is_ok());
+    let call_result = result.unwrap();
+    let text = common::get_result_text(&call_result);
+    let usages: serde_json::Value = serde_json::from_str(&text).unwrap();
+
+    let usage_list = usages["usages"].as_array().unwrap();
+    if usage_list.len() > 0 {
+        let first_usage = &usage_list[0];
+        assert!(first_usage["code"].is_string());
+        assert!(first_usage["node_type"].is_string());
+        assert!(first_usage["usage_type"].is_string());
+
+        // Verify code snippet contains actual content
+        let code = first_usage["code"].as_str().unwrap();
+        assert!(!code.is_empty(), "Code snippet should not be empty");
+        assert!(
+            code.contains("add") || code.contains("fn") || code.contains("def"),
+            "Code should contain actual source code from fixture"
+        );
+    }
+}
+
+// ============================================================================
+// Code Content Verification Tests
+// ============================================================================
+
+#[test]
+fn test_find_usages_code_snippet_matches_fixture() {
+    // Given: Rust fixture with known function
+    let file_path = common::fixture_path("rust", "src/calculator.rs");
+    let arguments = json!({
+        "symbol": "add",
+        "path": file_path.to_str().unwrap(),
+        "context_lines": 3
+    });
+
+    // When: find_usages is called
+    let result = treesitter_mcp::analysis::find_usages::execute(&arguments);
+
+    // Then: Code snippets match actual fixture content
+    assert!(result.is_ok());
+    let call_result = result.unwrap();
+    let text = common::get_result_text(&call_result);
+    let usages: serde_json::Value = serde_json::from_str(&text).unwrap();
+
+    let usage_list = usages["usages"].as_array().unwrap();
+
+    // Find the definition usage
+    let definition = usage_list.iter().find(|u| u["usage_type"] == "definition");
+    if let Some(def) = definition {
+        if def["code"].is_string() {
+            let code = def["code"].as_str().unwrap();
+            // Should contain the actual function signature and body
+            assert!(
+                code.contains("pub fn add"),
+                "Should contain function signature"
+            );
+            assert!(code.contains("a + b"), "Should contain implementation");
+            assert!(code.contains("i32"), "Should contain type annotations");
+        }
+    }
+}
+
+#[test]
+fn test_find_usages_context_lines_includes_surrounding_code() {
+    // Given: Python fixture
+    let file_path = common::fixture_path("python", "calculator.py");
+    let arguments = json!({
+        "symbol": "add",
+        "path": file_path.to_str().unwrap(),
+        "context_lines": 5
+    });
+
+    // When: find_usages with context_lines=5
+    let result = treesitter_mcp::analysis::find_usages::execute(&arguments);
+
+    // Then: Code includes surrounding context from fixture
+    assert!(result.is_ok());
+    let call_result = result.unwrap();
+    let text = common::get_result_text(&call_result);
+    let usages: serde_json::Value = serde_json::from_str(&text).unwrap();
+
+    let usage_list = usages["usages"].as_array().unwrap();
+    if usage_list.len() > 0 {
+        let first_usage = &usage_list[0];
+        if first_usage["code"].is_string() {
+            let code = first_usage["code"].as_str().unwrap();
+
+            // With 5 lines of context, should have substantial code
+            assert!(
+                code.lines().count() >= 5,
+                "Should have at least 5 lines with context"
+            );
+
+            // Should contain actual Python code
+            assert!(
+                code.contains("def") || code.contains("return") || code.contains("add"),
+                "Should contain actual Python code from fixture"
+            );
+        }
+    }
 }

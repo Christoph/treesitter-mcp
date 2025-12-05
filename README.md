@@ -48,7 +48,7 @@ claude mcp add --transport stdio treesitter-mcp -- /absolute/path/to/treesitter-
 ### Adding to Gemini CLI
 
 ```bash
-gemini mcp add treesitter-mcp -- /absolute/path/to/treesitter-mcp
+gemini --scope user  mcp add treesitter-mcp /absolute/path/to/treesitter-mcp
 ```
 
 ### Adding to Codex CLI

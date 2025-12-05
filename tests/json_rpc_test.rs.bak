@@ -31,11 +31,7 @@ fn test_parse_json_rpc_notification() {
 
 #[test]
 fn test_error_response_format() {
-    let error = json_rpc::create_error_response(
-        json!(1),
-        -32601,
-        "Method not found",
-    );
+    let error = json_rpc::create_error_response(json!(1), -32601, "Method not found");
     assert_eq!(error.error.as_ref().unwrap().code, -32601);
     assert_eq!(error.error.as_ref().unwrap().message, "Method not found");
 }
