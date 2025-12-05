@@ -17,6 +17,9 @@ Thumbs.db
 
 # Test artifacts
 /tests/fixtures/temp/
+/tests/fixtures/python_project/__pycache__/
+/tests/fixtures/python_project/utils/__pycache__/
+/tests/fixtures/rust_project/target/
 
 # others
 .gemini/

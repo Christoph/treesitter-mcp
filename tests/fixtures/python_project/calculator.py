@@ -59,6 +59,49 @@ def apply_operation(a, b, operation):
     return result
 
 
+def complex_operation(base):
+    """A complex operation with nested functions
+    
+    Args:
+        base: The base value
+        
+    Returns:
+        The result of the complex operation
+    """
+    multiplier = 2
+    
+    # First nested function
+    def double(x):
+        return x * multiplier
+    
+    # Nested function inside the first
+    def apply_twice(x):
+        first_pass = double(x)
+        
+        # Another nested function
+        def add_base(y):
+            return y + base
+        
+        return add_base(first_pass)
+    
+    return apply_twice(base)
+
+
+def point_distance(p1, p2):
+    """Calculates the distance between two points
+    
+    Args:
+        p1: First point (dict with 'x' and 'y')
+        p2: Second point (dict with 'x' and 'y')
+        
+    Returns:
+        The distance between the points
+    """
+    dx = p1['x'] - p2['x']
+    dy = p1['y'] - p2['y']
+    return (dx ** 2 + dy ** 2) ** 0.5
+
+
 class Calculator:
     """A simple calculator class
     
@@ -111,6 +154,50 @@ class Point:
         self.x = x
         self.y = y
     
+    @staticmethod
+    def origin():
+        """Creates a point at the origin"""
+        return Point(0, 0)
+    
     def distance_from_origin(self):
         """Calculates distance from origin"""
         return (self.x ** 2 + self.y ** 2) ** 0.5
+    
+    def distance_to(self, other):
+        """Calculates distance to another point"""
+        dx = self.x - other.x
+        dy = self.y - other.y
+        return (dx ** 2 + dy ** 2) ** 0.5
+    
+    def translate(self, dx, dy):
+        """Translates the point by the given offset"""
+        self.x += dx
+        self.y += dy
+    
+    def translated(self, dx, dy):
+        """Returns a new point translated by the given offset"""
+        return Point(self.x + dx, self.y + dy)
+
+
+class LineSegment:
+    """A line segment between two points"""
+    
+    def __init__(self, start, end):
+        """Creates a new line segment
+        
+        Args:
+            start: Starting point
+            end: Ending point
+        """
+        self.start = start
+        self.end = end
+    
+    def length(self):
+        """Calculates the length of the line segment"""
+        return self.start.distance_to(self.end)
+    
+    def midpoint(self):
+        """Calculates the midpoint of the line segment"""
+        mid_x = (self.start.x + self.end.x) / 2
+        mid_y = (self.start.y + self.end.y) / 2
+        return Point(mid_x, mid_y)

@@ -5,8 +5,6 @@
 pub mod calculator;
 pub mod models;
 
-use std::fmt;
-
 /// Re-export the main calculator functions
 pub use calculator::{add, multiply, subtract};
 pub use models::Calculator;

@@ -16,6 +16,9 @@ function add(a, b) {
 
 /**
  * Subtracts b from a
+ * @param {number} a - The minuend
+ * @param {number} b - The subtrahend
+ * @returns {number} The difference
  */
 function subtract(a, b) {
     return a - b;
@@ -23,6 +26,9 @@ function subtract(a, b) {
 
 /**
  * Multiplies two numbers
+ * @param {number} a - First number
+ * @param {number} b - Second number
+ * @returns {number} The product
  */
 function multiply(a, b) {
     return a * b;
@@ -30,6 +36,9 @@ function multiply(a, b) {
 
 /**
  * Divides a by b, returns null if b is zero
+ * @param {number} a - The dividend
+ * @param {number} b - The divisor
+ * @returns {number|null} The quotient or null
  */
 function divide(a, b) {
     if (b === 0) {
@@ -40,6 +49,7 @@ function divide(a, b) {
 
 /**
  * Private helper function
+ * @private
  */
 function _privateHelper(x) {
     return x >= 0;
@@ -47,6 +57,10 @@ function _privateHelper(x) {
 
 /**
  * Applies a custom operation to two numbers
+ * @param {number} a - First number
+ * @param {number} b - Second number
+ * @param {Function} operation - Operation function
+ * @returns {number} Result of the operation
  */
 function applyOperation(a, b, operation) {
     const result = operation(a, b);
@@ -56,6 +70,42 @@ function applyOperation(a, b, operation) {
     
     console.log(formatter(result));
     return result;
+}
+
+/**
+ * A complex operation with nested functions
+ * @param {number} base - The base value
+ * @returns {number} The result
+ */
+function complexOperation(base) {
+    const multiplier = 2;
+    
+    // First nested function
+    const double = (x) => x * multiplier;
+    
+    // Nested function inside the first
+    const applyTwice = (x) => {
+        const firstPass = double(x);
+        
+        // Another nested function
+        const addBase = (y) => y + base;
+        
+        return addBase(firstPass);
+    };
+    
+    return applyTwice(base);
+}
+
+/**
+ * Calculates the distance between two points
+ * @param {Object} p1 - First point with x, y properties
+ * @param {Object} p2 - Second point with x, y properties
+ * @returns {number} The distance
+ */
+function pointDistance(p1, p2) {
+    const dx = p1.x - p2.x;
+    const dy = p1.y - p2.y;
+    return Math.sqrt(dx * dx + dy * dy);
 }
 
 /**
@@ -75,6 +125,8 @@ class Calculator {
     
     /**
      * Adds a number to the current value
+     * @param {number} n - Number to add
+     * @returns {number} The new value
      */
     add(n) {
         this.value += n;
@@ -84,6 +136,8 @@ class Calculator {
     
     /**
      * Subtracts a number from the current value
+     * @param {number} n - Number to subtract
+     * @returns {number} The new value
      */
     subtract(n) {
         this.value -= n;
@@ -101,6 +155,7 @@ class Calculator {
     
     /**
      * Gets the operation history
+     * @returns {Array<string>} Copy of the history
      */
     getHistory() {
         return [...this._history];
@@ -108,6 +163,7 @@ class Calculator {
     
     /**
      * Private helper method
+     * @private
      */
     _logOperation(op) {
         this._history.push(op);
@@ -122,16 +178,95 @@ class Calculator {
  * A point class for testing
  */
 class Point {
+    /**
+     * Creates a new point
+     * @param {number} x - X coordinate
+     * @param {number} y - Y coordinate
+     */
     constructor(x, y) {
         this.x = x;
         this.y = y;
     }
     
     /**
+     * Creates a point at the origin
+     * @static
+     * @returns {Point} A point at (0, 0)
+     */
+    static origin() {
+        return new Point(0, 0);
+    }
+    
+    /**
      * Calculates distance from origin
+     * @returns {number} The distance
      */
     distanceFromOrigin() {
         return Math.sqrt(this.x ** 2 + this.y ** 2);
+    }
+    
+    /**
+     * Calculates distance to another point
+     * @param {Point} other - The other point
+     * @returns {number} The distance
+     */
+    distanceTo(other) {
+        const dx = this.x - other.x;
+        const dy = this.y - other.y;
+        return Math.sqrt(dx ** 2 + dy ** 2);
+    }
+    
+    /**
+     * Translates the point by the given offset
+     * @param {number} dx - X offset
+     * @param {number} dy - Y offset
+     */
+    translate(dx, dy) {
+        this.x += dx;
+        this.y += dy;
+    }
+    
+    /**
+     * Returns a new point translated by the given offset
+     * @param {number} dx - X offset
+     * @param {number} dy - Y offset
+     * @returns {Point} A new translated point
+     */
+    translated(dx, dy) {
+        return new Point(this.x + dx, this.y + dy);
+    }
+}
+
+/**
+ * A line segment between two points
+ */
+class LineSegment {
+    /**
+     * Creates a new line segment
+     * @param {Point} start - Starting point
+     * @param {Point} end - Ending point
+     */
+    constructor(start, end) {
+        this.start = start;
+        this.end = end;
+    }
+    
+    /**
+     * Calculates the length of the line segment
+     * @returns {number} The length
+     */
+    length() {
+        return this.start.distanceTo(this.end);
+    }
+    
+    /**
+     * Calculates the midpoint of the line segment
+     * @returns {Point} The midpoint
+     */
+    midpoint() {
+        const midX = (this.start.x + this.end.x) / 2;
+        const midY = (this.start.y + this.end.y) / 2;
+        return new Point(midX, midY);
     }
 }
 
@@ -141,6 +276,9 @@ module.exports = {
     multiply,
     divide,
     applyOperation,
+    complexOperation,
+    pointDistance,
     Calculator,
-    Point
+    Point,
+    LineSegment
 };
