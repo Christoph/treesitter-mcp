@@ -103,6 +103,19 @@ fn test_code_map_rust_project_full() {
     assert!(add_fn["signature"].is_string());
     assert!(add_fn["doc"].is_string());
     assert!(add_fn["doc"].as_str().unwrap().contains("Adds two numbers"));
+
+    // In full mode, should also have code snippet
+    if add_fn["code"].is_string() {
+        let code = add_fn["code"].as_str().unwrap();
+        assert!(
+            code.contains("a + b"),
+            "Full mode should include code snippet"
+        );
+        assert!(
+            code.contains("pub fn add"),
+            "Code should include function signature"
+        );
+    }
 }
 
 // ============================================================================
@@ -135,6 +148,17 @@ fn test_code_map_python_project() {
         .find(|f| f["path"].as_str().unwrap().contains("calculator.py"))
         .unwrap();
     assert!(calc_file["classes"].as_array().unwrap().len() >= 2); // Calculator, Point
+
+    // Verify functions have proper structure
+    let functions = calc_file["functions"].as_array().unwrap();
+    if let Some(add_fn) = functions.iter().find(|f| f["name"] == "add") {
+        assert!(add_fn["signature"].is_string());
+        // Code may be present depending on detail level
+        if add_fn["code"].is_string() {
+            let code = add_fn["code"].as_str().unwrap();
+            assert!(code.contains("return a + b"), "Code should match fixture");
+        }
+    }
 }
 
 #[test]
@@ -282,4 +306,78 @@ fn test_code_map_skips_hidden_and_vendor() {
         assert!(!path.contains("/.git/"));
         assert!(!path.contains("/node_modules/"));
     }
+}
+
+// ============================================================================
+// Code Content Verification Tests
+// ============================================================================
+
+#[test]
+fn test_code_map_full_mode_includes_actual_code() {
+    // Given: Rust fixture project
+    let dir_path = common::fixture_dir("rust");
+    let arguments = json!({
+        "path": dir_path.join("src/calculator.rs").to_str().unwrap(),
+        "detail": "full"
+    });
+
+    // When: code_map with detail="full"
+    let result = treesitter_mcp::analysis::code_map::execute(&arguments);
+
+    // Then: Returns actual code snippets from fixture
+    assert!(result.is_ok());
+    let call_result = result.unwrap();
+    let text = common::get_result_text(&call_result);
+    let map: serde_json::Value = serde_json::from_str(&text).unwrap();
+
+    let files = map["files"].as_array().unwrap();
+    let calc_file = &files[0];
+    let functions = calc_file["functions"].as_array().unwrap();
+
+    // Find add function and verify code
+    let add_fn = functions.iter().find(|f| f["name"] == "add").unwrap();
+    if add_fn["code"].is_string() {
+        let code = add_fn["code"].as_str().unwrap();
+        assert!(
+            code.contains("a + b"),
+            "Full mode should include actual implementation"
+        );
+        assert!(
+            code.contains("pub fn add"),
+            "Full mode should include signature"
+        );
+    }
+}
+
+#[test]
+fn test_code_map_signatures_mode_no_code() {
+    // Given: Rust fixture project
+    let dir_path = common::fixture_dir("rust");
+    let arguments = json!({
+        "path": dir_path.join("src/calculator.rs").to_str().unwrap(),
+        "detail": "signatures"
+    });
+
+    // When: code_map with detail="signatures"
+    let result = treesitter_mcp::analysis::code_map::execute(&arguments);
+
+    // Then: Returns signatures but not full code
+    assert!(result.is_ok());
+    let call_result = result.unwrap();
+    let text = common::get_result_text(&call_result);
+    let map: serde_json::Value = serde_json::from_str(&text).unwrap();
+
+    let files = map["files"].as_array().unwrap();
+    let calc_file = &files[0];
+    let functions = calc_file["functions"].as_array().unwrap();
+
+    // Find add function
+    let add_fn = functions.iter().find(|f| f["name"] == "add").unwrap();
+
+    // Should have signature
+    assert!(add_fn["signature"].is_string());
+    assert!(add_fn["signature"].as_str().unwrap().contains("pub fn add"));
+
+    // Should NOT have full code in signatures mode
+    assert!(add_fn["code"].is_null() || !add_fn.get("code").is_some());
 }

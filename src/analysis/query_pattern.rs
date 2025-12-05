@@ -108,7 +108,7 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
         matches: results,
     };
 
-    let result_json = serde_json::to_string_pretty(&result).map_err(|e| {
+    let result_json = serde_json::to_string(&result).map_err(|e| {
         io::Error::new(
             io::ErrorKind::InvalidData,
             format!("Failed to serialize result to JSON: {e}"),

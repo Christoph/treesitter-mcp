@@ -36,6 +36,13 @@ fn test_get_node_at_position_rust_identifier() {
     assert_eq!(node_info["node"]["text"], "a");
     assert!(node_info["node"]["range"]["start"].is_object());
     assert!(node_info["node"]["range"]["end"].is_object());
+
+    // Verify the text matches what's in the fixture
+    let text = node_info["node"]["text"].as_str().unwrap();
+    assert_eq!(
+        text, "a",
+        "Node text should match the identifier in the fixture"
+    );
 }
 
 #[test]
@@ -101,6 +108,14 @@ fn test_get_node_at_position_rust_function_name() {
     let ancestors = node_info["ancestors"].as_array().unwrap();
     let has_function_item = ancestors.iter().any(|a| a["type"] == "function_item");
     assert!(has_function_item, "Should have function_item ancestor");
+
+    // Verify ancestors contain actual code snippets
+    for ancestor in ancestors {
+        if ancestor["text"].is_string() {
+            let text = ancestor["text"].as_str().unwrap();
+            assert!(!text.is_empty(), "Ancestor text should not be empty");
+        }
+    }
 }
 
 // ============================================================================

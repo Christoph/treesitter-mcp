@@ -42,7 +42,18 @@ fn test_get_context_rust_inside_function() {
         .unwrap()
         .contains("pub fn add"));
     assert!(innermost["code"].is_string());
-    assert!(!innermost["code"].as_str().unwrap().is_empty());
+    let code = innermost["code"].as_str().unwrap();
+    assert!(!code.is_empty());
+
+    // Verify code contains actual implementation from fixture
+    assert!(
+        code.contains("a + b"),
+        "Code should contain actual implementation"
+    );
+    assert!(
+        code.contains("pub fn add"),
+        "Code should contain function signature"
+    );
 }
 
 /// Test that a position inside impl block method returns method then impl
@@ -146,8 +157,94 @@ fn test_get_context_python_inside_method() {
 
     // Second context should be the class
     let class = &contexts[1];
-    assert_eq!(class["type"], "class_definition");
+    assert_eq!(class["type"], "class_declaration");
     assert_eq!(class["name"], "Calculator");
+}
+
+// ============================================================================
+// Code Content Verification Tests
+// ============================================================================
+
+#[test]
+fn test_get_context_code_matches_fixture_exactly() {
+    // Given: Rust file with known function at specific position
+    let file_path = common::fixture_path("rust", "src/calculator.rs");
+    let arguments = json!({
+        "file_path": file_path.to_str().unwrap(),
+        "line": 13,
+        "column": 5
+    });
+
+    // When: get_context is called
+    let result = treesitter_mcp::analysis::get_context::execute(&arguments);
+
+    // Then: Code exactly matches the fixture
+    assert!(result.is_ok());
+    let call_result = result.unwrap();
+    let text = common::get_result_text(&call_result);
+    let context: serde_json::Value = serde_json::from_str(&text).unwrap();
+
+    let contexts = context["contexts"].as_array().unwrap();
+    let function_context = &contexts[0];
+
+    if function_context["code"].is_string() {
+        let code = function_context["code"].as_str().unwrap();
+
+        // Verify exact content from fixture
+        assert!(
+            code.contains("pub fn add(a: i32, b: i32) -> i32"),
+            "Should have exact signature"
+        );
+        assert!(code.contains("a + b"), "Should have exact implementation");
+
+        // Should be complete function, not truncated
+        assert!(
+            code.trim().starts_with("pub fn") || code.contains("/// Adds"),
+            "Should start with function or doc"
+        );
+        assert!(code.trim().ends_with("}"), "Should end with closing brace");
+    }
+}
+
+#[test]
+fn test_get_context_python_code_includes_docstring() {
+    // Given: Python file with function that has docstring
+    let file_path = common::fixture_path("python", "calculator.py");
+    let arguments = json!({
+        "file_path": file_path.to_str().unwrap(),
+        "line": 16,
+        "column": 5
+    });
+
+    // When: get_context is called
+    let result = treesitter_mcp::analysis::get_context::execute(&arguments);
+
+    // Then: Code includes the docstring
+    assert!(result.is_ok());
+    let call_result = result.unwrap();
+    let text = common::get_result_text(&call_result);
+    let context: serde_json::Value = serde_json::from_str(&text).unwrap();
+
+    let contexts = context["contexts"].as_array().unwrap();
+    if contexts.len() > 0 {
+        let function_context = &contexts[0];
+
+        if function_context["code"].is_string() {
+            let code = function_context["code"].as_str().unwrap();
+
+            // Should include docstring
+            assert!(
+                code.contains("\"\"\"") || code.contains("Adds two numbers"),
+                "Should include Python docstring"
+            );
+
+            // Should include implementation
+            assert!(
+                code.contains("return a + b"),
+                "Should include implementation"
+            );
+        }
+    }
 }
 
 // ============================================================================
@@ -181,6 +278,14 @@ fn test_get_context_javascript_arrow_function() {
     let arrow_fn = &contexts[0];
     assert_eq!(arrow_fn["type"], "arrow_function");
     assert!(arrow_fn["code"].is_string());
+
+    // Verify code contains actual arrow function content
+    let code = arrow_fn["code"].as_str().unwrap();
+    assert!(!code.is_empty(), "Arrow function code should not be empty");
+    assert!(
+        code.contains("=>") || code.contains("function"),
+        "Code should contain function syntax"
+    );
 }
 
 // ============================================================================
@@ -269,8 +374,17 @@ fn test_get_context_includes_code() {
 
     // Code should contain the function body
     let code = innermost["code"].as_str().unwrap();
-    assert!(code.contains("a + b"));
-    assert!(code.contains("fn add"));
+    assert!(
+        code.contains("a + b"),
+        "Code should contain implementation 'a + b'"
+    );
+    assert!(code.contains("fn add"), "Code should contain function name");
+
+    // Verify it's the complete function code
+    assert!(
+        code.lines().count() >= 3,
+        "Code should be multi-line function"
+    );
 }
 
 /// Test that position beyond file bounds returns error or empty

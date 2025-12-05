@@ -67,7 +67,7 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
 
     let mut visited = HashSet::new();
     let shape = build_shape_tree(path, &project_root, include_deps, &mut visited)?;
-    let shape_json = serde_json::to_string_pretty(&shape).map_err(|e| {
+    let shape_json = serde_json::to_string(&shape).map_err(|e| {
         io::Error::new(
             io::ErrorKind::InvalidData,
             format!("Failed to serialize shape to JSON: {e}"),

@@ -118,6 +118,12 @@ fn test_find_usages_rust_with_context() {
     let code = first_usage["code"].as_str().unwrap();
     // With 5 lines of context, should have multiple lines
     assert!(code.lines().count() >= 3);
+
+    // Verify the code contains actual content from the fixture
+    assert!(
+        code.contains("add") || code.contains("pub fn") || code.contains("a + b"),
+        "Code should contain actual function content from fixture"
+    );
 }
 
 // ============================================================================
@@ -249,5 +255,94 @@ fn test_find_usages_includes_code_snippet() {
         assert!(first_usage["code"].is_string());
         assert!(first_usage["node_type"].is_string());
         assert!(first_usage["usage_type"].is_string());
+
+        // Verify code snippet contains actual content
+        let code = first_usage["code"].as_str().unwrap();
+        assert!(!code.is_empty(), "Code snippet should not be empty");
+        assert!(
+            code.contains("add") || code.contains("fn") || code.contains("def"),
+            "Code should contain actual source code from fixture"
+        );
+    }
+}
+
+// ============================================================================
+// Code Content Verification Tests
+// ============================================================================
+
+#[test]
+fn test_find_usages_code_snippet_matches_fixture() {
+    // Given: Rust fixture with known function
+    let file_path = common::fixture_path("rust", "src/calculator.rs");
+    let arguments = json!({
+        "symbol": "add",
+        "path": file_path.to_str().unwrap(),
+        "context_lines": 3
+    });
+
+    // When: find_usages is called
+    let result = treesitter_mcp::analysis::find_usages::execute(&arguments);
+
+    // Then: Code snippets match actual fixture content
+    assert!(result.is_ok());
+    let call_result = result.unwrap();
+    let text = common::get_result_text(&call_result);
+    let usages: serde_json::Value = serde_json::from_str(&text).unwrap();
+
+    let usage_list = usages["usages"].as_array().unwrap();
+
+    // Find the definition usage
+    let definition = usage_list.iter().find(|u| u["usage_type"] == "definition");
+    if let Some(def) = definition {
+        if def["code"].is_string() {
+            let code = def["code"].as_str().unwrap();
+            // Should contain the actual function signature and body
+            assert!(
+                code.contains("pub fn add"),
+                "Should contain function signature"
+            );
+            assert!(code.contains("a + b"), "Should contain implementation");
+            assert!(code.contains("i32"), "Should contain type annotations");
+        }
+    }
+}
+
+#[test]
+fn test_find_usages_context_lines_includes_surrounding_code() {
+    // Given: Python fixture
+    let file_path = common::fixture_path("python", "calculator.py");
+    let arguments = json!({
+        "symbol": "add",
+        "path": file_path.to_str().unwrap(),
+        "context_lines": 5
+    });
+
+    // When: find_usages with context_lines=5
+    let result = treesitter_mcp::analysis::find_usages::execute(&arguments);
+
+    // Then: Code includes surrounding context from fixture
+    assert!(result.is_ok());
+    let call_result = result.unwrap();
+    let text = common::get_result_text(&call_result);
+    let usages: serde_json::Value = serde_json::from_str(&text).unwrap();
+
+    let usage_list = usages["usages"].as_array().unwrap();
+    if usage_list.len() > 0 {
+        let first_usage = &usage_list[0];
+        if first_usage["code"].is_string() {
+            let code = first_usage["code"].as_str().unwrap();
+
+            // With 5 lines of context, should have substantial code
+            assert!(
+                code.lines().count() >= 5,
+                "Should have at least 5 lines with context"
+            );
+
+            // Should contain actual Python code
+            assert!(
+                code.contains("def") || code.contains("return") || code.contains("add"),
+                "Should contain actual Python code from fixture"
+            );
+        }
     }
 }

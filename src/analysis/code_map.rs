@@ -78,7 +78,7 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
         truncated: if truncated { Some(true) } else { None },
     };
 
-    let map_json = serde_json::to_string_pretty(&code_map).map_err(|e| {
+    let map_json = serde_json::to_string(&code_map).map_err(|e| {
         io::Error::new(
             io::ErrorKind::InvalidData,
             format!("Failed to serialize code map to JSON: {e}"),

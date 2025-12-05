@@ -42,6 +42,16 @@ fn test_query_pattern_rust_functions() {
         assert!(first_match["column"].is_number());
         assert!(first_match["text"].is_string());
         assert!(first_match["captures"].is_object());
+
+        // If code field is present, verify it contains actual content
+        if first_match["code"].is_string() {
+            let code = first_match["code"].as_str().unwrap();
+            assert!(!code.is_empty(), "Code should not be empty");
+            assert!(
+                code.contains("fn") || code.contains("pub"),
+                "Code should contain actual Rust function content"
+            );
+        }
     }
 }
 
@@ -356,6 +366,12 @@ fn test_query_pattern_with_context_lines() {
         if first_match["code"].is_string() {
             let code = first_match["code"].as_str().unwrap();
             assert!(!code.is_empty(), "Code field should not be empty");
+
+            // Verify code contains actual class content from fixture
+            assert!(
+                code.contains("class") || code.contains("Calculator") || code.contains("Point"),
+                "Code should contain actual class content from fixture"
+            );
         }
     }
 }

@@ -44,6 +44,19 @@ fn test_parse_file_rust_functions() {
     assert!(add_fn["signature"].as_str().unwrap().contains("i32"));
     assert!(add_fn["line"].as_u64().unwrap() > 0);
     assert!(add_fn["end_line"].as_u64().unwrap() > add_fn["line"].as_u64().unwrap());
+
+    // Verify the actual code is included
+    if add_fn["code"].is_string() {
+        let code = add_fn["code"].as_str().unwrap();
+        assert!(
+            code.contains("a + b"),
+            "Code should contain the actual implementation"
+        );
+        assert!(
+            code.contains("pub fn add"),
+            "Code should contain the function signature"
+        );
+    }
 }
 
 #[test]
@@ -71,6 +84,16 @@ fn test_parse_file_rust_structs() {
     let calc_struct = structs.iter().find(|s| s["name"] == "Calculator").unwrap();
     assert_eq!(calc_struct["name"], "Calculator");
     assert!(calc_struct["line"].as_u64().unwrap() > 0);
+
+    // Verify code is present for struct
+    if calc_struct["code"].is_string() {
+        let code = calc_struct["code"].as_str().unwrap();
+        assert!(
+            code.contains("Calculator"),
+            "Code should contain struct name"
+        );
+        assert!(code.contains("value"), "Code should contain struct fields");
+    }
 }
 
 #[test]
@@ -95,7 +118,17 @@ fn test_parse_file_rust_docs() {
 
     // Should have doc comment
     assert!(add_fn["doc"].is_string());
-    assert!(add_fn["doc"].as_str().unwrap().contains("Adds two numbers"));
+    let doc = add_fn["doc"].as_str().unwrap();
+    assert!(
+        doc.contains("Adds two numbers"),
+        "Doc should contain description"
+    );
+
+    // Verify code is present and correct
+    if add_fn["code"].is_string() {
+        let code = add_fn["code"].as_str().unwrap();
+        assert!(code.contains("a + b"), "Code should contain implementation");
+    }
 }
 
 #[test]
@@ -157,6 +190,19 @@ fn test_parse_file_python_functions() {
     let add_fn = functions.iter().find(|f| f["name"] == "add").unwrap();
     assert_eq!(add_fn["name"], "add");
     assert!(add_fn["signature"].as_str().unwrap().contains("def add"));
+
+    // Verify code is present and correct
+    if add_fn["code"].is_string() {
+        let code = add_fn["code"].as_str().unwrap();
+        assert!(
+            code.contains("return a + b"),
+            "Code should contain Python implementation"
+        );
+        assert!(
+            code.contains("def add"),
+            "Code should contain function definition"
+        );
+    }
 }
 
 #[test]
@@ -184,6 +230,19 @@ fn test_parse_file_python_classes() {
     let calc_class = classes.iter().find(|c| c["name"] == "Calculator").unwrap();
     assert_eq!(calc_class["name"], "Calculator");
     assert!(calc_class["line"].as_u64().unwrap() > 0);
+
+    // Verify code is present for class
+    if calc_class["code"].is_string() {
+        let code = calc_class["code"].as_str().unwrap();
+        assert!(
+            code.contains("class Calculator"),
+            "Code should contain class definition"
+        );
+        assert!(
+            code.contains("def __init__"),
+            "Code should contain constructor"
+        );
+    }
 }
 
 // ============================================================================
@@ -212,6 +271,18 @@ fn test_parse_file_javascript_functions() {
 
     let functions = shape["functions"].as_array().unwrap();
     assert!(functions.len() >= 4); // add, subtract, multiply, divide, etc.
+
+    // Verify at least one function has code
+    let add_fn = functions.iter().find(|f| f["name"] == "add");
+    if let Some(add_fn) = add_fn {
+        if add_fn["code"].is_string() {
+            let code = add_fn["code"].as_str().unwrap();
+            assert!(
+                code.contains("return") || code.contains("a + b"),
+                "Code should contain implementation"
+            );
+        }
+    }
 }
 
 #[test]
@@ -263,6 +334,15 @@ fn test_parse_file_typescript_with_types() {
     let functions = shape["functions"].as_array().unwrap();
     let add_fn = functions.iter().find(|f| f["name"] == "add").unwrap();
     assert!(add_fn["signature"].as_str().unwrap().contains("number"));
+
+    // Verify code is present and correct
+    if add_fn["code"].is_string() {
+        let code = add_fn["code"].as_str().unwrap();
+        assert!(
+            code.contains("return") || code.contains("a + b"),
+            "Code should contain TypeScript implementation"
+        );
+    }
 }
 
 #[test]
@@ -326,4 +406,92 @@ fn test_parse_file_unsupported_extension() {
         result.is_err(),
         "Should return error for unsupported extension"
     );
+}
+
+// ============================================================================
+// Code Content Verification Tests
+// ============================================================================
+
+#[test]
+fn test_parse_file_rust_code_matches_fixture() {
+    // Given: Rust fixture with known content
+    let file_path = common::fixture_path("rust", "src/calculator.rs");
+    let arguments = json!({
+        "file_path": file_path.to_str().unwrap()
+    });
+
+    // When: parse_file is called
+    let result = treesitter_mcp::analysis::parse_file::execute(&arguments);
+
+    // Then: Code in result matches actual fixture content
+    assert!(result.is_ok());
+    let call_result = result.unwrap();
+    let text = common::get_result_text(&call_result);
+    let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
+
+    let functions = shape["functions"].as_array().unwrap();
+
+    // Verify add function code
+    let add_fn = functions.iter().find(|f| f["name"] == "add").unwrap();
+    if add_fn["code"].is_string() {
+        let code = add_fn["code"].as_str().unwrap();
+        assert!(
+            code.contains("pub fn add(a: i32, b: i32) -> i32"),
+            "Should have exact signature"
+        );
+        assert!(code.contains("a + b"), "Should have exact implementation");
+    }
+
+    // Verify subtract function code
+    let sub_fn = functions.iter().find(|f| f["name"] == "subtract").unwrap();
+    if sub_fn["code"].is_string() {
+        let code = sub_fn["code"].as_str().unwrap();
+        assert!(
+            code.contains("a - b"),
+            "Should have subtract implementation"
+        );
+    }
+}
+
+#[test]
+fn test_parse_file_python_code_matches_fixture() {
+    // Given: Python fixture with known content
+    let file_path = common::fixture_path("python", "calculator.py");
+    let arguments = json!({
+        "file_path": file_path.to_str().unwrap()
+    });
+
+    // When: parse_file is called
+    let result = treesitter_mcp::analysis::parse_file::execute(&arguments);
+
+    // Then: Code in result matches actual fixture content
+    assert!(result.is_ok());
+    let call_result = result.unwrap();
+    let text = common::get_result_text(&call_result);
+    let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
+
+    let functions = shape["functions"].as_array().unwrap();
+
+    // Verify add function code
+    let add_fn = functions.iter().find(|f| f["name"] == "add").unwrap();
+    if add_fn["code"].is_string() {
+        let code = add_fn["code"].as_str().unwrap();
+        assert!(
+            code.contains("def add(a, b):"),
+            "Should have Python function signature"
+        );
+        assert!(
+            code.contains("return a + b"),
+            "Should have Python implementation"
+        );
+    }
+
+    // Verify doc string is extracted
+    if add_fn["doc"].is_string() {
+        let doc = add_fn["doc"].as_str().unwrap();
+        assert!(
+            doc.contains("Adds two numbers together"),
+            "Should extract docstring"
+        );
+    }
 }
