@@ -61,6 +61,21 @@ codex mcp add treesitter-mcp -- /absolute/path/to/treesitter-mcp
 
 ## Available Tools
 
+### Tool Selection Guide
+
+Choose the right tool for your task:
+
+- **Exploring codebase?** → `code_map` on the directory
+- **Before editing a file?** → `parse_file` to understand it fully
+- **Refactoring or renaming?** → `find_usages` to check impact
+- **After making changes?** → `parse_diff` to verify what changed at symbol level
+- **Before running tests?** → `affected_by_diff` to see what might break
+- **Got a line number?** → `get_context` to understand scope
+- **Need quick file overview?** → `file_shape` for skeleton only
+- **Advanced pattern matching?** → `query_pattern` for custom tree-sitter queries
+
+---
+
 ### 1. parse_file
 
 Parses a source file and returns the complete Abstract Syntax Tree (AST) in S-expression format.
