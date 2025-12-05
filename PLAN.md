@@ -1,947 +1,982 @@
-# Plan: Refactor treesitter-mcp Tools for LLM Coding Agents
+# Plan: HTML, CSS (Tailwind v4), and Askama Template Support
 
-## Goal
+## Overview
 
-Redesign the treesitter-mcp toolset to be maximally useful for LLM coding agents by:
-1. Returning **code context** alongside structural information
-2. Adding **position-based** tools for context-aware assistance
-3. Removing redundant tools
-4. Creating comprehensive **multi-language test fixtures**
-5. Following **RED/GREEN/BLUE** (TDD) methodology
+Add tree-sitter analysis support for HTML and CSS to help LLMs create consistent UIs by exposing:
+- Available custom component classes (e.g., `btn-primary`, `card`, `input`)
+- Theme variables (e.g., `--color-primary`, `--spacing-lg`)
+- Class usage patterns in HTML
+- Askama template structure with optional merging
 
----
+## Decisions
 
-## Current State
-
-### Existing Tools
-| Tool | Current Output | Problem for LLM |
-|------|----------------|-----------------|
-| `parse_file` | Raw S-expression AST | Too verbose, requires tree-sitter expertise |
-| `file_shape` | Functions/classes/imports (names only) | Redundant with `code_map` |
-| `code_map` | Directory overview (names only) | No signatures, no code |
-| `find_usages` | Symbol locations + line text | No surrounding code context |
-| `query_pattern` | Match locations + text | No broader code context |
-
-### Supported Languages
-- Rust (.rs)
-- Python (.py)
-- JavaScript (.js, .mjs, .cjs)
-- TypeScript (.ts, .tsx)
-- HTML (.html, .htm) - limited support
-- CSS (.css) - limited support
+| Decision | Choice |
+|----------|--------|
+| HTML extraction focus | IDs and custom classes only |
+| CSS extraction focus | `@theme` variables + custom `@layer` classes only |
+| Tailwind version | v4 only (`@import "tailwindcss"`, `@theme`, `@layer`) |
+| Embedded script/style | Raw text (no deep parsing) |
+| Class output format | Name + full selector context |
+| Template dir detection | Auto-detect (`templates/` in parent dirs) |
+| Merged template output | Option A: merged content + dependency list with types |
+| @apply/@theme parsing | Regex (tree-sitter won't handle these non-standard directives) |
 
 ---
 
-## Proposed Changes
+## Part 1: Data Structures
 
-### Tools Summary
-
-| Action | Tool | Purpose |
-|--------|------|---------|
-| **Modify** | `parse_file` | Return file shape (structure) instead of raw AST |
-| **Modify** | `code_map` | Add detail levels, signatures, docs, code snippets |
-| **Modify** | `find_usages` | Add context lines, usage type classification, code snippets |
-| **Modify** | `query_pattern` | Add context lines, include code output |
-| **Add** | `get_context` | Get enclosing scope at a position |
-| **Add** | `get_node_at_position` | Get AST node + ancestors at position |
-| **Remove** | `file_shape` | Redundant with enhanced `code_map` |
-
----
-
-## Phase 1: Test Fixtures Setup
-
-### Create Multi-Language Fixtures
-
-Create realistic mini-projects in `tests/fixtures/` for each supported language:
-
-```
-tests/fixtures/
-├── rust_project/
-│   ├── src/
-│   │   ├── lib.rs          # Main entry, re-exports
-│   │   ├── calculator.rs   # Functions with docs
-│   │   └── models/
-│   │       └── mod.rs      # Structs, impls
-│   └── Cargo.toml
-├── python_project/
-│   ├── __init__.py
-│   ├── calculator.py       # Functions, classes
-│   └── utils/
-│       └── helpers.py      # Helper functions
-├── javascript_project/
-│   ├── index.js            # Main entry
-│   ├── calculator.js       # ES6 functions, classes
-│   └── utils/
-│       └── helpers.js      # Helper functions
-└── typescript_project/
-    ├── index.ts            # Main entry
-    ├── calculator.ts       # Typed functions, interfaces
-    └── types/
-        └── models.ts       # Type definitions
-```
-
-### Fixture Requirements
-
-Each fixture must include:
-
-1. **Functions/Methods**
-   - Public and private visibility
-   - With parameters and return types
-   - With docstrings/comments
-   - Nested (closures, inner functions)
-
-2. **Classes/Structs**
-   - With fields/properties
-   - With methods
-   - With doc comments
-
-3. **Imports**
-   - Internal (cross-file)
-   - External (stdlib, packages)
-
-4. **Cross-file References**
-   - Function calls across files
-   - Type usage across files
-
-5. **Nested Scopes**
-   - Functions inside classes
-   - Closures inside functions
-   - Nested classes (where applicable)
-
----
-
-## Phase 2: Modify `parse_file`
-
-### Current Behavior
-Returns raw S-expression AST (tree-sitter format).
-
-### New Behavior
-Returns **file shape** - structured JSON with functions, classes, imports, and their signatures.
-
-### New Output Format
-```json
-{
-  "path": "src/calculator.rs",
-  "language": "Rust",
-  "functions": [
-    {
-      "name": "add",
-      "signature": "pub fn add(a: i32, b: i32) -> i32",
-      "line": 5,
-      "end_line": 7,
-      "doc": "Adds two numbers together"
-    }
-  ],
-  "structs": [
-    {
-      "name": "Calculator",
-      "line": 10,
-      "end_line": 15,
-      "doc": "A simple calculator"
-    }
-  ],
-  "classes": [],
-  "imports": [
-    {"text": "use std::fmt;", "line": 1}
-  ]
-}
-```
-
-### Tests (RED phase)
+### CSS Shape (`src/analysis/shape.rs`)
 
 ```rust
-// tests/parse_file_test.rs
-
-#[test]
-fn test_parse_file_rust_functions() {
-    // Given: Rust fixture with functions
-    // When: parse_file is called
-    // Then: Returns JSON with function names, signatures, line numbers
+/// Theme variable from @theme block
+#[derive(Debug, serde::Serialize, Clone)]
+pub struct ThemeVariable {
+    pub name: String,   // "--color-primary", "--spacing-lg"
+    pub value: String,  // "oklch(0.6 0.2 250)", "1.5rem"
+    pub line: usize,
 }
 
-#[test]
-fn test_parse_file_rust_structs() {
-    // Given: Rust fixture with structs
-    // When: parse_file is called
-    // Then: Returns JSON with struct names, line numbers
+/// Custom component class (defined with @apply or custom styles)
+#[derive(Debug, serde::Serialize, Clone)]
+pub struct CustomClass {
+    pub name: String,                    // "btn-primary", "card"
+    pub applied_utilities: Vec<String>,  // ["bg-primary", "text-white", "px-4"]
+    pub layer: Option<String>,           // "components", "utilities", or None
+    pub line: usize,
 }
 
-#[test]
-fn test_parse_file_rust_docs() {
-    // Given: Rust fixture with doc comments
-    // When: parse_file is called
-    // Then: Returns JSON with doc strings extracted
+/// Keyframe animation
+#[derive(Debug, serde::Serialize, Clone)]
+pub struct KeyframeInfo {
+    pub name: String,
+    pub line: usize,
 }
 
-#[test]
-fn test_parse_file_python_functions() {
-    // Given: Python fixture with functions
-    // When: parse_file is called
-    // Then: Returns JSON with function names, signatures
-}
-
-#[test]
-fn test_parse_file_python_classes() {
-    // Given: Python fixture with classes
-    // When: parse_file is called
-    // Then: Returns JSON with class names, methods
-}
-
-#[test]
-fn test_parse_file_javascript_functions() {
-    // Given: JavaScript fixture with functions
-    // When: parse_file is called
-    // Then: Returns JSON with function names
-}
-
-#[test]
-fn test_parse_file_javascript_classes() {
-    // Given: JavaScript fixture with ES6 classes
-    // When: parse_file is called
-    // Then: Returns JSON with class names, methods
-}
-
-#[test]
-fn test_parse_file_typescript_with_types() {
-    // Given: TypeScript fixture with interfaces and typed functions
-    // When: parse_file is called
-    // Then: Returns JSON with types, interfaces, typed functions
-}
-
-#[test]
-fn test_parse_file_nonexistent_file() {
-    // Given: Path to non-existent file
-    // When: parse_file is called
-    // Then: Returns error
-}
-
-#[test]
-fn test_parse_file_unsupported_extension() {
-    // Given: File with unsupported extension
-    // When: parse_file is called
-    // Then: Returns error
+/// CSS file shape (Tailwind v4 focused)
+#[derive(Debug, serde::Serialize)]
+pub struct CssFileShape {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    
+    /// Theme variables from @theme block
+    pub theme: Vec<ThemeVariable>,
+    
+    /// Custom component/utility classes (reusable)
+    pub custom_classes: Vec<CustomClass>,
+    
+    /// @keyframes animations
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub keyframes: Vec<KeyframeInfo>,
 }
 ```
 
----
+### HTML Shape (`src/analysis/shape.rs`)
 
-## Phase 3: Modify `code_map`
-
-### Current Behavior
-Returns directory overview with function/struct/class names only.
-
-### New Behavior
-Returns directory overview with **detail levels**:
-- `minimal`: Names only (current behavior)
-- `signatures`: Names + full signatures
-- `full`: Names + signatures + first-line docs
-
-### New Parameters
 ```rust
-pub struct CodeMapTool {
+/// HTML element with id
+#[derive(Debug, serde::Serialize, Clone)]
+pub struct HtmlIdInfo {
+    pub tag: String,
+    pub id: String,
+    pub line: usize,
+}
+
+/// Script reference
+#[derive(Debug, serde::Serialize, Clone)]
+pub struct ScriptInfo {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub src: Option<String>,
+    pub inline: bool,
+    pub line: usize,
+}
+
+/// Style reference
+#[derive(Debug, serde::Serialize, Clone)]
+pub struct StyleInfo {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub href: Option<String>,
+    pub inline: bool,
+    pub line: usize,
+}
+
+/// HTML file shape
+#[derive(Debug, serde::Serialize)]
+pub struct HtmlFileShape {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    
+    /// Elements with IDs (for JS/navigation)
+    pub ids: Vec<HtmlIdInfo>,
+    
+    /// All unique custom classes used (non-Tailwind utilities)
+    pub classes_used: Vec<String>,
+    
+    /// Script references
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub scripts: Vec<ScriptInfo>,
+    
+    /// Style references
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub styles: Vec<StyleInfo>,
+}
+```
+
+### Askama Template Shape (`src/analysis/file_shape.rs`)
+
+```rust
+/// Template dependency info
+#[derive(Debug, serde::Serialize, Clone)]
+pub struct TemplateDependency {
     pub path: String,
-    pub max_tokens: Option<u32>,     // Default: 2000
-    pub detail: Option<String>,       // "minimal" | "signatures" | "full", default: "signatures"
-    pub pattern: Option<String>,      // Glob pattern filter, e.g., "*.rs"
-}
-```
-
-### New Output Format (detail="full")
-```json
-{
-  "files": [
-    {
-      "path": "src/lib.rs",
-      "functions": [
-        {
-          "name": "parse_code",
-          "signature": "pub fn parse_code(source: &str, language: Language) -> Result<Tree>",
-          "line": 143,
-          "doc": "Parse source code into a tree-sitter syntax tree"
-        }
-      ],
-      "structs": [
-        {
-          "name": "Language",
-          "line": 10,
-          "doc": "Supported programming languages"
-        }
-      ],
-      "classes": []
-    }
-  ],
-  "truncated": false
-}
-```
-
-### Tests (RED phase)
-
-```rust
-// tests/code_map_test.rs
-
-#[test]
-fn test_code_map_rust_project_minimal() {
-    // Given: Rust fixture project
-    // When: code_map with detail="minimal"
-    // Then: Returns names only
+    pub dependency_type: String,  // "extends" or "include"
 }
 
-#[test]
-fn test_code_map_rust_project_signatures() {
-    // Given: Rust fixture project
-    // When: code_map with detail="signatures"
-    // Then: Returns names + full signatures
-}
-
-#[test]
-fn test_code_map_rust_project_full() {
-    // Given: Rust fixture project
-    // When: code_map with detail="full"
-    // Then: Returns names + signatures + docs
-}
-
-#[test]
-fn test_code_map_python_project() {
-    // Given: Python fixture project
-    // When: code_map is called
-    // Then: Returns all Python files with structure
-}
-
-#[test]
-fn test_code_map_javascript_project() {
-    // Given: JavaScript fixture project
-    // When: code_map is called
-    // Then: Returns all JS files with structure
-}
-
-#[test]
-fn test_code_map_typescript_project() {
-    // Given: TypeScript fixture project
-    // When: code_map is called
-    // Then: Returns all TS files with structure
-}
-
-#[test]
-fn test_code_map_pattern_filter() {
-    // Given: Mixed language project
-    // When: code_map with pattern="*.rs"
-    // Then: Returns only Rust files
-}
-
-#[test]
-fn test_code_map_respects_token_limit() {
-    // Given: Large project
-    // When: code_map with max_tokens=500
-    // Then: Output is truncated, truncated=true
-}
-
-#[test]
-fn test_code_map_single_file() {
-    // Given: Path to single file
-    // When: code_map is called
-    // Then: Returns structure for that file only
-}
-
-#[test]
-fn test_code_map_skips_hidden_and_vendor() {
-    // Given: Project with .git, node_modules, target dirs
-    // When: code_map is called
-    // Then: These directories are skipped
-}
-```
-
----
-
-## Phase 4: Modify `find_usages`
-
-### Current Behavior
-Returns file, line, column, and single line of context.
-
-### New Behavior
-Returns usage locations with:
-- **Code snippets** with configurable context lines
-- **Usage type** classification (definition, call, type_reference, import)
-- AST node information
-
-### New Parameters
-```rust
-pub struct FindUsagesTool {
-    pub symbol: String,
+/// Template file shape (when merge_templates=true)
+#[derive(Debug, serde::Serialize)]
+pub struct MergedTemplateShape {
     pub path: String,
-    pub context_lines: Option<u32>,  // Default: 3
+    pub merged_content: String,
+    pub dependencies: Vec<TemplateDependency>,
 }
 ```
 
-### New Output Format
+---
+
+## Part 2: Tailwind Utility Detection
+
+```rust
+/// Check if a class name is a Tailwind utility (to filter out)
+fn is_tailwind_utility(class: &str) -> bool {
+    // Handle variant prefixes (hover:, dark:, sm:, etc.)
+    let base = class.split(':').last().unwrap_or(class);
+    
+    // Exact match utilities
+    let exact = [
+        "flex", "grid", "block", "inline", "hidden", "container",
+        "relative", "absolute", "fixed", "sticky", "static",
+        "visible", "invisible", "collapse",
+    ];
+    if exact.contains(&base) {
+        return true;
+    }
+    
+    // Prefix-based utilities
+    let prefixes = [
+        // Spacing
+        "p-", "px-", "py-", "pt-", "pr-", "pb-", "pl-", "ps-", "pe-",
+        "m-", "mx-", "my-", "mt-", "mr-", "mb-", "ml-", "ms-", "me-", "-m",
+        "gap-", "space-",
+        // Sizing
+        "w-", "h-", "min-", "max-", "size-",
+        // Typography
+        "text-", "font-", "leading-", "tracking-", "indent-",
+        // Colors
+        "bg-", "from-", "via-", "to-", "fill-", "stroke-",
+        // Borders
+        "border", "rounded", "shadow", "ring", "outline", "divide-",
+        // Layout
+        "flex-", "grid-", "col-", "row-", "order-",
+        "items-", "justify-", "content-", "place-", "self-",
+        // Position
+        "z-", "top-", "right-", "bottom-", "left-", "inset-",
+        // Transforms
+        "scale-", "rotate-", "translate-", "skew-", "origin-",
+        // Transitions
+        "transition", "duration-", "delay-", "ease-",
+        // Other
+        "opacity-", "animate-", "cursor-", "pointer-events-", "select-",
+        "overflow-", "overscroll-", "scroll-", "snap-",
+        "aspect-", "columns-", "break-", "float-", "clear-", "object-",
+    ];
+    
+    prefixes.iter().any(|p| base.starts_with(p))
+        || base.contains('[')  // Arbitrary values like w-[300px]
+        || base.starts_with("!")  // Important modifier
+}
+```
+
+---
+
+## Part 3: CSS Extraction (Regex-based for Tailwind)
+
+```rust
+use regex::Regex;
+
+fn extract_css_tailwind(source: &str, file_path: Option<&str>) -> CssFileShape {
+    let mut theme = Vec::new();
+    let mut custom_classes = Vec::new();
+    let mut keyframes = Vec::new();
+    
+    // 1. Extract @theme block variables
+    let theme_block_re = Regex::new(r"@theme\s*\{([\s\S]*?)\n\}").unwrap();
+    if let Some(cap) = theme_block_re.captures(source) {
+        let theme_content = &cap[1];
+        let var_re = Regex::new(r"(?m)^\s*(--[\w-]+)\s*:\s*([^;]+);").unwrap();
+        for (line_offset, var_cap) in var_re.captures_iter(theme_content).enumerate() {
+            theme.push(ThemeVariable {
+                name: var_cap[1].to_string(),
+                value: var_cap[2].trim().to_string(),
+                line: calculate_line(source, var_cap.get(0).unwrap().start()),
+            });
+        }
+    }
+    
+    // 2. Extract @layer components/utilities blocks
+    let layer_re = Regex::new(r"@layer\s+(components|utilities)\s*\{([\s\S]*?)\n\}").unwrap();
+    for layer_cap in layer_re.captures_iter(source) {
+        let layer_name = layer_cap[1].to_string();
+        let layer_content = &layer_cap[2];
+        
+        // Extract class definitions within layer
+        let class_re = Regex::new(r"\.([\w-]+)\s*\{([^}]*)\}").unwrap();
+        for class_cap in class_re.captures_iter(layer_content) {
+            let class_name = class_cap[1].to_string();
+            let class_body = &class_cap[2];
+            
+            // Extract @apply utilities
+            let mut applied = Vec::new();
+            let apply_re = Regex::new(r"@apply\s+([^;]+);").unwrap();
+            for apply_cap in apply_re.captures_iter(class_body) {
+                applied.extend(
+                    apply_cap[1].split_whitespace().map(String::from)
+                );
+            }
+            
+            custom_classes.push(CustomClass {
+                name: class_name,
+                applied_utilities: applied,
+                layer: Some(layer_name.clone()),
+                line: calculate_line(source, class_cap.get(0).unwrap().start()),
+            });
+        }
+    }
+    
+    // 3. Extract @keyframes (use tree-sitter or regex)
+    let keyframes_re = Regex::new(r"@keyframes\s+([\w-]+)\s*\{").unwrap();
+    for kf_cap in keyframes_re.captures_iter(source) {
+        keyframes.push(KeyframeInfo {
+            name: kf_cap[1].to_string(),
+            line: calculate_line(source, kf_cap.get(0).unwrap().start()),
+        });
+    }
+    
+    CssFileShape {
+        path: file_path.map(String::from),
+        theme,
+        custom_classes,
+        keyframes,
+    }
+}
+
+fn calculate_line(source: &str, byte_offset: usize) -> usize {
+    source[..byte_offset].matches('\n').count() + 1
+}
+```
+
+---
+
+## Part 4: HTML Extraction (Tree-sitter)
+
+```rust
+fn extract_html_shape(tree: &Tree, source: &str, file_path: Option<&str>) -> HtmlFileShape {
+    let mut ids = Vec::new();
+    let mut all_classes = Vec::new();
+    let mut scripts = Vec::new();
+    let mut styles = Vec::new();
+    
+    // Tree-sitter queries for HTML
+    let query = Query::new(
+        &tree_sitter_html::LANGUAGE.into(),
+        r#"
+        ; Elements with id attribute
+        (element
+          (start_tag
+            (tag_name) @tag
+            (attribute
+              (attribute_name) @attr_name
+              (quoted_attribute_value (attribute_value) @attr_value))))
+        
+        ; Script elements
+        (script_element
+          (start_tag) @script_start) @script
+        
+        ; Style elements  
+        (style_element) @style
+        
+        ; Link elements
+        (element
+          (start_tag
+            (tag_name) @link_tag
+            (#eq? @link_tag "link"))) @link
+        "#,
+    ).unwrap();
+    
+    // Process matches to extract:
+    // - id attributes -> ids
+    // - class attributes -> filter through is_tailwind_utility() -> all_classes
+    // - script src or inline -> scripts
+    // - style href or inline -> styles
+    
+    // Deduplicate and filter classes
+    let classes_used: Vec<String> = all_classes
+        .into_iter()
+        .filter(|c| !is_tailwind_utility(c))
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+    
+    HtmlFileShape {
+        path: file_path.map(String::from),
+        ids,
+        classes_used,
+        scripts,
+        styles,
+    }
+}
+```
+
+---
+
+## Part 5: Askama Template Resolution
+
+### Auto-detect Templates Directory
+
+```rust
+fn find_templates_dir(file_path: &Path) -> Option<PathBuf> {
+    let mut current = file_path.parent()?;
+    
+    loop {
+        // Check if current dir is named "templates"
+        if current.file_name().map(|n| n == "templates").unwrap_or(false) {
+            return Some(current.to_path_buf());
+        }
+        
+        // Check if "templates" subdir exists
+        let templates_subdir = current.join("templates");
+        if templates_subdir.is_dir() {
+            return Some(templates_subdir);
+        }
+        
+        current = current.parent()?;
+    }
+}
+```
+
+### Template Dependency Detection
+
+```rust
+fn find_template_dependencies(source: &str, templates_dir: &Path) -> Vec<TemplateDependency> {
+    let mut deps = Vec::new();
+    
+    // {% extends "path" %}
+    let extends_re = Regex::new(r#"\{%\s*extends\s+"([^"]+)"\s*%\}"#).unwrap();
+    for cap in extends_re.captures_iter(source) {
+        let path = templates_dir.join(&cap[1]);
+        if path.exists() {
+            deps.push(TemplateDependency {
+                path: cap[1].to_string(),
+                dependency_type: "extends".to_string(),
+            });
+        }
+    }
+    
+    // {% include "path" %}
+    let include_re = Regex::new(r#"\{%\s*include\s+"([^"]+)"\s*%\}"#).unwrap();
+    for cap in include_re.captures_iter(source) {
+        let path = templates_dir.join(&cap[1]);
+        if path.exists() {
+            deps.push(TemplateDependency {
+                path: cap[1].to_string(),
+                dependency_type: "include".to_string(),
+            });
+        }
+    }
+    
+    deps
+}
+```
+
+### Template Merging
+
+```rust
+fn merge_template(
+    template_path: &Path,
+    templates_dir: &Path,
+    visited: &mut HashSet<PathBuf>,
+) -> Result<String, io::Error> {
+    let canonical = fs::canonicalize(template_path)?;
+    if visited.contains(&canonical) {
+        return Ok(String::new()); // Prevent infinite recursion
+    }
+    visited.insert(canonical);
+    
+    let source = fs::read_to_string(template_path)?;
+    
+    // Handle {% extends "base.html" %}
+    let extends_re = Regex::new(r#"\{%\s*extends\s+"([^"]+)"\s*%\}"#).unwrap();
+    if let Some(cap) = extends_re.captures(&source) {
+        let parent_path = templates_dir.join(&cap[1]);
+        let parent_content = merge_template(&parent_path, templates_dir, visited)?;
+        
+        // Extract blocks from child
+        let child_blocks = extract_blocks(&source);
+        
+        // Replace blocks in parent
+        return Ok(replace_blocks(&parent_content, &child_blocks));
+    }
+    
+    // Handle {% include "partial.html" %}
+    let include_re = Regex::new(r#"\{%\s*include\s+"([^"]+)"\s*%\}"#).unwrap();
+    let result = include_re.replace_all(&source, |caps: &regex::Captures| {
+        let include_path = templates_dir.join(&caps[1]);
+        merge_template(&include_path, templates_dir, visited)
+            .unwrap_or_else(|_| format!("<!-- include error: {} -->", &caps[1]))
+    });
+    
+    Ok(result.to_string())
+}
+
+fn extract_blocks(source: &str) -> HashMap<String, String> {
+    let mut blocks = HashMap::new();
+    let block_re = Regex::new(
+        r#"\{%\s*block\s+(\w+)\s*%\}([\s\S]*?)\{%\s*endblock\s*%\}"#
+    ).unwrap();
+    
+    for cap in block_re.captures_iter(source) {
+        blocks.insert(cap[1].to_string(), cap[2].to_string());
+    }
+    blocks
+}
+
+fn replace_blocks(parent: &str, child_blocks: &HashMap<String, String>) -> String {
+    let block_re = Regex::new(
+        r#"\{%\s*block\s+(\w+)\s*%\}([\s\S]*?)\{%\s*endblock\s*%\}"#
+    ).unwrap();
+    
+    block_re.replace_all(parent, |caps: &regex::Captures| {
+        let block_name = &caps[1];
+        // Use child block if exists, otherwise keep parent default
+        child_blocks.get(block_name)
+            .cloned()
+            .unwrap_or_else(|| caps[2].to_string())
+    }).to_string()
+}
+```
+
+---
+
+## Part 6: Tool Parameter Updates
+
+### file_shape Tool (`src/tools.rs`)
+
+Add `merge_templates` parameter:
+
+```rust
+Tool {
+    name: "file_shape".to_string(),
+    description: "Extract file structure without implementation details".to_string(),
+    input_schema: json!({
+        "type": "object",
+        "properties": {
+            "file_path": {
+                "type": "string",
+                "description": "Path to the source file"
+            },
+            "include_deps": {
+                "type": "boolean",
+                "description": "Include project dependencies as nested shapes",
+                "default": false
+            },
+            "merge_templates": {
+                "type": "boolean",
+                "description": "For Askama/Jinja2 templates: merge extends/includes into single output",
+                "default": false
+            }
+        },
+        "required": ["file_path"]
+    }),
+}
+```
+
+---
+
+## Part 7: Test Fixtures
+
+### `tests/fixtures/typescript_project/styles/globals.css`
+
+```css
+@import "tailwindcss";
+
+@theme {
+  /* Colors */
+  --color-primary: oklch(0.6 0.2 250);
+  --color-primary-hover: oklch(0.5 0.25 250);
+  --color-secondary: oklch(0.7 0.15 160);
+  --color-success: oklch(0.7 0.2 145);
+  --color-warning: oklch(0.8 0.15 85);
+  --color-error: oklch(0.65 0.25 25);
+  
+  /* Spacing */
+  --spacing-xs: 0.25rem;
+  --spacing-sm: 0.5rem;
+  --spacing-md: 1rem;
+  --spacing-lg: 1.5rem;
+  --spacing-xl: 2rem;
+  
+  /* Typography */
+  --font-display: "Inter", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+  
+  /* Radius */
+  --radius-sm: 0.25rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 1rem;
+  
+  /* Animations */
+  @keyframes fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  
+  @keyframes slide-up {
+    from { transform: translateY(10px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+  }
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex items-center justify-center px-4 py-2 rounded-md font-medium transition-colors;
+  }
+  
+  .btn-primary {
+    @apply btn bg-primary text-white hover:bg-primary-hover;
+  }
+  
+  .btn-secondary {
+    @apply btn bg-secondary text-white;
+  }
+  
+  .btn-outline {
+    @apply btn border-2 border-primary text-primary bg-transparent hover:bg-primary hover:text-white;
+  }
+  
+  .card {
+    @apply bg-white rounded-lg shadow-md p-6;
+  }
+  
+  .card-header {
+    @apply border-b pb-4 mb-4;
+  }
+  
+  .card-title {
+    @apply text-xl font-semibold;
+  }
+  
+  .input {
+    @apply w-full px-4 py-2 rounded-md border border-gray-300 focus:ring-2 focus:ring-primary;
+  }
+  
+  .label {
+    @apply block text-sm font-medium text-gray-700 mb-1;
+  }
+  
+  .calc-display {
+    @apply w-full p-4 text-right text-3xl font-mono bg-gray-900 text-green-400 rounded-t-lg;
+  }
+  
+  .calc-key {
+    @apply p-4 text-xl font-bold rounded transition-colors hover:bg-gray-300;
+  }
+  
+  .calc-key-operator {
+    @apply calc-key bg-primary text-white hover:bg-primary-hover;
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+  
+  .animate-fade-in {
+    animation: fade-in 0.3s ease-out;
+  }
+  
+  .animate-slide-up {
+    animation: slide-up 0.4s ease-out;
+  }
+}
+```
+
+### `tests/fixtures/typescript_project/index.html`
+
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Calculator App</title>
+    <link rel="stylesheet" href="./styles/globals.css">
+    <script src="./index.js" type="module" defer></script>
+</head>
+<body class="min-h-screen bg-gray-50">
+    <header id="app-header" class="bg-white border-b">
+        <div class="container mx-auto px-4 py-4 flex items-center justify-between">
+            <h1 class="text-2xl font-bold text-primary">Calculator</h1>
+            <nav id="main-nav" class="flex gap-6">
+                <a href="#basic">Basic</a>
+                <a href="#advanced">Advanced</a>
+            </nav>
+        </div>
+    </header>
+    
+    <main id="app-content" class="container mx-auto px-4 py-8">
+        <section id="basic" class="card max-w-md mx-auto mb-8">
+            <div class="card-header">
+                <h2 class="card-title">Basic Calculator</h2>
+            </div>
+            <div id="calc-display" class="calc-display">0</div>
+            <div id="calc-keypad" class="grid grid-cols-4 gap-1 p-2">
+                <button class="calc-key">7</button>
+                <button class="calc-key">8</button>
+                <button class="calc-key">9</button>
+                <button class="calc-key-operator">÷</button>
+                <button class="calc-key">4</button>
+                <button class="calc-key">5</button>
+                <button class="calc-key">6</button>
+                <button class="calc-key-operator">×</button>
+                <button class="calc-key">1</button>
+                <button class="calc-key">2</button>
+                <button class="calc-key">3</button>
+                <button class="calc-key-operator">−</button>
+                <button class="calc-key">0</button>
+                <button class="calc-key">.</button>
+                <button class="calc-key-operator">=</button>
+                <button class="calc-key-operator">+</button>
+            </div>
+            <button id="clear-btn" class="btn-secondary mt-4">Clear</button>
+        </section>
+        
+        <section id="advanced" class="card max-w-md mx-auto">
+            <div class="card-header">
+                <h2 class="card-title">Advanced Operations</h2>
+            </div>
+            <form id="custom-operation" class="space-y-4">
+                <div>
+                    <label for="input-a" class="label">First Number</label>
+                    <input type="number" id="input-a" class="input">
+                </div>
+                <div>
+                    <label for="input-b" class="label">Second Number</label>
+                    <input type="number" id="input-b" class="input">
+                </div>
+                <button type="submit" class="btn-primary w-full">Calculate</button>
+            </form>
+        </section>
+    </main>
+    
+    <footer id="app-footer" class="border-t mt-auto py-6 text-center">
+        <p class="text-sm text-gray-600">Built with TypeScript</p>
+    </footer>
+</body>
+</html>
+```
+
+### `tests/fixtures/rust_project/templates/base.html`
+
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>{% block title %}Calculator{% endblock %}</title>
+    <link rel="stylesheet" href="/static/globals.css">
+    {% block head %}{% endblock %}
+</head>
+<body class="min-h-screen bg-gray-50">
+    {% include "partials/header.html" %}
+    
+    <main id="app-content" class="container mx-auto px-4 py-8">
+        {% block content %}{% endblock %}
+    </main>
+    
+    {% include "partials/footer.html" %}
+    
+    {% block scripts %}{% endblock %}
+</body>
+</html>
+```
+
+### `tests/fixtures/rust_project/templates/calculator.html`
+
+```html
+{% extends "base.html" %}
+
+{% block title %}{{ operation }} - Calculator{% endblock %}
+
+{% block content %}
+<section id="calculator" class="card max-w-md mx-auto">
+    <div class="card-header">
+        <h2 class="card-title">{{ operation }}</h2>
+    </div>
+    
+    <div id="result-display" class="p-6 bg-gray-100 rounded-lg text-center mb-4">
+        {% match result %}
+            {% when Some with (value) %}
+                <p class="text-sm text-gray-500 mb-1">Result</p>
+                <span class="text-4xl font-mono font-bold text-primary">{{ value }}</span>
+            {% when None %}
+                <span class="text-2xl text-error">Error</span>
+        {% endmatch %}
+    </div>
+    
+    <form action="/calculate" method="post" class="space-y-4">
+        <div class="grid grid-cols-3 gap-4">
+            <div>
+                <label for="input-a" class="label">A</label>
+                <input type="number" name="a" id="input-a" value="{{ a }}" class="input text-center">
+            </div>
+            <div>
+                <select name="op" class="input text-center text-xl">
+                    {% for op in operations %}
+                    <option value="{{ op.value }}"{% if op.value == selected_op %} selected{% endif %}>
+                        {{ op.label }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label for="input-b" class="label">B</label>
+                <input type="number" name="b" id="input-b" value="{{ b }}" class="input text-center">
+            </div>
+        </div>
+        <button type="submit" class="btn-primary w-full">Calculate</button>
+    </form>
+    
+    {% if !history.is_empty() %}
+    {% include "partials/history.html" %}
+    {% endif %}
+</section>
+{% endblock %}
+```
+
+### `tests/fixtures/rust_project/templates/partials/header.html`
+
+```html
+<header id="site-header" class="bg-white border-b">
+    <div class="container mx-auto px-4 py-4 flex items-center justify-between">
+        <h1 class="text-2xl font-bold text-primary">{{ site_name }}</h1>
+        <nav class="flex gap-6">
+            {% for item in nav_items %}
+            <a href="{{ item.url }}" class="{% if item.active %}font-semibold text-primary{% else %}text-gray-600 hover:text-primary{% endif %}">
+                {{ item.label }}
+            </a>
+            {% endfor %}
+        </nav>
+    </div>
+</header>
+```
+
+### `tests/fixtures/rust_project/templates/partials/footer.html`
+
+```html
+<footer id="site-footer" class="border-t mt-auto py-6 text-center">
+    <p class="text-sm text-gray-600">&copy; {{ year }} {{ site_name }}</p>
+</footer>
+```
+
+### `tests/fixtures/rust_project/templates/partials/history.html`
+
+```html
+<aside id="history" class="mt-6 p-4 bg-gray-50 rounded-lg">
+    <h3 class="text-lg font-semibold mb-2">History</h3>
+    <ul class="space-y-1">
+        {% for entry in history %}
+        <li class="flex justify-between text-sm">
+            <span class="font-mono">{{ entry.expression }}</span>
+            <span class="font-bold">= {{ entry.result }}</span>
+        </li>
+        {% endfor %}
+    </ul>
+</aside>
+```
+
+### `tests/fixtures/rust_project/Cargo.toml`
+
+```toml
+[package]
+name = "rust_project"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+askama = "0.12"
+```
+
+### `tests/fixtures/rust_project/src/templates.rs`
+
+```rust
+use askama::Template;
+
+#[derive(Template)]
+#[template(path = "calculator.html")]
+pub struct CalculatorTemplate<'a> {
+    pub site_name: &'a str,
+    pub nav_items: Vec<NavItem<'a>>,
+    pub year: u32,
+    pub operation: &'a str,
+    pub a: i32,
+    pub b: i32,
+    pub selected_op: &'a str,
+    pub operations: Vec<OperationOption<'a>>,
+    pub result: Option<i32>,
+    pub history: Vec<HistoryEntry<'a>>,
+}
+
+pub struct NavItem<'a> {
+    pub url: &'a str,
+    pub label: &'a str,
+    pub active: bool,
+}
+
+pub struct OperationOption<'a> {
+    pub value: &'a str,
+    pub label: &'a str,
+}
+
+pub struct HistoryEntry<'a> {
+    pub expression: &'a str,
+    pub result: &'a str,
+}
+```
+
+---
+
+## Part 8: Expected Output Examples
+
+### CSS Shape Output
+
 ```json
 {
-  "symbol": "parse_code",
-  "usages": [
-    {
-      "file": "src/analysis/code_map.rs",
-      "line": 164,
-      "column": 29,
-      "usage_type": "call",
-      "node_type": "call_expression",
-      "code": "    let tree = crate::parser::parse_code(&source, language).map_err(|e| {\n        io::Error::new(\n            io::ErrorKind::InvalidData,\n            format!(\"Failed to parse {} code: {e}\", language.name()),\n        )\n    })?;"
-    },
-    {
-      "file": "src/parser/mod.rs",
-      "line": 143,
-      "column": 8,
-      "usage_type": "definition",
-      "node_type": "function_item",
-      "code": "pub fn parse_code(source: &str, language: Language) -> Result<Tree> {\n    log::debug!(\"Parsing {} code ({} bytes)\", language.name(), source.len());\n    ..."
-    }
+  "path": "styles/globals.css",
+  "theme": [
+    {"name": "--color-primary", "value": "oklch(0.6 0.2 250)", "line": 5},
+    {"name": "--color-primary-hover", "value": "oklch(0.5 0.25 250)", "line": 6},
+    {"name": "--color-secondary", "value": "oklch(0.7 0.15 160)", "line": 7},
+    {"name": "--spacing-lg", "value": "1.5rem", "line": 15},
+    {"name": "--font-display", "value": "\"Inter\", system-ui, sans-serif", "line": 20}
+  ],
+  "custom_classes": [
+    {"name": "btn", "applied_utilities": ["inline-flex", "items-center", "justify-center", "px-4", "py-2", "rounded-md", "font-medium", "transition-colors"], "layer": "components", "line": 38},
+    {"name": "btn-primary", "applied_utilities": ["btn", "bg-primary", "text-white", "hover:bg-primary-hover"], "layer": "components", "line": 42},
+    {"name": "btn-secondary", "applied_utilities": ["btn", "bg-secondary", "text-white"], "layer": "components", "line": 46},
+    {"name": "card", "applied_utilities": ["bg-white", "rounded-lg", "shadow-md", "p-6"], "layer": "components", "line": 54},
+    {"name": "input", "applied_utilities": ["w-full", "px-4", "py-2", "rounded-md", "border", "border-gray-300", "focus:ring-2", "focus:ring-primary"], "layer": "components", "line": 66},
+    {"name": "calc-display", "applied_utilities": ["w-full", "p-4", "text-right", "text-3xl", "font-mono", "bg-gray-900", "text-green-400", "rounded-t-lg"], "layer": "components", "line": 74},
+    {"name": "animate-fade-in", "applied_utilities": [], "layer": "utilities", "line": 86}
+  ],
+  "keyframes": [
+    {"name": "fade-in", "line": 28},
+    {"name": "slide-up", "line": 33}
   ]
 }
 ```
 
-### Usage Type Classification
-- `definition`: Function/struct/class/variable definition
-- `call`: Function/method call
-- `type_reference`: Used as a type annotation
-- `import`: Used in import/use statement
-- `reference`: Other references (field access, etc.)
+### HTML Shape Output
 
-### Tests (RED phase)
-
-```rust
-// tests/find_usages_test.rs
-
-#[test]
-fn test_find_usages_rust_function_definition() {
-    // Given: Rust fixture with function
-    // When: find_usages for function name
-    // Then: Finds definition with usage_type="definition"
-}
-
-#[test]
-fn test_find_usages_rust_function_calls() {
-    // Given: Rust fixture with function calls
-    // When: find_usages for function name
-    // Then: Finds all calls with usage_type="call"
-}
-
-#[test]
-fn test_find_usages_rust_cross_file() {
-    // Given: Rust fixture with cross-file references
-    // When: find_usages on directory
-    // Then: Finds usages in all files
-}
-
-#[test]
-fn test_find_usages_rust_with_context() {
-    // Given: Rust fixture
-    // When: find_usages with context_lines=5
-    // Then: Returns 5 lines of context around each usage
-}
-
-#[test]
-fn test_find_usages_python_method() {
-    // Given: Python fixture with class method
-    // When: find_usages for method name
-    // Then: Finds definition and calls
-}
-
-#[test]
-fn test_find_usages_javascript_function() {
-    // Given: JavaScript fixture
-    // When: find_usages for function name
-    // Then: Finds all usages
-}
-
-#[test]
-fn test_find_usages_typescript_interface() {
-    // Given: TypeScript fixture with interface
-    // When: find_usages for interface name
-    // Then: Finds definition and type references
-}
-
-#[test]
-fn test_find_usages_not_found() {
-    // Given: Fixture project
-    // When: find_usages for non-existent symbol
-    // Then: Returns empty usages array
-}
-
-#[test]
-fn test_find_usages_includes_code_snippet() {
-    // Given: Fixture with function usage
-    // When: find_usages is called
-    // Then: Each usage includes multi-line code snippet
-}
-```
-
----
-
-## Phase 5: Modify `query_pattern`
-
-### Current Behavior
-Returns match locations with captured text.
-
-### New Behavior
-Returns matches with:
-- **Code context** (configurable lines)
-- **Parent node information**
-
-### New Parameters
-```rust
-pub struct QueryPatternTool {
-    pub file_path: String,
-    pub query: String,
-    pub context_lines: Option<u32>,  // Default: 2
-}
-```
-
-### New Output Format
 ```json
 {
-  "query": "(function_item name: (identifier) @name)",
-  "matches": [
-    {
-      "line": 10,
-      "column": 1,
-      "captures": {
-        "name": "calculate"
-      },
-      "code": "/// Calculates the result\npub fn calculate(x: i32) -> i32 {\n    x * 2\n}",
-      "parent": {
-        "type": "source_file",
-        "line": 1
-      }
-    }
+  "path": "index.html",
+  "ids": [
+    {"tag": "header", "id": "app-header", "line": 10},
+    {"tag": "nav", "id": "main-nav", "line": 13},
+    {"tag": "main", "id": "app-content", "line": 19},
+    {"tag": "section", "id": "basic", "line": 20},
+    {"tag": "div", "id": "calc-display", "line": 24},
+    {"tag": "div", "id": "calc-keypad", "line": 25},
+    {"tag": "button", "id": "clear-btn", "line": 42},
+    {"tag": "section", "id": "advanced", "line": 45},
+    {"tag": "form", "id": "custom-operation", "line": 49},
+    {"tag": "input", "id": "input-a", "line": 52},
+    {"tag": "input", "id": "input-b", "line": 56},
+    {"tag": "footer", "id": "app-footer", "line": 63}
+  ],
+  "classes_used": [
+    "btn-primary", "btn-secondary", "card", "card-header", "card-title",
+    "calc-display", "calc-key", "calc-key-operator", "input", "label"
+  ],
+  "scripts": [{"src": "./index.js", "inline": false, "line": 6}],
+  "styles": [{"href": "./styles/globals.css", "inline": false, "line": 5}]
+}
+```
+
+### Merged Template Output (merge_templates=true)
+
+```json
+{
+  "path": "templates/calculator.html",
+  "merged_content": "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n    <meta charset=\"UTF-8\">\n    <title>{{ operation }} - Calculator</title>\n    <link rel=\"stylesheet\" href=\"/static/globals.css\">\n    \n</head>\n<body class=\"min-h-screen bg-gray-50\">\n    <header id=\"site-header\" class=\"bg-white border-b\">...</header>\n    \n    <main id=\"app-content\" class=\"container mx-auto px-4 py-8\">\n        <section id=\"calculator\" class=\"card max-w-md mx-auto\">...</section>\n    </main>\n    \n    <footer id=\"site-footer\" class=\"border-t mt-auto py-6 text-center\">...</footer>\n    \n    \n</body>\n</html>",
+  "dependencies": [
+    {"path": "base.html", "dependency_type": "extends"},
+    {"path": "partials/header.html", "dependency_type": "include"},
+    {"path": "partials/footer.html", "dependency_type": "include"},
+    {"path": "partials/history.html", "dependency_type": "include"}
   ]
 }
 ```
 
-### Tests (RED phase)
+---
 
-```rust
-// tests/query_pattern_test.rs
+## Part 9: Files to Create/Modify
 
-#[test]
-fn test_query_pattern_rust_functions() {
-    // Given: Rust fixture
-    // When: Query for function_item
-    // Then: Finds all functions with code context
-}
-
-#[test]
-fn test_query_pattern_rust_with_context() {
-    // Given: Rust fixture
-    // When: Query with context_lines=5
-    // Then: Returns 5 lines of context
-}
-
-#[test]
-fn test_query_pattern_python_classes() {
-    // Given: Python fixture
-    // When: Query for class_definition
-    // Then: Finds all classes
-}
-
-#[test]
-fn test_query_pattern_javascript_imports() {
-    // Given: JavaScript fixture
-    // When: Query for import_statement
-    // Then: Finds all imports
-}
-
-#[test]
-fn test_query_pattern_typescript_interfaces() {
-    // Given: TypeScript fixture
-    // When: Query for interface_declaration
-    // Then: Finds all interfaces
-}
-
-#[test]
-fn test_query_pattern_includes_parent() {
-    // Given: Fixture with nested code
-    // When: Query for identifier
-    // Then: Result includes parent node info
-}
-
-#[test]
-fn test_query_pattern_invalid_query() {
-    // Given: Fixture file
-    // When: Query with invalid syntax
-    // Then: Returns error with helpful message
-}
-```
+| File | Action | Description |
+|------|--------|-------------|
+| `src/analysis/shape.rs` | Modify | Add `CssFileShape`, `HtmlFileShape`, `ThemeVariable`, `CustomClass`, extraction functions |
+| `src/analysis/file_shape.rs` | Modify | Add HTML/CSS shape extraction, `merge_templates` param, Askama resolution |
+| `src/analysis/get_context.rs` | Modify | Add HTML/CSS context node types |
+| `src/tools.rs` | Modify | Add `merge_templates` parameter to file_shape schema |
+| `Cargo.toml` | Modify | Add `regex = "1.10"` dependency |
+| `tests/fixtures/typescript_project/index.html` | Create | HTML test fixture |
+| `tests/fixtures/typescript_project/styles/globals.css` | Create | Tailwind v4 CSS fixture |
+| `tests/fixtures/rust_project/templates/base.html` | Create | Askama base template |
+| `tests/fixtures/rust_project/templates/calculator.html` | Create | Askama child template |
+| `tests/fixtures/rust_project/templates/partials/header.html` | Create | Askama partial |
+| `tests/fixtures/rust_project/templates/partials/footer.html` | Create | Askama partial |
+| `tests/fixtures/rust_project/templates/partials/history.html` | Create | Askama partial |
+| `tests/fixtures/rust_project/Cargo.toml` | Modify | Add askama dependency |
+| `tests/fixtures/rust_project/src/lib.rs` | Modify | Add `pub mod templates;` |
+| `tests/fixtures/rust_project/src/templates.rs` | Create | Template structs |
+| `tests/html_css_test.rs` | Create | Tests for HTML/CSS extraction |
+| `tests/askama_test.rs` | Create | Tests for Askama template merging |
 
 ---
 
-## Phase 6: Add `get_context`
+## Part 10: Implementation Order
 
-### Purpose
-Get the enclosing context (function, class, module) at a specific position.
-
-### Parameters
-```rust
-pub struct GetContextTool {
-    pub file_path: String,
-    pub line: u32,           // 1-indexed
-    pub column: Option<u32>, // 1-indexed, default: 1
-}
-```
-
-### Output Format
-```json
-{
-  "file": "src/calculator.rs",
-  "position": {"line": 15, "column": 10},
-  "contexts": [
-    {
-      "type": "function_item",
-      "name": "calculate",
-      "signature": "pub fn calculate(x: i32, y: i32) -> i32",
-      "range": {
-        "start": {"line": 10, "column": 1},
-        "end": {"line": 20, "column": 2}
-      },
-      "code": "pub fn calculate(x: i32, y: i32) -> i32 {\n    let result = x + y;\n    // ... rest of function\n}"
-    },
-    {
-      "type": "impl_item",
-      "name": "Calculator",
-      "range": {
-        "start": {"line": 5, "column": 1},
-        "end": {"line": 50, "column": 2}
-      }
-    },
-    {
-      "type": "source_file",
-      "name": "calculator.rs"
-    }
-  ]
-}
-```
-
-### Tests (RED phase)
-
-```rust
-// tests/get_context_test.rs
-
-#[test]
-fn test_get_context_rust_inside_function() {
-    // Given: Position inside a Rust function
-    // When: get_context is called
-    // Then: Returns function as innermost context
-}
-
-#[test]
-fn test_get_context_rust_inside_impl() {
-    // Given: Position inside impl block method
-    // When: get_context is called
-    // Then: Returns method, then impl as contexts
-}
-
-#[test]
-fn test_get_context_rust_nested_closure() {
-    // Given: Position inside closure inside function
-    // When: get_context is called
-    // Then: Returns closure, then function as contexts
-}
-
-#[test]
-fn test_get_context_python_inside_method() {
-    // Given: Position inside Python class method
-    // When: get_context is called
-    // Then: Returns method, then class as contexts
-}
-
-#[test]
-fn test_get_context_javascript_arrow_function() {
-    // Given: Position inside arrow function
-    // When: get_context is called
-    // Then: Returns arrow function as context
-}
-
-#[test]
-fn test_get_context_typescript_interface() {
-    // Given: Position inside TypeScript interface
-    // When: get_context is called
-    // Then: Returns interface as context
-}
-
-#[test]
-fn test_get_context_at_top_level() {
-    // Given: Position at module top level
-    // When: get_context is called
-    // Then: Returns only source_file context
-}
-
-#[test]
-fn test_get_context_includes_code() {
-    // Given: Position inside function
-    // When: get_context is called
-    // Then: Innermost context includes full code
-}
-
-#[test]
-fn test_get_context_invalid_position() {
-    // Given: Position beyond file bounds
-    // When: get_context is called
-    // Then: Returns error or empty contexts
-}
-```
+| Phase | Tasks | Priority |
+|-------|-------|----------|
+| 1 | Add `regex` to Cargo.toml dependencies | High |
+| 2 | Add data structures to `shape.rs` | High |
+| 3 | Implement `extract_css_tailwind()` with regex | High |
+| 4 | Implement `extract_html_shape()` with tree-sitter + filtering | High |
+| 5 | Add `merge_templates` param and Askama resolution to `file_shape.rs` | High |
+| 6 | Update `get_context.rs` for HTML/CSS nodes | Medium |
+| 7 | Update `tools.rs` with new parameter | Medium |
+| 8 | Create test fixtures (CSS, HTML, Askama templates) | Medium |
+| 9 | Add unit tests for CSS extraction | High |
+| 10 | Add unit tests for HTML extraction | High |
+| 11 | Add integration tests for Askama merging | High |
 
 ---
 
-## Phase 7: Add `get_node_at_position`
+## Summary
 
-### Purpose
-Get the AST node at a specific position with ancestor chain.
+This implementation helps LLMs create consistent UIs by:
 
-### Parameters
-```rust
-pub struct GetNodeAtPositionTool {
-    pub file_path: String,
-    pub line: u32,                    // 1-indexed
-    pub column: u32,                  // 1-indexed
-    pub ancestor_levels: Option<u32>, // Default: 3
-}
-```
+1. **Exposing design tokens** from `@theme` block (colors, spacing, fonts, etc.)
+2. **Exposing reusable component classes** with their Tailwind utility composition
+3. **Tracking custom class usage** in HTML to understand patterns
+4. **Providing merged template views** for complete UI structure understanding
 
-### Output Format
-```json
-{
-  "file": "src/calculator.rs",
-  "position": {"line": 15, "column": 10},
-  "node": {
-    "type": "identifier",
-    "text": "result",
-    "range": {
-      "start": {"line": 15, "column": 9},
-      "end": {"line": 15, "column": 15}
-    }
-  },
-  "ancestors": [
-    {
-      "type": "let_declaration",
-      "text": "let result = x + y;",
-      "range": {"start": {"line": 15, "column": 5}, "end": {"line": 15, "column": 23}}
-    },
-    {
-      "type": "block",
-      "range": {"start": {"line": 11, "column": 38}, "end": {"line": 20, "column": 2}}
-    },
-    {
-      "type": "function_item",
-      "name": "calculate",
-      "range": {"start": {"line": 10, "column": 1}, "end": {"line": 20, "column": 2}}
-    }
-  ]
-}
-```
-
-### Tests (RED phase)
-
-```rust
-// tests/get_node_at_position_test.rs
-
-#[test]
-fn test_get_node_at_position_rust_identifier() {
-    // Given: Position on an identifier
-    // When: get_node_at_position is called
-    // Then: Returns identifier node with text
-}
-
-#[test]
-fn test_get_node_at_position_rust_with_ancestors() {
-    // Given: Position inside nested code
-    // When: get_node_at_position with ancestor_levels=5
-    // Then: Returns up to 5 ancestor nodes
-}
-
-#[test]
-fn test_get_node_at_position_rust_function_name() {
-    // Given: Position on function name in definition
-    // When: get_node_at_position is called
-    // Then: Returns identifier, parent is function_item
-}
-
-#[test]
-fn test_get_node_at_position_python_method_call() {
-    // Given: Position on method call
-    // When: get_node_at_position is called
-    // Then: Returns call node with ancestors
-}
-
-#[test]
-fn test_get_node_at_position_javascript_property() {
-    // Given: Position on object property access
-    // When: get_node_at_position is called
-    // Then: Returns property node
-}
-
-#[test]
-fn test_get_node_at_position_typescript_type() {
-    // Given: Position on type annotation
-    // When: get_node_at_position is called
-    // Then: Returns type node
-}
-
-#[test]
-fn test_get_node_at_position_ancestor_includes_name() {
-    // Given: Position inside named construct
-    // When: get_node_at_position is called
-    // Then: Ancestor includes name if applicable
-}
-
-#[test]
-fn test_get_node_at_position_whitespace() {
-    // Given: Position on whitespace
-    // When: get_node_at_position is called
-    // Then: Returns nearest enclosing node or error
-}
-```
-
----
-
-## Phase 8: Remove `file_shape`
-
-### Changes Required
-
-1. **Delete files**:
-   - `src/analysis/file_shape.rs`
-   - `tests/file_shape_tool_test.rs`
-
-2. **Update modules**:
-   - Remove `pub mod file_shape;` from `src/analysis/mod.rs`
-   - Remove `FileShapeTool` from `src/tools.rs`
-   - Remove from `tool_box!` macro
-
-3. **Migrate functionality**:
-   - Shape extraction logic moves into shared module used by `parse_file` and `code_map`
-   - Dependency tracking (`include_deps`) is dropped (can be added later if needed)
-
-### Tests (RED phase)
-
-```rust
-// tests/tool_registry_test.rs
-
-#[test]
-fn test_file_shape_not_registered() {
-    // Given: Initialized server
-    // When: tools/list is called
-    // Then: file_shape is NOT in the list
-}
-
-#[test]
-fn test_file_shape_call_returns_error() {
-    // Given: Initialized server
-    // When: tools/call with name="file_shape"
-    // Then: Returns "unknown tool" error
-}
-```
-
----
-
-## Implementation Order
-
-Following RED/GREEN/BLUE methodology:
-
-### Step 1: Create Test Fixtures
-1. Create `tests/fixtures/` directory structure
-2. Create Rust mini-project with realistic code
-3. Create Python mini-project with realistic code
-4. Create JavaScript mini-project with realistic code
-5. Create TypeScript mini-project with realistic code
-
-### Step 2: Write All Tests (RED)
-1. Write tests for `parse_file` modifications
-2. Write tests for `code_map` modifications
-3. Write tests for `find_usages` modifications
-4. Write tests for `query_pattern` modifications
-5. Write tests for new `get_context` tool
-6. Write tests for new `get_node_at_position` tool
-7. Write tests for `file_shape` removal
-8. Run `cargo test` - all new tests should FAIL
-
-### Step 3: Implement Changes (GREEN)
-1. Create shared shape extraction module
-2. Implement `parse_file` changes
-3. Implement `code_map` changes (detail levels)
-4. Implement `find_usages` changes (context, usage type)
-5. Implement `query_pattern` changes (context)
-6. Implement `get_context` tool
-7. Implement `get_node_at_position` tool
-8. Remove `file_shape` tool
-9. Run `cargo test` - all tests should PASS
-
-### Step 4: Refactor (BLUE)
-1. Run `cargo clippy -- -D warnings` - fix all warnings
-2. Run `cargo fmt` - format all code
-3. Review and optimize shared code
-4. Update tool descriptions for clarity
-5. Update README.md with new tool documentation
-
----
-
-## File Changes Summary
-
-### New Files
-- `tests/fixtures/rust_project/src/lib.rs`
-- `tests/fixtures/rust_project/src/calculator.rs`
-- `tests/fixtures/rust_project/src/models/mod.rs`
-- `tests/fixtures/rust_project/Cargo.toml`
-- `tests/fixtures/python_project/__init__.py`
-- `tests/fixtures/python_project/calculator.py`
-- `tests/fixtures/python_project/utils/helpers.py`
-- `tests/fixtures/javascript_project/index.js`
-- `tests/fixtures/javascript_project/calculator.js`
-- `tests/fixtures/javascript_project/utils/helpers.js`
-- `tests/fixtures/typescript_project/index.ts`
-- `tests/fixtures/typescript_project/calculator.ts`
-- `tests/fixtures/typescript_project/types/models.ts`
-- `src/analysis/get_context.rs`
-- `src/analysis/get_node_at_position.rs`
-- `src/analysis/shape.rs` (shared shape extraction)
-- `tests/get_context_test.rs`
-- `tests/get_node_at_position_test.rs`
-
-### Modified Files
-- `src/analysis/mod.rs` - add new modules, remove file_shape
-- `src/analysis/parse_file.rs` - return file shape instead of AST
-- `src/analysis/code_map.rs` - add detail levels, signatures, docs
-- `src/analysis/find_usages.rs` - add context lines, usage type
-- `src/analysis/query_pattern.rs` - add context lines
-- `src/tools.rs` - add new tools, remove FileShapeTool
-- `tests/parse_file_tool_test.rs` - update for new output
-- `tests/code_map_tool_test.rs` - add detail level tests
-- `tests/find_usages_tool_test.rs` - add context tests
-- `tests/query_pattern_tool_test.rs` - add context tests
-
-### Deleted Files
-- `src/analysis/file_shape.rs`
-- `tests/file_shape_tool_test.rs`
-
----
-
-## Tree-sitter Usage Verification
-
-All tools MUST use tree-sitter for parsing:
-
-| Tool | Tree-sitter Usage |
-|------|-------------------|
-| `parse_file` | ✅ Uses `parse_code()` to get AST, then extracts shape |
-| `code_map` | ✅ Uses `parse_code()` per file to extract shapes |
-| `find_usages` | ✅ Uses `parse_code()` to walk AST for identifiers |
-| `query_pattern` | ✅ Uses `parse_code()` + tree-sitter Query API |
-| `get_context` | ✅ Uses `parse_code()` to find node at position |
-| `get_node_at_position` | ✅ Uses `parse_code()` to find node at position |
-
----
-
-## Success Criteria
-
-1. ✅ All tests pass (`cargo test`)
-2. ✅ No clippy warnings (`cargo clippy -- -D warnings`)
-3. ✅ Code is formatted (`cargo fmt --check`)
-4. ✅ All tools use tree-sitter for parsing
-5. ✅ Tests cover all 4 main languages (Rust, Python, JS, TS)
-6. ✅ `file_shape` tool is removed
-7. ✅ New tools `get_context` and `get_node_at_position` work
-8. ✅ Existing tools return code context where applicable
+The focus is specifically on what helps with UI consistency - not raw Tailwind utilities (which are just noise), but the semantic layer built on top of Tailwind.
