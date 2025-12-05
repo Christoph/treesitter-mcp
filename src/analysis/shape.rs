@@ -78,14 +78,18 @@ pub fn extract_enhanced_shape(
         Language::Python => extract_python_enhanced(tree, source)?,
         Language::JavaScript => extract_js_enhanced(tree, source, Language::JavaScript)?,
         Language::TypeScript => extract_js_enhanced(tree, source, Language::TypeScript)?,
-        _ => EnhancedFileShape {
-            path: None,
-            language: None,
-            functions: vec![],
-            structs: vec![],
-            classes: vec![],
-            imports: vec![],
-        },
+        Language::Html | Language::Css => {
+            // HTML and CSS don't fit the EnhancedFileShape model
+            // Return empty shape - they should use file_shape tool instead
+            EnhancedFileShape {
+                path: None,
+                language: None,
+                functions: vec![],
+                structs: vec![],
+                classes: vec![],
+                imports: vec![],
+            }
+        }
     };
 
     Ok(EnhancedFileShape {
@@ -667,6 +671,588 @@ fn find_parent_by_type<'a>(mut node: Node<'a>, target_type: &str) -> Result<Node
         io::ErrorKind::NotFound,
         format!("Parent node of type '{}' not found", target_type),
     ))
+}
+
+// ============================================================================
+// CSS/HTML Shape Structures
+// ============================================================================
+
+use std::borrow::Cow;
+
+/// Theme variable from @theme block
+#[derive(Debug, serde::Serialize, Clone)]
+pub struct ThemeVariable {
+    pub name: String,  // "--color-primary", "--spacing-lg"
+    pub value: String, // "oklch(0.6 0.2 250)", "1.5rem"
+    pub line: usize,
+}
+
+/// Custom component class (defined with @apply or custom styles)
+#[derive(Debug, serde::Serialize, Clone)]
+pub struct CustomClass {
+    pub name: String,                     // "btn-primary", "card"
+    pub applied_utilities: Vec<String>,   // ["bg-primary", "text-white", "px-4"]
+    pub layer: Option<Cow<'static, str>>, // "components", "utilities", or None
+    pub line: usize,
+}
+
+/// Keyframe animation
+#[derive(Debug, serde::Serialize, Clone)]
+pub struct KeyframeInfo {
+    pub name: String,
+    pub line: usize,
+}
+
+/// CSS file shape (Tailwind v4 focused)
+#[derive(Debug, serde::Serialize)]
+pub struct CssFileShape {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+
+    /// Theme variables from @theme block
+    pub theme: Vec<ThemeVariable>,
+
+    /// Custom component/utility classes (reusable)
+    pub custom_classes: Vec<CustomClass>,
+
+    /// @keyframes animations
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub keyframes: Vec<KeyframeInfo>,
+}
+
+/// HTML element with id
+#[derive(Debug, serde::Serialize, Clone)]
+pub struct HtmlIdInfo {
+    pub tag: String,
+    pub id: String,
+    pub line: usize,
+}
+
+/// Script reference
+#[derive(Debug, serde::Serialize, Clone)]
+pub struct ScriptInfo {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub src: Option<String>,
+    pub inline: bool,
+    pub line: usize,
+}
+
+/// Style reference
+#[derive(Debug, serde::Serialize, Clone)]
+pub struct StyleInfo {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub href: Option<String>,
+    pub inline: bool,
+    pub line: usize,
+}
+
+/// HTML file shape
+#[derive(Debug, serde::Serialize)]
+pub struct HtmlFileShape {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+
+    /// Elements with IDs (for JS/navigation)
+    pub ids: Vec<HtmlIdInfo>,
+
+    /// All unique custom classes used (non-Tailwind utilities)
+    pub classes_used: Vec<String>,
+
+    /// Script references
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub scripts: Vec<ScriptInfo>,
+
+    /// Style references
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub styles: Vec<StyleInfo>,
+}
+
+// ============================================================================
+// Tailwind Utility Detection
+// ============================================================================
+
+/// Check if a class name is a Tailwind utility (to filter out)
+///
+/// NOTE: This list covers common Tailwind v4 utilities but is not exhaustive.
+/// It may need updates as Tailwind evolves. Consider making this configurable
+/// in the future to allow users to add custom utility patterns.
+fn is_tailwind_utility(class: &str) -> bool {
+    // Handle important modifier at the start
+    let class = class.strip_prefix('!').unwrap_or(class);
+
+    // Handle variant prefixes (hover:, dark:, sm:, etc.)
+    let base = class.split(':').last().unwrap_or(class);
+
+    // Exact match utilities
+    let exact = [
+        // Layout
+        "flex",
+        "grid",
+        "block",
+        "inline",
+        "inline-block",
+        "inline-flex",
+        "inline-grid",
+        "hidden",
+        "container",
+        "table",
+        "table-row",
+        "table-cell",
+        // Position
+        "relative",
+        "absolute",
+        "fixed",
+        "sticky",
+        "static",
+        // Display
+        "visible",
+        "invisible",
+        "collapse",
+        // Accessibility
+        "sr-only",
+        "not-sr-only",
+        // Interactivity
+        "pointer-events-none",
+        "pointer-events-auto",
+        // Other common utilities
+        "truncate",
+        "italic",
+        "underline",
+        "line-through",
+        "no-underline",
+        "uppercase",
+        "lowercase",
+        "capitalize",
+        "normal-case",
+    ];
+    if exact.contains(&base) {
+        return true;
+    }
+
+    // Prefix-based utilities
+    let prefixes = [
+        // Spacing
+        "p-",
+        "px-",
+        "py-",
+        "pt-",
+        "pr-",
+        "pb-",
+        "pl-",
+        "ps-",
+        "pe-",
+        "m-",
+        "mx-",
+        "my-",
+        "mt-",
+        "mr-",
+        "mb-",
+        "ml-",
+        "ms-",
+        "me-",
+        "-m",
+        "gap-",
+        "space-",
+        // Sizing
+        "w-",
+        "h-",
+        "min-w-",
+        "min-h-",
+        "max-w-",
+        "max-h-",
+        "size-",
+        // Typography
+        "text-",
+        "font-",
+        "leading-",
+        "tracking-",
+        "indent-",
+        "decoration-",
+        "underline-offset-",
+        // Colors
+        "bg-",
+        "from-",
+        "via-",
+        "to-",
+        "fill-",
+        "stroke-",
+        "border-",
+        "outline-",
+        "ring-",
+        "shadow-",
+        // Borders
+        "rounded-",
+        "divide-",
+        // Layout
+        "flex-",
+        "grid-",
+        "col-",
+        "row-",
+        "order-",
+        "items-",
+        "justify-",
+        "content-",
+        "place-",
+        "self-",
+        "auto-cols-",
+        "auto-rows-",
+        // Position
+        "z-",
+        "top-",
+        "right-",
+        "bottom-",
+        "left-",
+        "inset-",
+        // Transforms
+        "scale-",
+        "rotate-",
+        "translate-",
+        "skew-",
+        "origin-",
+        // Transitions & Animations
+        "transition-",
+        "duration-",
+        "delay-",
+        "ease-",
+        "animate-",
+        // Effects
+        "opacity-",
+        "mix-blend-",
+        "bg-blend-",
+        "backdrop-blur-",
+        "backdrop-brightness-",
+        "backdrop-contrast-",
+        "backdrop-grayscale-",
+        "backdrop-hue-rotate-",
+        "backdrop-invert-",
+        "backdrop-opacity-",
+        "backdrop-saturate-",
+        "backdrop-sepia-",
+        // Filters
+        "blur-",
+        "brightness-",
+        "contrast-",
+        "drop-shadow-",
+        "grayscale-",
+        "hue-rotate-",
+        "invert-",
+        "saturate-",
+        "sepia-",
+        // Interactivity
+        "cursor-",
+        "pointer-events-",
+        "resize-",
+        "select-",
+        "user-select-",
+        "caret-",
+        "accent-",
+        // Overflow
+        "overflow-",
+        "overscroll-",
+        "scroll-",
+        "snap-",
+        // Other
+        "aspect-",
+        "columns-",
+        "break-",
+        "break-after-",
+        "break-before-",
+        "break-inside-",
+        "float-",
+        "clear-",
+        "object-",
+        "isolation-",
+        "list-",
+        "placeholder-",
+        "will-change-",
+        "touch-",
+    ];
+
+    prefixes.iter().any(|p| base.starts_with(p)) || base.contains('[') // Arbitrary values like w-[300px]
+}
+
+// ============================================================================
+// CSS Extraction (Regex-based for Tailwind)
+// ============================================================================
+
+use regex::Regex;
+
+/// Extract CSS shape from Tailwind v4 source code
+///
+/// This function uses regex to parse Tailwind-specific directives (@theme, @layer, @apply)
+/// which are not part of standard CSS and thus not handled by tree-sitter-css.
+pub fn extract_css_tailwind(
+    source: &str,
+    file_path: Option<&str>,
+) -> Result<CssFileShape, io::Error> {
+    let mut theme = Vec::new();
+    let mut custom_classes = Vec::new();
+    let mut keyframes = Vec::new();
+
+    // 1. Extract @theme block variables
+    let theme_block_re = Regex::new(r"@theme\s*\{([\s\S]*?)\}")
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("Invalid regex: {e}")))?;
+
+    if let Some(cap) = theme_block_re.captures(source) {
+        let theme_content_start = cap.get(1).unwrap().start(); // Start of captured group 1
+        let theme_content = &cap[1];
+
+        let var_re = Regex::new(r"(?m)^\s*(--[\w-]+)\s*:\s*([^;]+);").map_err(|e| {
+            io::Error::new(io::ErrorKind::InvalidData, format!("Invalid regex: {e}"))
+        })?;
+
+        for var_cap in var_re.captures_iter(theme_content) {
+            // Use the start of the variable name (group 1), not the whole match
+            let var_name_start_in_theme = var_cap.get(1).unwrap().start();
+            let absolute_offset = theme_content_start + var_name_start_in_theme;
+
+            theme.push(ThemeVariable {
+                name: var_cap[1].to_string(),
+                value: var_cap[2].trim().to_string(),
+                line: calculate_line(source, absolute_offset),
+            });
+        }
+    }
+
+    // 2. Extract @layer components/utilities blocks
+    // We need to manually parse nested braces since regex can't handle them properly
+    let layer_start_re = Regex::new(r"@layer\s+(components|utilities)\s*\{")
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("Invalid regex: {e}")))?;
+
+    for layer_match in layer_start_re.captures_iter(source) {
+        let layer_name = match &layer_match[1] {
+            "components" => Cow::Borrowed("components"),
+            "utilities" => Cow::Borrowed("utilities"),
+            _ => Cow::Owned(layer_match[1].to_string()),
+        };
+        let layer_start = layer_match.get(0).unwrap().end(); // Start after the opening brace
+
+        // Find the matching closing brace
+        let mut brace_count = 1;
+        let mut layer_end = layer_start;
+        let source_bytes = source.as_bytes();
+
+        for i in layer_start..source_bytes.len() {
+            match source_bytes[i] {
+                b'{' => brace_count += 1,
+                b'}' => {
+                    brace_count -= 1;
+                    if brace_count == 0 {
+                        layer_end = i;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if layer_end == layer_start {
+            continue; // No matching closing brace found
+        }
+
+        let layer_content = &source[layer_start..layer_end];
+
+        // Extract class definitions within layer
+        let class_re = Regex::new(r"\.([\w-]+)\s*\{([^}]*)\}").map_err(|e| {
+            io::Error::new(io::ErrorKind::InvalidData, format!("Invalid regex: {e}"))
+        })?;
+
+        for class_cap in class_re.captures_iter(layer_content) {
+            let class_start_in_layer = class_cap.get(0).unwrap().start();
+            let absolute_offset = layer_start + class_start_in_layer;
+            let class_name = class_cap[1].to_string();
+            let class_body = &class_cap[2];
+
+            // Extract @apply utilities
+            let mut applied = Vec::new();
+            let apply_re = Regex::new(r"@apply\s+([^;]+);").map_err(|e| {
+                io::Error::new(io::ErrorKind::InvalidData, format!("Invalid regex: {e}"))
+            })?;
+
+            for apply_cap in apply_re.captures_iter(class_body) {
+                applied.extend(apply_cap[1].split_whitespace().map(String::from));
+            }
+
+            custom_classes.push(CustomClass {
+                name: class_name,
+                applied_utilities: applied,
+                layer: Some(layer_name.clone()),
+                line: calculate_line(source, absolute_offset),
+            });
+        }
+    }
+
+    // 3. Extract @keyframes
+    let keyframes_re = Regex::new(r"@keyframes\s+([\w-]+)\s*\{")
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("Invalid regex: {e}")))?;
+
+    for kf_cap in keyframes_re.captures_iter(source) {
+        keyframes.push(KeyframeInfo {
+            name: kf_cap[1].to_string(),
+            line: calculate_line(source, kf_cap.get(0).unwrap().start()),
+        });
+    }
+
+    Ok(CssFileShape {
+        path: file_path.map(String::from),
+        theme,
+        custom_classes,
+        keyframes,
+    })
+}
+
+/// Calculate line number from byte offset
+fn calculate_line(source: &str, byte_offset: usize) -> usize {
+    source[..byte_offset].matches('\n').count() + 1
+}
+
+// ============================================================================
+// HTML Extraction (Tree-sitter)
+// ============================================================================
+
+use std::collections::HashSet;
+
+/// Extract HTML shape from parsed tree
+pub fn extract_html_shape(
+    tree: &Tree,
+    source: &str,
+    file_path: Option<&str>,
+) -> Result<HtmlFileShape, io::Error> {
+    let mut ids = Vec::new();
+    let mut all_classes = Vec::new();
+    let mut scripts = Vec::new();
+    let mut styles = Vec::new();
+
+    // Use a simpler query that captures elements
+    let query = Query::new(
+        &tree_sitter_html::LANGUAGE.into(),
+        r#"
+        (element (start_tag) @start_tag)
+        (script_element (start_tag) @script_tag)
+        (style_element (start_tag) @style_tag)
+        "#,
+    )
+    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("Query error: {e}")))?;
+
+    let mut cursor = QueryCursor::new();
+    let matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
+
+    for match_ in matches {
+        for capture in match_.captures {
+            let node = capture.node;
+            let capture_name = query.capture_names()[capture.index as usize];
+
+            match capture_name {
+                "start_tag" => {
+                    // Extract tag name - look for child with kind "tag_name"
+                    let mut tag_name = String::new();
+                    let mut tag_cursor = node.walk();
+                    for child in node.children(&mut tag_cursor) {
+                        if child.kind() == "tag_name" {
+                            if let Ok(name) = child.utf8_text(source.as_bytes()) {
+                                tag_name = name.to_string();
+                                break;
+                            }
+                        }
+                    }
+
+                    let line = node.start_position().row + 1;
+
+                    // Extract attributes
+                    let id_attr = extract_attribute(&node, source, "id");
+                    let class_attr = extract_attribute(&node, source, "class");
+                    let rel_attr = extract_attribute(&node, source, "rel");
+                    let href_attr = extract_attribute(&node, source, "href");
+
+                    // Handle id
+                    if let Some(id) = id_attr {
+                        ids.push(HtmlIdInfo {
+                            tag: tag_name.to_string(),
+                            id,
+                            line,
+                        });
+                    }
+
+                    // Handle classes
+                    if let Some(classes) = class_attr {
+                        all_classes.extend(classes.split_whitespace().map(String::from));
+                    }
+
+                    // Handle link elements (stylesheets)
+                    if tag_name == "link" {
+                        if let Some(rel) = rel_attr {
+                            if rel == "stylesheet" {
+                                styles.push(StyleInfo {
+                                    href: href_attr,
+                                    inline: false,
+                                    line,
+                                });
+                            }
+                        }
+                    }
+                }
+                "script_tag" => {
+                    let line = node.start_position().row + 1;
+                    let src = extract_attribute(&node, source, "src");
+                    scripts.push(ScriptInfo {
+                        src: src.clone(),
+                        inline: src.is_none(),
+                        line,
+                    });
+                }
+                "style_tag" => {
+                    let line = node.start_position().row + 1;
+                    styles.push(StyleInfo {
+                        href: None,
+                        inline: true,
+                        line,
+                    });
+                }
+                _ => {}
+            }
+        }
+    }
+
+    // Deduplicate and filter classes
+    let classes_used: Vec<String> = all_classes
+        .into_iter()
+        .filter(|c| !is_tailwind_utility(c))
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+
+    Ok(HtmlFileShape {
+        path: file_path.map(String::from),
+        ids,
+        classes_used,
+        scripts,
+        styles,
+    })
+}
+
+/// Helper to extract attribute value from a node
+fn extract_attribute(node: &tree_sitter::Node, source: &str, attr_name: &str) -> Option<String> {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() == "attribute" {
+            let mut attr_cursor = child.walk();
+            let mut found_name = false;
+            for attr_child in child.children(&mut attr_cursor) {
+                if attr_child.kind() == "attribute_name" {
+                    if let Ok(name) = attr_child.utf8_text(source.as_bytes()) {
+                        if name == attr_name {
+                            found_name = true;
+                        }
+                    }
+                } else if found_name && attr_child.kind() == "quoted_attribute_value" {
+                    if let Ok(value) = attr_child.utf8_text(source.as_bytes()) {
+                        return Some(value.trim_matches('"').trim_matches('\'').to_string());
+                    }
+                }
+            }
+        }
+    }
+    None
 }
 
 #[cfg(test)]

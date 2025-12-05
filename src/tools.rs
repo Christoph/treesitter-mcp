@@ -14,7 +14,7 @@ use crate::analysis::{
 /// Parse a source file and return its structure (functions, classes, imports) with signatures and docs
 #[mcp_tool(
     name = "parse_file",
-    description = "Parse a source file and return its structure (functions, classes, imports) with full signatures, documentation, and code. Returns structured JSON with function/class names, signatures, line ranges, doc comments, and complete code blocks. Use this to understand file structure with implementation details."
+    description = "Parse a single source file and return complete structure with FULL implementation details. Returns: function/class names, signatures, line ranges, doc comments, and complete code blocks. USE THIS WHEN: you need to read, understand, or modify a specific file's code. This is the primary tool for examining file contents before editing."
 )]
 #[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
 pub struct ParseFileTool {
@@ -25,7 +25,7 @@ pub struct ParseFileTool {
 /// Extract the structure of a file (functions, classes, imports) without implementation details
 #[mcp_tool(
     name = "file_shape",
-    description = "Extract the structure of a file (functions, classes, imports) without implementation details. Use this to 'skeletonize' code files and quickly understand the interface and dependencies without reading the full implementation. Primarily used for generating file summaries, mapping dependency graphs, and understanding the high-level organization of code."
+    description = "Extract file structure as a skeleton WITHOUT implementation code. Returns: function/class signatures, imports, and dependencies only - no function bodies. For HTML/CSS: returns IDs, custom classes, theme variables. For templates in templates/ dir: use merge_templates=true to get merged content with extends/includes resolved. USE THIS WHEN: you need a quick overview of a file's API/interface, want to understand imports and exports, or are mapping dependencies. Faster and smaller output than parse_file."
 )]
 #[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
 pub struct FileShapeTool {
@@ -34,12 +34,15 @@ pub struct FileShapeTool {
     /// Include project dependencies as nested file shapes (default: false)
     #[serde(default)]
     pub include_deps: bool,
+    /// For Askama/Jinja2 templates (.html in templates/ dir): merge extends/includes into single output. Returns error if used on non-template files. (default: false)
+    #[serde(default)]
+    pub merge_templates: bool,
 }
 
 /// Generate a high-level code map of a directory with token budget awareness and detail levels
 #[mcp_tool(
     name = "code_map",
-    description = "Generate a high-level code map of a directory with configurable detail levels. Supports three modes: 'minimal' (names only), 'signatures' (names + signatures), 'full' (names + signatures + docs + code). Provides a hierarchical overview of the codebase structure with token budget awareness."
+    description = "Generate a hierarchical map of a DIRECTORY (not single file). Scans multiple files and returns structure overview. Detail levels: 'minimal' (names only), 'signatures' (names + signatures, DEFAULT), 'full' (everything). USE THIS WHEN: exploring unfamiliar codebases, finding where code lives, or getting project overview. Respects token budget to avoid context overflow."
 )]
 #[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
 pub struct CodeMapTool {
@@ -59,7 +62,7 @@ pub struct CodeMapTool {
 /// Find all usages of a symbol with context and usage type classification
 #[mcp_tool(
     name = "find_usages",
-    description = "Find all usages of a symbol (function, struct, class) with code context and usage type classification. Returns each usage with surrounding code lines, usage type (definition, call, type_reference, import, reference), and AST node information. Essential for refactoring and impact analysis."
+    description = "Find ALL usages of a symbol (function, variable, class, type) across files. Returns: file locations, surrounding code context, and usage type (definition, call, type_reference, import, reference). USE THIS WHEN: refactoring, checking impact of changes, finding where something is called/used, or tracing data flow. Essential before renaming or modifying shared code."
 )]
 #[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
 pub struct FindUsagesTool {
@@ -75,7 +78,7 @@ pub struct FindUsagesTool {
 /// Execute a custom tree-sitter query pattern on a source file with code context
 #[mcp_tool(
     name = "query_pattern",
-    description = "Execute a custom tree-sitter query pattern on a source file with optional code context. Allows advanced code analysis using tree-sitter's query language in S-expression format. Returns matches with surrounding code lines and parent node information."
+    description = "Execute a custom tree-sitter S-expression query for advanced AST matching. USE THIS WHEN: you need precise pattern matching that other tools don't cover, such as finding all 'if' statements, all async functions, or complex structural patterns. Requires knowledge of tree-sitter query syntax. For most tasks, prefer find_usages or parse_file instead."
 )]
 #[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
 pub struct QueryPatternTool {
@@ -91,7 +94,7 @@ pub struct QueryPatternTool {
 /// Get the enclosing context (function, class, module) at a specific position
 #[mcp_tool(
     name = "get_context",
-    description = "Get the enclosing context (function, class, module) at a specific position in a file. Returns a hierarchical list of contexts from innermost to outermost, with full signatures, code, and range information. Essential for understanding code structure at a cursor position."
+    description = "Get the enclosing scope hierarchy at a specific file:line:column position. Returns: nested contexts from innermost to outermost (e.g., 'this line is inside function X, which is inside class Y, which is in module Z'). USE THIS WHEN: you have a line number from an error, stack trace, or user reference and need to understand what scope/function it belongs to."
 )]
 #[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
 pub struct GetContextTool {
@@ -107,7 +110,7 @@ pub struct GetContextTool {
 /// Get the AST node at a specific position with ancestor chain
 #[mcp_tool(
     name = "get_node_at_position",
-    description = "Get the AST node at a specific position with its ancestor chain. Returns the smallest node at the position plus up to N ancestor nodes, with type, text, range, and name information. Useful for precise AST navigation and code analysis at specific positions."
+    description = "Get the precise AST node at a file:line:column position with its parent chain. Returns: node type, text, range, and N ancestor nodes. USE THIS WHEN: you need exact syntactic information at a cursor position - for syntax-aware edits, understanding what token/expression is at a location, or debugging parse issues. More granular than get_context."
 )]
 #[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
 pub struct GetNodeAtPositionTool {

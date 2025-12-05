@@ -53,10 +53,90 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
     })?;
 
     let include_deps = arguments["include_deps"].as_bool().unwrap_or(false);
+    let merge_templates = arguments["merge_templates"].as_bool().unwrap_or(false);
 
-    log::info!("Extracting shape of file: {file_path_str} (include_deps: {include_deps})");
+    log::info!("Extracting shape of file: {file_path_str} (include_deps: {include_deps}, merge_templates: {merge_templates})");
 
     let path = Path::new(file_path_str);
+
+    // Handle template merging if requested
+    if merge_templates {
+        // Validate this is a template file
+        let templates_dir = find_templates_dir(path).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "merge_templates=true requires file to be in a 'templates/' directory",
+            )
+        })?;
+
+        let source = fs::read_to_string(path)?;
+        let mut visited = HashSet::new();
+        let mut recursion_stack = Vec::new();
+
+        let merged_content =
+            merge_template(path, &templates_dir, &mut visited, &mut recursion_stack)?;
+        let dependencies = find_template_dependencies(&source, &templates_dir)?;
+
+        let merged_shape = MergedTemplateShape {
+            path: path.to_string_lossy().to_string(),
+            merged_content,
+            dependencies,
+        };
+
+        let shape_json = serde_json::to_string(&merged_shape).map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Failed to serialize merged template: {e}"),
+            )
+        })?;
+
+        return Ok(CallToolResult::success(shape_json));
+    }
+
+    // Detect language to check if it's HTML or CSS
+    let language = detect_language(path).map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("Failed to detect language: {e}"),
+        )
+    })?;
+
+    // Handle HTML and CSS specially
+    match language {
+        Language::Html => {
+            let source = fs::read_to_string(path)?;
+            let tree = parse_code(&source, language).map_err(|e| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("Failed to parse HTML: {e}"),
+                )
+            })?;
+            let html_shape =
+                crate::analysis::shape::extract_html_shape(&tree, &source, Some(file_path_str))?;
+            let shape_json = serde_json::to_string(&html_shape).map_err(|e| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("Failed to serialize HTML shape to JSON: {e}"),
+                )
+            })?;
+            return Ok(CallToolResult::success(shape_json));
+        }
+        Language::Css => {
+            let source = fs::read_to_string(path)?;
+            let css_shape =
+                crate::analysis::shape::extract_css_tailwind(&source, Some(file_path_str))?;
+            let shape_json = serde_json::to_string(&css_shape).map_err(|e| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("Failed to serialize CSS shape to JSON: {e}"),
+                )
+            })?;
+            return Ok(CallToolResult::success(shape_json));
+        }
+        _ => {
+            // Handle other languages normally
+        }
+    }
 
     // Determine project root (directory containing Cargo.toml if present)
     let project_root = find_project_root(path).unwrap_or_else(|| {
@@ -87,14 +167,18 @@ pub fn extract_shape(
         Language::Python => extract_python_shape(tree, source),
         Language::JavaScript => extract_js_shape(tree, source),
         Language::TypeScript => extract_ts_shape(tree, source),
-        _ => Ok(FileShape {
-            path: None,
-            functions: vec![],
-            structs: vec![],
-            classes: vec![],
-            imports: vec![],
-            dependencies: vec![],
-        }),
+        Language::Html | Language::Css => {
+            // HTML and CSS don't fit the FileShape model
+            // Return empty shape - they are handled separately in execute()
+            Ok(FileShape {
+                path: None,
+                functions: vec![],
+                structs: vec![],
+                classes: vec![],
+                imports: vec![],
+                dependencies: vec![],
+            })
+        }
     }
 }
 
@@ -745,4 +829,234 @@ fn resolve_js_ts_spec(spec: &str, dir: &Path, project_root: &Path) -> Option<Pat
     }
 
     None
+}
+
+// ============================================================================
+// Template Support (Askama/Jinja2)
+// ============================================================================
+
+use regex::Regex;
+
+/// Template dependency info
+#[derive(Debug, serde::Serialize, Clone)]
+pub struct TemplateDependency {
+    pub path: String,
+    pub dependency_type: String, // "extends" or "include"
+}
+
+/// Template file shape (when merge_templates=true)
+#[derive(Debug, serde::Serialize)]
+pub struct MergedTemplateShape {
+    pub path: String,
+    pub merged_content: String,
+    pub dependencies: Vec<TemplateDependency>,
+}
+
+/// Find templates directory by walking up from file path
+///
+/// Searches up to MAX_DEPTH parent directories to avoid performance issues
+/// in deeply nested projects.
+pub fn find_templates_dir(file_path: &Path) -> Option<PathBuf> {
+    let mut current = file_path.parent()?;
+    let mut depth = 0;
+    const MAX_DEPTH: usize = 10;
+
+    while depth < MAX_DEPTH {
+        // Check if current dir is named "templates"
+        if current
+            .file_name()
+            .map(|n| n == "templates")
+            .unwrap_or(false)
+        {
+            return Some(current.to_path_buf());
+        }
+
+        // Check if "templates" subdir exists
+        let templates_subdir = current.join("templates");
+        if templates_subdir.is_dir() {
+            return Some(templates_subdir);
+        }
+
+        current = current.parent()?;
+        depth += 1;
+    }
+
+    None
+}
+
+/// Find template dependencies (extends and includes)
+///
+/// Validates paths to prevent directory traversal attacks.
+pub fn find_template_dependencies(
+    source: &str,
+    templates_dir: &Path,
+) -> Result<Vec<TemplateDependency>, io::Error> {
+    let mut deps = Vec::new();
+    let canonical_templates = templates_dir.canonicalize()?;
+
+    // {% extends "path" %} - supports both single and double quotes
+    let extends_re = Regex::new(r#"\{%\s*extends\s+["']([^"']+)["']\s*%\}"#)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("Invalid regex: {e}")))?;
+
+    for cap in extends_re.captures_iter(source) {
+        let template_path = &cap[1];
+        let path = templates_dir.join(template_path);
+
+        // Security: Validate path is within templates_dir
+        if let Ok(canonical_path) = path.canonicalize() {
+            if canonical_path.starts_with(&canonical_templates) && path.exists() {
+                deps.push(TemplateDependency {
+                    path: template_path.to_string(),
+                    dependency_type: "extends".to_string(),
+                });
+            }
+        }
+    }
+
+    // {% include "path" %} - supports both single and double quotes
+    let include_re = Regex::new(r#"\{%\s*include\s+["']([^"']+)["']\s*%\}"#)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("Invalid regex: {e}")))?;
+
+    for cap in include_re.captures_iter(source) {
+        let template_path = &cap[1];
+        let path = templates_dir.join(template_path);
+
+        // Security: Validate path is within templates_dir
+        if let Ok(canonical_path) = path.canonicalize() {
+            if canonical_path.starts_with(&canonical_templates) && path.exists() {
+                deps.push(TemplateDependency {
+                    path: template_path.to_string(),
+                    dependency_type: "include".to_string(),
+                });
+            }
+        }
+    }
+
+    Ok(deps)
+}
+
+/// Merge template with its dependencies (extends and includes)
+///
+/// Uses separate tracking for visited files and recursion stack to properly
+/// handle circular dependencies while allowing the same file to be included
+/// multiple times in different branches.
+fn merge_template(
+    template_path: &Path,
+    templates_dir: &Path,
+    visited: &mut HashSet<PathBuf>,
+    recursion_stack: &mut Vec<PathBuf>,
+) -> Result<String, io::Error> {
+    let canonical = template_path.canonicalize().map_err(|_e| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("Template not found: {}", template_path.display()),
+        )
+    })?;
+
+    // Check for circular dependency
+    if recursion_stack.contains(&canonical) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "Circular template dependency detected: {:?}",
+                recursion_stack
+            ),
+        ));
+    }
+
+    recursion_stack.push(canonical.clone());
+    visited.insert(canonical.clone());
+
+    let source = fs::read_to_string(template_path)?;
+
+    // Handle {% extends "base.html" %}
+    let extends_re = Regex::new(r#"\{%\s*extends\s+["']([^"']+)["']\s*%\}"#)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("Invalid regex: {e}")))?;
+
+    if let Some(cap) = extends_re.captures(&source) {
+        let parent_path = templates_dir.join(&cap[1]);
+
+        // Security: Validate path
+        let canonical_parent = parent_path
+            .canonicalize()
+            .map_err(|_e| io::Error::new(io::ErrorKind::NotFound, "Parent template not found"))?;
+        let canonical_templates = templates_dir.canonicalize()?;
+
+        if !canonical_parent.starts_with(&canonical_templates) {
+            recursion_stack.pop();
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "Path traversal detected in template extends",
+            ));
+        }
+
+        let parent_content = merge_template(&parent_path, templates_dir, visited, recursion_stack)?;
+
+        // Extract blocks from child
+        let child_blocks = extract_blocks(&source)?;
+
+        // Replace blocks in parent
+        let result = replace_blocks(&parent_content, &child_blocks)?;
+        recursion_stack.pop();
+        return Ok(result);
+    }
+
+    // Handle {% include "partial.html" %}
+    let include_re = Regex::new(r#"\{%\s*include\s+["']([^"']+)["']\s*%\}"#)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("Invalid regex: {e}")))?;
+
+    let result = include_re.replace_all(&source, |caps: &regex::Captures| {
+        let include_path = templates_dir.join(&caps[1]);
+
+        // Security: Validate path
+        if let Ok(canonical_include) = include_path.canonicalize() {
+            if let Ok(canonical_templates) = templates_dir.canonicalize() {
+                if canonical_include.starts_with(&canonical_templates) {
+                    return merge_template(&include_path, templates_dir, visited, recursion_stack)
+                        .unwrap_or_else(|e| {
+                            format!("<!-- include error: {} - {} -->", &caps[1], e)
+                        });
+                }
+            }
+        }
+        format!(
+            "<!-- include error: {} - path validation failed -->",
+            &caps[1]
+        )
+    });
+
+    recursion_stack.pop();
+    Ok(result.to_string())
+}
+
+/// Extract block definitions from template source
+fn extract_blocks(source: &str) -> Result<std::collections::HashMap<String, String>, io::Error> {
+    let mut blocks = std::collections::HashMap::new();
+    let block_re = Regex::new(r#"\{%\s*block\s+(\w+)\s*%\}([\s\S]*?)\{%\s*endblock\s*%\}"#)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("Invalid regex: {e}")))?;
+
+    for cap in block_re.captures_iter(source) {
+        blocks.insert(cap[1].to_string(), cap[2].to_string());
+    }
+    Ok(blocks)
+}
+
+/// Replace block placeholders in parent template with child blocks
+fn replace_blocks(
+    parent: &str,
+    child_blocks: &std::collections::HashMap<String, String>,
+) -> Result<String, io::Error> {
+    let block_re = Regex::new(r#"\{%\s*block\s+(\w+)\s*%\}([\s\S]*?)\{%\s*endblock\s*%\}"#)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("Invalid regex: {e}")))?;
+
+    let result = block_re.replace_all(parent, |caps: &regex::Captures| {
+        let block_name = &caps[1];
+        // Use child block if exists, otherwise keep parent default
+        child_blocks
+            .get(block_name)
+            .cloned()
+            .unwrap_or_else(|| caps[2].to_string())
+    });
+
+    Ok(result.to_string())
 }

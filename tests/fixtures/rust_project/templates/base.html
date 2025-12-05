@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>{% block title %}Default Title{% endblock %}</title>
+    <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+    {% include "partials/header.html" %}
+    
+    <main>
+        {% block content %}
+        <p>Default content</p>
+        {% endblock %}
+    </main>
+    
+    {% include "partials/footer.html" %}
+</body>
+</html>
