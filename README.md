@@ -9,6 +9,8 @@ Tree-sitter MCP Server exposes powerful code analysis tools through the MCP prot
 - Generate token-aware code maps of entire projects
 - Find symbol usages across codebases
 - Execute custom tree-sitter queries for advanced analysis
+- Analyze structural changes between file versions (diff-aware analysis)
+- Identify potentially affected code when making changes
 
 ## Supported Languages
 
@@ -205,7 +207,146 @@ Finds all usages of a symbol (function, struct, class, variable) across files.
 
 ---
 
-### 5. query_pattern
+### 5. parse_diff
+
+Analyzes structural changes (functions, classes added/removed/modified) between the current file and a git revision.
+
+**Use Case**: Verify changes after editing, check if changes are cosmetic only, understand what actually changed at the symbol level (not line-by-line).
+
+**Parameters**:
+- `file_path` (string, required): Path to the source file to analyze
+- `compare_to` (string, optional, default: "HEAD"): Git revision to compare against (e.g., "HEAD", "HEAD~1", "main", "abc123")
+
+**Example**:
+```json
+{
+  "file_path": "/path/to/calculator.rs",
+  "compare_to": "HEAD"
+}
+```
+
+**Returns**: JSON object with structural changes:
+```json
+{
+  "file_path": "src/calculator.rs",
+  "compare_to": "HEAD",
+  "compare_to_sha": "abc123...",
+  "no_structural_change": false,
+  "structural_changes": [
+    {
+      "change_type": "signature_changed",
+      "symbol_type": "function",
+      "name": "add",
+      "line": 15,
+      "before": "fn add(a: i32, b: i32) -> i32",
+      "after": "fn add(a: i64, b: i64) -> i64",
+      "details": [
+        {
+          "kind": "parameter_changed",
+          "name": "param_0",
+          "from": "a: i32",
+          "to": "a: i64"
+        },
+        {
+          "kind": "return_type",
+          "from": "i32",
+          "to": "i64"
+        }
+      ]
+    },
+    {
+      "change_type": "added",
+      "symbol_type": "function",
+      "name": "multiply",
+      "line": 25,
+      "after": "fn multiply(a: i64, b: i64) -> i64"
+    }
+  ],
+  "summary": {
+    "added": 1,
+    "removed": 0,
+    "modified": 1
+  }
+}
+```
+
+**Benefits**:
+- **10-40x smaller** than re-reading entire file
+- Symbol-level diff, not line-by-line
+- Detects signature vs body-only changes
+- Useful for verification after code generation
+
+---
+
+### 6. affected_by_diff
+
+Finds all usages across the codebase that might be affected by changes in a file. Combines `parse_diff` with `find_usages` to show the "blast radius" of your changes.
+
+**Use Case**: Understanding impact before running tests, anticipating what might break after signature changes, refactoring with confidence.
+
+**Parameters**:
+- `file_path` (string, required): Path to the changed source file
+- `compare_to` (string, optional, default: "HEAD"): Git revision to compare against
+- `scope` (string, optional, default: project root): Directory to search for affected usages
+
+**Example**:
+```json
+{
+  "file_path": "/path/to/calculator.rs",
+  "compare_to": "HEAD",
+  "scope": "/path/to/project"
+}
+```
+
+**Returns**: JSON object with affected usages and risk levels:
+```json
+{
+  "file_path": "src/calculator.rs",
+  "compare_to": "HEAD",
+  "affected_changes": [
+    {
+      "symbol": "add",
+      "change_type": "signature_changed",
+      "change_details": "fn add(a: i64, b: i64) -> i64",
+      "potentially_affected": [
+        {
+          "file": "src/main.rs",
+          "line": 42,
+          "column": 15,
+          "usage_type": "call",
+          "code": "let sum = add(x, y);",
+          "risk": "high",
+          "reason": "Call site may pass wrong argument types"
+        },
+        {
+          "file": "tests/calculator_test.rs",
+          "line": 15,
+          "column": 12,
+          "usage_type": "call",
+          "code": "assert_eq!(add(1, 2), 3);",
+          "risk": "high",
+          "reason": "Call site may pass wrong argument types"
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "high_risk": 2,
+    "medium_risk": 0,
+    "low_risk": 0,
+    "total_usages": 2
+  }
+}
+```
+
+**Risk Levels**:
+- **High**: Signature changes affecting call sites (wrong argument count/types)
+- **Medium**: Signature changes affecting type references, general symbol changes
+- **Low**: Body-only changes (behavior may differ but API is same), new symbols
+
+---
+
+### 7. query_pattern
 
 Executes a custom tree-sitter query pattern on a source file.
 

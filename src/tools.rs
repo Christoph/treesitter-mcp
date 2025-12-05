@@ -8,7 +8,8 @@ use rust_mcp_sdk::schema::{schema_utils::CallToolError, CallToolResult};
 use rust_mcp_sdk::tool_box;
 
 use crate::analysis::{
-    code_map, file_shape, find_usages, get_context, get_node_at_position, parse_file, query_pattern,
+    code_map, diff, file_shape, find_usages, get_context, get_node_at_position, parse_file,
+    query_pattern,
 };
 
 /// Parse a source file and return its structure (functions, classes, imports) with signatures and docs
@@ -125,6 +126,38 @@ pub struct GetNodeAtPositionTool {
     pub ancestor_levels: Option<u32>,
 }
 
+/// Analyze structural changes in a file compared to a git revision
+#[mcp_tool(
+    name = "parse_diff",
+    description = "Analyze structural changes (functions, classes added/removed/modified) vs git revision. Returns symbol-level diff, not line-by-line. Use to verify changes or check if cosmetic only. Smaller than re-reading file."
+)]
+#[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
+pub struct ParseDiffTool {
+    /// Path to the source file to analyze
+    pub file_path: String,
+    /// Git revision to compare against (default: "HEAD")
+    /// Examples: "HEAD", "HEAD~1", "main", "abc123"
+    #[serde(default)]
+    pub compare_to: Option<String>,
+}
+
+/// Find usages that might be affected by changes in a file
+#[mcp_tool(
+    name = "affected_by_diff",
+    description = "Find all usages across the codebase that might be AFFECTED by changes in a file. Combines parse_diff with find_usages to show the blast radius of your changes. Returns risk levels (high/medium/low) based on change type and usage context. USE THIS WHEN: you've modified a function signature and want to know what might break, before running tests to anticipate failures, or during refactoring to understand impact."
+)]
+#[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
+pub struct AffectedByDiffTool {
+    /// Path to the changed source file
+    pub file_path: String,
+    /// Git revision to compare against (default: "HEAD")
+    #[serde(default)]
+    pub compare_to: Option<String>,
+    /// Directory to search for affected usages (default: project root)
+    #[serde(default)]
+    pub scope: Option<String>,
+}
+
 // Implement tool execution logic for each tool
 impl ParseFileTool {
     pub fn call_tool(&self) -> Result<CallToolResult, CallToolError> {
@@ -209,6 +242,29 @@ impl GetNodeAtPositionTool {
     }
 }
 
+impl ParseDiffTool {
+    pub fn call_tool(&self) -> Result<CallToolResult, CallToolError> {
+        let args = serde_json::json!({
+            "file_path": self.file_path,
+            "compare_to": self.compare_to
+        });
+
+        diff::execute_parse_diff(&args).map_err(CallToolError::new)
+    }
+}
+
+impl AffectedByDiffTool {
+    pub fn call_tool(&self) -> Result<CallToolResult, CallToolError> {
+        let args = serde_json::json!({
+            "file_path": self.file_path,
+            "compare_to": self.compare_to,
+            "scope": self.scope
+        });
+
+        diff::execute_affected_by_diff(&args).map_err(CallToolError::new)
+    }
+}
+
 // Generate an enum with all tools
 tool_box!(
     TreesitterTools,
@@ -219,6 +275,8 @@ tool_box!(
         FindUsagesTool,
         QueryPatternTool,
         GetContextTool,
-        GetNodeAtPositionTool
+        GetNodeAtPositionTool,
+        ParseDiffTool,
+        AffectedByDiffTool
     ]
 );

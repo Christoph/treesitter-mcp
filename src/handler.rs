@@ -61,6 +61,8 @@ impl ServerHandler for TreesitterServerHandler {
             TreesitterTools::QueryPatternTool(t) => t.call_tool(),
             TreesitterTools::GetContextTool(t) => t.call_tool(),
             TreesitterTools::GetNodeAtPositionTool(t) => t.call_tool(),
+            TreesitterTools::ParseDiffTool(t) => t.call_tool(),
+            TreesitterTools::AffectedByDiffTool(t) => t.call_tool(),
         }
     }
 }

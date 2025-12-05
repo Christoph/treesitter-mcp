@@ -8,6 +8,7 @@
 //! - Custom query pattern execution
 
 pub mod code_map;
+pub mod diff;
 pub mod file_shape;
 pub mod find_usages;
 pub mod get_context;
