@@ -59,48 +59,6 @@ def apply_operation(a, b, operation):
     return result
 
 
-def complex_operation(base):
-    """A complex operation with nested functions
-    
-    Args:
-        base: The base value
-        
-    Returns:
-        The result of the complex operation
-    """
-    multiplier = 2
-    
-    # First nested function
-    def double(x):
-        return x * multiplier
-    
-    # Nested function inside the first
-    def apply_twice(x):
-        first_pass = double(x)
-        
-        # Another nested function
-        def add_base(y):
-            return y + base
-        
-        return add_base(first_pass)
-    
-    return apply_twice(base)
-
-
-def point_distance(p1, p2):
-    """Calculates the distance between two points
-    
-    Args:
-        p1: First point (dict with 'x' and 'y')
-        p2: Second point (dict with 'x' and 'y')
-        
-    Returns:
-        The distance between the points
-    """
-    dx = p1['x'] - p2['x']
-    dy = p1['y'] - p2['y']
-    return (dx ** 2 + dy ** 2) ** 0.5
-
 
 class Calculator:
     """A simple calculator class

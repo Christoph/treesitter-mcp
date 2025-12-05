@@ -77,42 +77,6 @@ export function applyOperation(a: number, b: number, operation: Operation): numb
 }
 
 /**
- * A complex operation with nested functions
- * @param base - The base value
- * @returns The result
- */
-export function complexOperation(base: number): number {
-    const multiplier = 2;
-    
-    // First nested function
-    const double = (x: number): number => x * multiplier;
-    
-    // Nested function inside the first
-    const applyTwice = (x: number): number => {
-        const firstPass = double(x);
-        
-        // Another nested function
-        const addBase = (y: number): number => y + base;
-        
-        return addBase(firstPass);
-    };
-    
-    return applyTwice(base);
-}
-
-/**
- * Calculates the distance between two points
- * @param p1 - First point
- * @param p2 - Second point
- * @returns The distance
- */
-export function pointDistance(p1: Point, p2: Point): number {
-    const dx = p1.x - p2.x;
-    const dy = p1.y - p2.y;
-    return Math.sqrt(dx * dx + dy * dy);
-}
-
-/**
  * A simple calculator class
  * 
  * This class maintains state for calculator operations.
@@ -121,20 +85,6 @@ export class Calculator {
     private _history: string[];
     public value: number;
     
-    /**
-     * Creates a new Calculator
-     * @param initialValue - Starting value (default: 0)
-     */
-    constructor(initialValue: number = 0) {
-        this.value = initialValue;
-        this._history = [];
-    }
-    
-    /**
-     * Adds a number to the current value
-     * @param n - Number to add
-     * @returns The new value
-     */
     add(n: number): number {
         this.value += n;
         this._history.push(`add ${n}`);

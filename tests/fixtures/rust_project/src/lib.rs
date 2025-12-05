@@ -2,6 +2,8 @@
 //!
 //! This is a test fixture for testing tree-sitter parsing of Rust code.
 
+use std::fmt;
+
 pub mod calculator;
 pub mod models;
 

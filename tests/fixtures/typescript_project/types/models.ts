@@ -1,10 +1,7 @@
 /**
- * Type definitions and interfaces
- */
-
-/**
  * A point interface for testing
  */
+
 export interface Point {
     x: number;
     y: number;

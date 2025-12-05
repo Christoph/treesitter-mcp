@@ -2,16 +2,37 @@
 //!
 //! Generates a high-level overview of a codebase with token budget awareness.
 //! Walks directory structure, extracts file shapes, and aggregates results.
+//! Supports detail levels: minimal, signatures, and full.
 
+use crate::analysis::shape::{EnhancedClassInfo, EnhancedFunctionInfo, EnhancedStructInfo};
 use crate::mcp_types::{CallToolResult, CallToolResultExt};
 use crate::parser::detect_language;
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::fs;
 use std::io;
 use std::path::Path;
 
 /// Approximate tokens per character (rough estimation)
 const CHARS_PER_TOKEN: usize = 4;
+
+/// Detail level for code map output
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum DetailLevel {
+    Minimal,
+    Signatures,
+    Full,
+}
+
+impl DetailLevel {
+    fn from_str(s: &str) -> Self {
+        match s {
+            "minimal" => DetailLevel::Minimal,
+            "signatures" => DetailLevel::Signatures,
+            "full" => DetailLevel::Full,
+            _ => DetailLevel::Signatures, // default
+        }
+    }
+}
 
 #[derive(Debug, serde::Serialize)]
 struct CodeMap {
@@ -24,11 +45,11 @@ struct CodeMap {
 struct FileEntry {
     path: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    functions: Option<Vec<String>>,
+    functions: Option<Vec<Value>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    structs: Option<Vec<String>>,
+    structs: Option<Vec<Value>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    classes: Option<Vec<String>>,
+    classes: Option<Vec<Value>>,
 }
 
 pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
@@ -40,8 +61,13 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
     })?;
 
     let max_tokens = arguments["max_tokens"].as_i64().unwrap_or(2000) as usize;
+    let detail_str = arguments["detail"].as_str().unwrap_or("signatures");
+    let detail_level = DetailLevel::from_str(detail_str);
+    let pattern = arguments["pattern"].as_str();
 
-    log::info!("Generating code map for: {path_str} (max_tokens: {max_tokens})");
+    log::info!(
+        "Generating code map for: {path_str} (max_tokens: {max_tokens}, detail: {detail_str})"
+    );
 
     let path = Path::new(path_str);
 
@@ -59,7 +85,7 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
 
     if path.is_file() {
         // Single file
-        if let Ok(entry) = process_file(path) {
+        if let Ok(entry) = process_file(path, detail_level) {
             files.push(entry);
         }
     } else if path.is_dir() {
@@ -70,6 +96,8 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
             &mut current_tokens,
             max_chars,
             &mut truncated,
+            detail_level,
+            pattern,
         )?;
     }
 
@@ -94,6 +122,8 @@ fn collect_files(
     current_tokens: &mut usize,
     max_chars: usize,
     truncated: &mut bool,
+    detail_level: DetailLevel,
+    pattern: Option<&str>,
 ) -> Result<(), io::Error> {
     let entries = fs::read_dir(dir).map_err(|e| {
         io::Error::new(
@@ -117,7 +147,14 @@ fn collect_files(
         if path.is_file() {
             // Check if we can detect language (skip non-source files)
             if detect_language(&path).is_ok() {
-                if let Ok(entry) = process_file(&path) {
+                // Apply pattern filter if provided
+                if let Some(pat) = pattern {
+                    if !matches_pattern(&path, pat) {
+                        continue;
+                    }
+                }
+
+                if let Ok(entry) = process_file(&path, detail_level) {
                     let entry_json = serde_json::to_string(&entry).map_err(|e| {
                         io::Error::new(
                             io::ErrorKind::InvalidData,
@@ -136,7 +173,15 @@ fn collect_files(
                 }
             }
         } else if path.is_dir() {
-            collect_files(&path, files, current_tokens, max_chars, truncated)?;
+            collect_files(
+                &path,
+                files,
+                current_tokens,
+                max_chars,
+                truncated,
+                detail_level,
+                pattern,
+            )?;
             if *truncated {
                 break;
             }
@@ -147,7 +192,7 @@ fn collect_files(
 }
 
 /// Process a single file and extract its shape
-fn process_file(path: &Path) -> Result<FileEntry, io::Error> {
+fn process_file(path: &Path, detail_level: DetailLevel) -> Result<FileEntry, io::Error> {
     let source = fs::read_to_string(path).map_err(|e| {
         io::Error::new(
             io::ErrorKind::NotFound,
@@ -168,25 +213,48 @@ fn process_file(path: &Path) -> Result<FileEntry, io::Error> {
         )
     })?;
 
-    // Use the file_shape extraction logic
-    let shape = crate::analysis::file_shape::extract_shape(&tree, &source, language)?;
+    // Use the enhanced shape extraction
+    let enhanced_shape = crate::analysis::shape::extract_enhanced_shape(
+        &tree,
+        &source,
+        language,
+        Some(&path.to_string_lossy()),
+    )?;
 
     let path_str = path.to_string_lossy().to_string();
 
-    let functions = if !shape.functions.is_empty() {
-        Some(shape.functions.iter().map(|f| f.name.clone()).collect())
+    let functions = if !enhanced_shape.functions.is_empty() {
+        Some(
+            enhanced_shape
+                .functions
+                .iter()
+                .map(|f| filter_function_by_detail(f, detail_level))
+                .collect(),
+        )
     } else {
         None
     };
 
-    let structs = if !shape.structs.is_empty() {
-        Some(shape.structs.iter().map(|s| s.name.clone()).collect())
+    let structs = if !enhanced_shape.structs.is_empty() {
+        Some(
+            enhanced_shape
+                .structs
+                .iter()
+                .map(|s| filter_struct_by_detail(s, detail_level))
+                .collect(),
+        )
     } else {
         None
     };
 
-    let classes = if !shape.classes.is_empty() {
-        Some(shape.classes.iter().map(|c| c.name.clone()).collect())
+    let classes = if !enhanced_shape.classes.is_empty() {
+        Some(
+            enhanced_shape
+                .classes
+                .iter()
+                .map(|c| filter_class_by_detail(c, detail_level))
+                .collect(),
+        )
     } else {
         None
     };
@@ -197,4 +265,121 @@ fn process_file(path: &Path) -> Result<FileEntry, io::Error> {
         structs,
         classes,
     })
+}
+
+/// Filter function info based on detail level
+fn filter_function_by_detail(func: &EnhancedFunctionInfo, detail_level: DetailLevel) -> Value {
+    match detail_level {
+        DetailLevel::Minimal => {
+            json!({
+                "name": func.name,
+                "line": func.line,
+            })
+        }
+        DetailLevel::Signatures => {
+            json!({
+                "name": func.name,
+                "signature": func.signature,
+                "line": func.line,
+                "end_line": func.end_line,
+            })
+        }
+        DetailLevel::Full => {
+            let mut obj = json!({
+                "name": func.name,
+                "signature": func.signature,
+                "line": func.line,
+                "end_line": func.end_line,
+            });
+            if let Some(doc) = &func.doc {
+                obj["doc"] = json!(doc);
+            }
+            if let Some(code) = &func.code {
+                obj["code"] = json!(code);
+            }
+            obj
+        }
+    }
+}
+
+/// Filter struct info based on detail level
+fn filter_struct_by_detail(s: &EnhancedStructInfo, detail_level: DetailLevel) -> Value {
+    match detail_level {
+        DetailLevel::Minimal => {
+            json!({
+                "name": s.name,
+                "line": s.line,
+            })
+        }
+        DetailLevel::Signatures => {
+            json!({
+                "name": s.name,
+                "line": s.line,
+                "end_line": s.end_line,
+            })
+        }
+        DetailLevel::Full => {
+            let mut obj = json!({
+                "name": s.name,
+                "line": s.line,
+                "end_line": s.end_line,
+            });
+            if let Some(doc) = &s.doc {
+                obj["doc"] = json!(doc);
+            }
+            if let Some(code) = &s.code {
+                obj["code"] = json!(code);
+            }
+            obj
+        }
+    }
+}
+
+/// Filter class info based on detail level
+fn filter_class_by_detail(cls: &EnhancedClassInfo, detail_level: DetailLevel) -> Value {
+    match detail_level {
+        DetailLevel::Minimal => {
+            json!({
+                "name": cls.name,
+                "line": cls.line,
+            })
+        }
+        DetailLevel::Signatures => {
+            json!({
+                "name": cls.name,
+                "line": cls.line,
+                "end_line": cls.end_line,
+            })
+        }
+        DetailLevel::Full => {
+            let mut obj = json!({
+                "name": cls.name,
+                "line": cls.line,
+                "end_line": cls.end_line,
+            });
+            if let Some(doc) = &cls.doc {
+                obj["doc"] = json!(doc);
+            }
+            if let Some(code) = &cls.code {
+                obj["code"] = json!(code);
+            }
+            obj
+        }
+    }
+}
+
+/// Check if a file path matches a glob pattern
+fn matches_pattern(path: &Path, pattern: &str) -> bool {
+    if let Some(file_name) = path.file_name() {
+        let file_str = file_name.to_string_lossy();
+        // Simple glob matching for *.ext patterns
+        if pattern.starts_with("*.") {
+            let ext = &pattern[1..];
+            file_str.ends_with(ext)
+        } else {
+            file_str == pattern
+        }
+    } else {
+        false
+    }
 }

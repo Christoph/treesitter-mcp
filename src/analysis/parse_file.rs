@@ -1,8 +1,9 @@
 //! Parse File Tool
 //!
 //! This tool parses a source file using tree-sitter and returns the
-//! Abstract Syntax Tree (AST) as an S-expression.
+//! file shape - structured JSON with functions, classes, imports, and their signatures.
 
+use crate::analysis::shape::extract_enhanced_shape;
 use crate::mcp_types::{CallToolResult, CallToolResultExt};
 use crate::parser::{detect_language, parse_code};
 use serde_json::Value;
@@ -15,8 +16,13 @@ use std::io;
 /// * `arguments` - JSON object with `file_path` field
 ///
 /// # Returns
-/// Returns a `CallToolResult` with the S-expression AST as text content.
-/// Even files with syntax errors produce a tree (with ERROR nodes).
+/// Returns a `CallToolResult` with structured JSON containing:
+/// - `path`: File path
+/// - `language`: Detected language
+/// - `functions`: Array of function definitions with signatures and code
+/// - `structs`: Array of struct definitions (Rust)
+/// - `classes`: Array of class definitions (Python, JavaScript, TypeScript)
+/// - `imports`: Array of import statements
 ///
 /// # Errors
 /// Returns an error if:
@@ -57,9 +63,19 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
         )
     })?;
 
-    let sexp = tree.root_node().to_sexp();
+    let shape = extract_enhanced_shape(&tree, &source, language, Some(file_path))?;
 
-    log::debug!("Generated S-expression ({} bytes)", sexp.len());
+    log::debug!(
+        "Extracted file shape with {} functions",
+        shape.functions.len()
+    );
 
-    Ok(CallToolResult::success(sexp))
+    let shape_json = serde_json::to_string(&shape).map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Failed to serialize shape to JSON: {e}"),
+        )
+    })?;
+
+    Ok(CallToolResult::success(shape_json))
 }

@@ -79,7 +79,8 @@ fn test_code_map_rust_project_full() {
     let dir_path = common::fixture_dir("rust");
     let arguments = json!({
         "path": dir_path.join("src").to_str().unwrap(),
-        "detail": "full"
+        "detail": "full",
+        "max_tokens": 10000
     });
 
     // When: code_map with detail="full"

@@ -49,6 +49,12 @@ fn test_file_shape_functionality_moved_to_parse_file() {
 
     // Should have the same fields that file_shape used to return
     assert!(shape["functions"].is_array());
-    assert!(shape["structs"].is_array() || shape["classes"].is_array());
+    // calculator.rs has functions and imports, but structs are in models/mod.rs
+    // The structs/classes fields are omitted if empty (skip_serializing_if)
+    // Just verify we have functions and imports which proves parse_file works
     assert!(shape["imports"].is_array());
+
+    // Verify it has the enhanced fields (language, path)
+    assert!(shape.get("language").is_some());
+    assert!(shape.get("path").is_some());
 }

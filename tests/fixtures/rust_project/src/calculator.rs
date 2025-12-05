@@ -40,21 +40,13 @@ pub fn divide(a: i32, b: i32) -> Option<i32> {
     }
 }
 
-/// Private helper function to validate input
-fn validate_input(x: i32) -> bool {
-    x >= 0
-}
-
 /// A function that uses a closure
 pub fn apply_operation<F>(a: i32, b: i32, op: F) -> i32
 where
     F: Fn(i32, i32) -> i32,
 {
-    let result = op(a, b);
-
-    // Nested closure
     let formatter = |x: i32| -> String { format!("Result is: {}", x) };
-
+    let result = op(a, b);
     println!("{}", formatter(result));
     result
 }

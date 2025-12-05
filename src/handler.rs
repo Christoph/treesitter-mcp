@@ -16,6 +16,12 @@ use crate::tools::TreesitterTools;
 /// Custom handler for tree-sitter MCP server
 pub struct TreesitterServerHandler;
 
+impl Default for TreesitterServerHandler {
+    fn default() -> Self {
+        Self
+    }
+}
+
 impl TreesitterServerHandler {
     pub fn new() -> Self {
         Self
@@ -53,6 +59,8 @@ impl ServerHandler for TreesitterServerHandler {
             TreesitterTools::CodeMapTool(t) => t.call_tool(),
             TreesitterTools::FindUsagesTool(t) => t.call_tool(),
             TreesitterTools::QueryPatternTool(t) => t.call_tool(),
+            TreesitterTools::GetContextTool(t) => t.call_tool(),
+            TreesitterTools::GetNodeAtPositionTool(t) => t.call_tool(),
         }
     }
 }

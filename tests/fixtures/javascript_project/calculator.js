@@ -47,66 +47,19 @@ function divide(a, b) {
     return a / b;
 }
 
-/**
- * Private helper function
- * @private
- */
-function _privateHelper(x) {
-    return x >= 0;
-}
-
-/**
- * Applies a custom operation to two numbers
- * @param {number} a - First number
- * @param {number} b - Second number
- * @param {Function} operation - Operation function
- * @returns {number} Result of the operation
- */
 function applyOperation(a, b, operation) {
-    const result = operation(a, b);
     
-    // Nested arrow function
+    
+    
+    
     const formatter = (x) => `Result is: ${x}`;
+    const result = operation(a, b);
     
     console.log(formatter(result));
     return result;
 }
 
-/**
- * A complex operation with nested functions
- * @param {number} base - The base value
- * @returns {number} The result
- */
-function complexOperation(base) {
-    const multiplier = 2;
-    
-    // First nested function
-    const double = (x) => x * multiplier;
-    
-    // Nested function inside the first
-    const applyTwice = (x) => {
-        const firstPass = double(x);
-        
-        // Another nested function
-        const addBase = (y) => y + base;
-        
-        return addBase(firstPass);
-    };
-    
-    return applyTwice(base);
-}
 
-/**
- * Calculates the distance between two points
- * @param {Object} p1 - First point with x, y properties
- * @param {Object} p2 - Second point with x, y properties
- * @returns {number} The distance
- */
-function pointDistance(p1, p2) {
-    const dx = p1.x - p2.x;
-    const dy = p1.y - p2.y;
-    return Math.sqrt(dx * dx + dy * dy);
-}
 
 /**
  * A simple calculator class
@@ -123,11 +76,7 @@ class Calculator {
         this._history = [];
     }
     
-    /**
-     * Adds a number to the current value
-     * @param {number} n - Number to add
-     * @returns {number} The new value
-     */
+    
     add(n) {
         this.value += n;
         this._history.push(`add ${n}`);

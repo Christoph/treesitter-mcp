@@ -92,7 +92,10 @@ fn test_parse_file_rust_structs() {
             code.contains("Calculator"),
             "Code should contain struct name"
         );
-        assert!(code.contains("value"), "Code should contain struct fields");
+        assert!(
+            code.contains("pub value: i32"),
+            "Code should contain struct fields"
+        );
     }
 }
 
