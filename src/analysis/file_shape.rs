@@ -12,6 +12,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 use tree_sitter::{Query, QueryCursor, Tree};
 
+const MAX_TEMPLATE_DEPTH: usize = 50;
+
 #[derive(Debug, serde::Serialize)]
 pub struct FileShape {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -946,6 +948,13 @@ fn merge_template(
     visited: &mut HashSet<PathBuf>,
     recursion_stack: &mut Vec<PathBuf>,
 ) -> Result<String, io::Error> {
+    if recursion_stack.len() > MAX_TEMPLATE_DEPTH {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Template inheritance depth exceeded maximum",
+        ));
+    }
+
     let canonical = template_path.canonicalize().map_err(|_e| {
         io::Error::new(
             io::ErrorKind::NotFound,

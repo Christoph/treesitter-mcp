@@ -781,7 +781,7 @@ fn is_tailwind_utility(class: &str) -> bool {
     let class = class.strip_prefix('!').unwrap_or(class);
 
     // Handle variant prefixes (hover:, dark:, sm:, etc.)
-    let base = class.split(':').last().unwrap_or(class);
+    let base = class.split(':').next_back().unwrap_or(class);
 
     // Exact match utilities
     let exact = [
@@ -1019,6 +1019,12 @@ pub fn extract_css_tailwind(
     let layer_start_re = Regex::new(r"@layer\s+(components|utilities)\s*\{")
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("Invalid regex: {e}")))?;
 
+    // Extract class definitions within layer
+    let class_re = Regex::new(r"\.([\w-]+)\s*\{([^}]*)\}")
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("Invalid regex: {e}")))?;
+    let apply_re = Regex::new(r"@apply\s+([^;]+);")
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("Invalid regex: {e}")))?;
+
     for layer_match in layer_start_re.captures_iter(source) {
         let layer_name = match &layer_match[1] {
             "components" => Cow::Borrowed("components"),
@@ -1032,8 +1038,8 @@ pub fn extract_css_tailwind(
         let mut layer_end = layer_start;
         let source_bytes = source.as_bytes();
 
-        for i in layer_start..source_bytes.len() {
-            match source_bytes[i] {
+        for (i, &byte) in source_bytes.iter().enumerate().skip(layer_start) {
+            match byte {
                 b'{' => brace_count += 1,
                 b'}' => {
                     brace_count -= 1;
@@ -1052,11 +1058,6 @@ pub fn extract_css_tailwind(
 
         let layer_content = &source[layer_start..layer_end];
 
-        // Extract class definitions within layer
-        let class_re = Regex::new(r"\.([\w-]+)\s*\{([^}]*)\}").map_err(|e| {
-            io::Error::new(io::ErrorKind::InvalidData, format!("Invalid regex: {e}"))
-        })?;
-
         for class_cap in class_re.captures_iter(layer_content) {
             let class_start_in_layer = class_cap.get(0).unwrap().start();
             let absolute_offset = layer_start + class_start_in_layer;
@@ -1065,9 +1066,6 @@ pub fn extract_css_tailwind(
 
             // Extract @apply utilities
             let mut applied = Vec::new();
-            let apply_re = Regex::new(r"@apply\s+([^;]+);").map_err(|e| {
-                io::Error::new(io::ErrorKind::InvalidData, format!("Invalid regex: {e}"))
-            })?;
 
             for apply_cap in apply_re.captures_iter(class_body) {
                 applied.extend(apply_cap[1].split_whitespace().map(String::from));
