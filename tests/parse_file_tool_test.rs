@@ -37,26 +37,15 @@ fn test_parse_file_rust_functions() {
     let functions = shape["functions"].as_array().unwrap();
     assert!(functions.len() >= 5); // add, subtract, multiply, divide, apply_operation, create_calculator
 
-    // Check for specific function
-    let add_fn = functions.iter().find(|f| f["name"] == "add").unwrap();
-    assert_eq!(add_fn["name"], "add");
-    assert!(add_fn["signature"].as_str().unwrap().contains("pub fn add"));
-    assert!(add_fn["signature"].as_str().unwrap().contains("i32"));
-    assert!(add_fn["line"].as_u64().unwrap() > 0);
-    assert!(add_fn["end_line"].as_u64().unwrap() > add_fn["line"].as_u64().unwrap());
+    // Check for specific functions using helper
+    common::helpers::assert_has_function(&shape, "add");
+    common::helpers::assert_has_function(&shape, "subtract");
+    common::helpers::assert_has_function(&shape, "multiply");
+    common::helpers::assert_has_function(&shape, "divide");
 
-    // Verify the actual code is included
-    if add_fn["code"].is_string() {
-        let code = add_fn["code"].as_str().unwrap();
-        assert!(
-            code.contains("a + b"),
-            "Code should contain the actual implementation"
-        );
-        assert!(
-            code.contains("pub fn add"),
-            "Code should contain the function signature"
-        );
-    }
+    // Verify the actual code is included using helper
+    common::helpers::assert_function_code_contains(&shape, "add", "a + b");
+    common::helpers::assert_function_code_contains(&shape, "add", "pub fn add");
 }
 
 #[test]
