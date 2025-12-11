@@ -4,6 +4,7 @@
 //! Uses tree-sitter to parse and search for identifier nodes.
 //! Returns usage locations with code snippets, usage type classification, and AST node information.
 
+use crate::analysis::path_utils;
 use crate::mcp_types::{CallToolResult, CallToolResultExt};
 use crate::parser::{detect_language, parse_code};
 use serde_json::Value;
@@ -51,6 +52,8 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
         .map(|v| v as u32)
         .unwrap_or(3);
 
+    let max_context_lines = arguments["max_context_lines"].as_u64().map(|v| v as u32);
+
     log::info!("Finding usages of '{symbol}' in: {path_str}");
 
     let path = Path::new(path_str);
@@ -68,6 +71,16 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
         search_file(path, symbol, context_lines, &mut usages)?;
     } else if path.is_dir() {
         search_directory(path, symbol, context_lines, &mut usages)?;
+    }
+
+    // Apply context cap if specified
+    if let Some(max) = max_context_lines {
+        apply_context_cap(&mut usages, context_lines, max);
+    }
+
+    // Convert all file paths to relative paths
+    for usage in &mut usages {
+        usage.file = path_utils::to_relative_path(&usage.file);
     }
 
     let result = FindUsagesResult {
@@ -325,4 +338,30 @@ fn extract_code_with_context(source: &str, line: usize, context_lines: u32) -> S
     let end_line = std::cmp::min(line + context_lines + 1, lines.len());
 
     lines[start_line..end_line].join("\n")
+}
+
+/// Apply context line cap by truncating usages if total exceeds max
+fn apply_context_cap(usages: &mut Vec<Usage>, context_per_usage: u32, max_total: u32) {
+    if usages.is_empty() {
+        return;
+    }
+
+    // Special case: if max is 0, remove all code but keep metadata
+    if max_total == 0 {
+        for usage in usages.iter_mut() {
+            usage.code = None;
+        }
+        return;
+    }
+
+    // Calculate lines per usage (context before + line + context after)
+    let lines_per_usage = (context_per_usage * 2) + 1;
+
+    // Calculate max usages we can include
+    let max_usages = (max_total / lines_per_usage).max(1) as usize;
+
+    // Truncate if we exceed the limit
+    if usages.len() > max_usages {
+        usages.truncate(max_usages);
+    }
 }

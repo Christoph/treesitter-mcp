@@ -7,7 +7,7 @@ use serde_json::json;
 // ============================================================================
 
 #[test]
-fn test_code_map_rust_project_minimal() {
+fn test_code_map_provides_minimal_overview_with_names_only() {
     // Given: Rust fixture project
     let dir_path = common::fixture_dir("rust");
     let arguments = json!({
@@ -42,7 +42,7 @@ fn test_code_map_rust_project_minimal() {
 }
 
 #[test]
-fn test_code_map_rust_project_signatures() {
+fn test_code_map_includes_signatures_at_medium_detail() {
     // Given: Rust fixture project
     let dir_path = common::fixture_dir("rust");
     let arguments = json!({
@@ -74,7 +74,7 @@ fn test_code_map_rust_project_signatures() {
 }
 
 #[test]
-fn test_code_map_rust_project_full() {
+fn test_code_map_includes_full_details_with_docs() {
     // Given: Rust fixture project
     let dir_path = common::fixture_dir("rust");
     let arguments = json!({
@@ -209,7 +209,7 @@ fn test_code_map_typescript_project() {
 // ============================================================================
 
 #[test]
-fn test_code_map_pattern_filter() {
+fn test_code_map_filters_files_by_glob_pattern() {
     // Given: Mixed language project (use rust project with multiple file types)
     let dir_path = common::fixture_dir("rust");
     let arguments = json!({
@@ -234,7 +234,7 @@ fn test_code_map_pattern_filter() {
 }
 
 #[test]
-fn test_code_map_respects_token_limit() {
+fn test_code_map_respects_token_budget_limit() {
     // Given: Large project
     let dir_path = common::fixture_dir("rust");
     let arguments = json!({
@@ -260,7 +260,7 @@ fn test_code_map_respects_token_limit() {
 }
 
 #[test]
-fn test_code_map_single_file() {
+fn test_code_map_handles_single_file_analysis() {
     // Given: Path to single file
     let file_path = common::fixture_path("rust", "src/calculator.rs");
     let arguments = json!({

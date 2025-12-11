@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+pub mod helpers;
+
 /// Get path to a fixture file
 pub fn fixture_path(lang: &str, file: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))

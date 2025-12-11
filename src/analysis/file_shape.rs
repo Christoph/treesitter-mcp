@@ -3,6 +3,7 @@
 //! Extracts the high-level structure of a source file (functions, classes, imports)
 //! without the implementation details.
 
+use crate::analysis::path_utils;
 use crate::mcp_types::{CallToolResult, CallToolResultExt};
 use crate::parser::{detect_language, parse_code, Language};
 use serde_json::Value;
@@ -148,7 +149,13 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
     });
 
     let mut visited = HashSet::new();
-    let shape = build_shape_tree(path, &project_root, include_deps, &mut visited)?;
+    let mut shape = build_shape_tree(path, &project_root, include_deps, &mut visited)?;
+
+    // Convert path to relative path before serializing
+    if let Some(ref path_str) = shape.path {
+        shape.path = Some(path_utils::to_relative_path(path_str));
+    }
+
     let shape_json = serde_json::to_string(&shape).map_err(|e| {
         io::Error::new(
             io::ErrorKind::InvalidData,

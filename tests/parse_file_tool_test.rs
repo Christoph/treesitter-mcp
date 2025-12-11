@@ -7,7 +7,7 @@ mod common;
 // ============================================================================
 
 #[test]
-fn test_parse_file_rust_functions() {
+fn test_parse_file_extracts_function_signatures_and_code() {
     // Given: Rust fixture with functions
     let file_path = common::fixture_path("rust", "src/calculator.rs");
     let arguments = json!({
@@ -37,30 +37,19 @@ fn test_parse_file_rust_functions() {
     let functions = shape["functions"].as_array().unwrap();
     assert!(functions.len() >= 5); // add, subtract, multiply, divide, apply_operation, create_calculator
 
-    // Check for specific function
-    let add_fn = functions.iter().find(|f| f["name"] == "add").unwrap();
-    assert_eq!(add_fn["name"], "add");
-    assert!(add_fn["signature"].as_str().unwrap().contains("pub fn add"));
-    assert!(add_fn["signature"].as_str().unwrap().contains("i32"));
-    assert!(add_fn["line"].as_u64().unwrap() > 0);
-    assert!(add_fn["end_line"].as_u64().unwrap() > add_fn["line"].as_u64().unwrap());
+    // Check for specific functions using helper
+    common::helpers::assert_has_function(&shape, "add");
+    common::helpers::assert_has_function(&shape, "subtract");
+    common::helpers::assert_has_function(&shape, "multiply");
+    common::helpers::assert_has_function(&shape, "divide");
 
-    // Verify the actual code is included
-    if add_fn["code"].is_string() {
-        let code = add_fn["code"].as_str().unwrap();
-        assert!(
-            code.contains("a + b"),
-            "Code should contain the actual implementation"
-        );
-        assert!(
-            code.contains("pub fn add"),
-            "Code should contain the function signature"
-        );
-    }
+    // Verify the actual code is included using helper
+    common::helpers::assert_function_code_contains(&shape, "add", "a + b");
+    common::helpers::assert_function_code_contains(&shape, "add", "pub fn add");
 }
 
 #[test]
-fn test_parse_file_rust_structs() {
+fn test_parse_file_extracts_struct_definitions_and_fields() {
     // Given: Rust fixture with structs
     let file_path = common::fixture_path("rust", "src/models/mod.rs");
     let arguments = json!({
@@ -135,7 +124,7 @@ fn test_parse_file_rust_docs() {
 }
 
 #[test]
-fn test_parse_file_rust_imports() {
+fn test_parse_file_extracts_import_statements() {
     // Given: Rust fixture with imports
     let file_path = common::fixture_path("rust", "src/lib.rs");
     let arguments = json!({
@@ -167,7 +156,7 @@ fn test_parse_file_rust_imports() {
 // ============================================================================
 
 #[test]
-fn test_parse_file_python_functions() {
+fn test_parse_file_handles_python_function_definitions() {
     // Given: Python fixture with functions
     let file_path = common::fixture_path("python", "calculator.py");
     let arguments = json!({
@@ -209,7 +198,7 @@ fn test_parse_file_python_functions() {
 }
 
 #[test]
-fn test_parse_file_python_classes() {
+fn test_parse_file_handles_python_class_definitions() {
     // Given: Python fixture with classes
     let file_path = common::fixture_path("python", "calculator.py");
     let arguments = json!({
@@ -253,7 +242,7 @@ fn test_parse_file_python_classes() {
 // ============================================================================
 
 #[test]
-fn test_parse_file_javascript_functions() {
+fn test_parse_file_handles_javascript_function_declarations() {
     // Given: JavaScript fixture with functions
     let file_path = common::fixture_path("javascript", "calculator.js");
     let arguments = json!({
@@ -349,7 +338,7 @@ fn test_parse_file_typescript_with_types() {
 }
 
 #[test]
-fn test_parse_file_typescript_interfaces() {
+fn test_parse_file_handles_typescript_interface_definitions() {
     // Given: TypeScript fixture with interfaces
     let file_path = common::fixture_path("typescript", "types/models.ts");
     let arguments = json!({

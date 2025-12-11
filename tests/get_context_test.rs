@@ -6,9 +6,9 @@ use serde_json::json;
 // Rust Tests
 // ============================================================================
 
-/// Test that a position inside a function returns the function as innermost context
+/// Test that get_context returns function as innermost scope
 #[test]
-fn test_get_context_rust_inside_function() {
+fn test_get_context_returns_function_as_innermost_scope() {
     // Given: Rust file with function at line 12-14
     let file_path = common::fixture_path("rust", "src/calculator.rs");
     let arguments = json!({
@@ -56,9 +56,9 @@ fn test_get_context_rust_inside_function() {
     );
 }
 
-/// Test that a position inside impl block method returns method then impl
+/// Test that get_context returns nested method and impl scopes
 #[test]
-fn test_get_context_rust_inside_impl() {
+fn test_get_context_returns_nested_method_and_impl_scopes() {
     // Given: Rust file with impl block (line 18 is inside the new() method)
     let file_path = common::fixture_path("rust", "src/models/mod.rs");
     let arguments = json!({
@@ -90,9 +90,9 @@ fn test_get_context_rust_inside_impl() {
     assert_eq!(impl_block["name"], "Calculator");
 }
 
-/// Test that a position inside a closure returns closure then function
+/// Test that get_context returns closure within function scope
 #[test]
-fn test_get_context_rust_nested_closure() {
+fn test_get_context_returns_closure_within_function_scope() {
     // Given: Rust file with nested closure at line 48
     let file_path = common::fixture_path("rust", "src/calculator.rs");
     let arguments = json!({
@@ -127,9 +127,9 @@ fn test_get_context_rust_nested_closure() {
 // Python Tests
 // ============================================================================
 
-/// Test that a position inside a class method returns method then class
+/// Test that get_context returns method within class scope
 #[test]
-fn test_get_context_python_inside_method() {
+fn test_get_context_returns_method_within_class_scope() {
     // Given: Python file with class method at line 79
     let file_path = common::fixture_path("python", "calculator.py");
     let arguments = json!({
@@ -251,9 +251,9 @@ fn test_get_context_python_code_includes_docstring() {
 // JavaScript Tests
 // ============================================================================
 
-/// Test that a position inside an arrow function returns the arrow function
+/// Test that get_context handles arrow function expressions
 #[test]
-fn test_get_context_javascript_arrow_function() {
+fn test_get_context_handles_arrow_function_expressions() {
     // Given: JavaScript file with arrow function at line 55
     let file_path = common::fixture_path("javascript", "calculator.js");
     let arguments = json!({
@@ -292,9 +292,9 @@ fn test_get_context_javascript_arrow_function() {
 // TypeScript Tests
 // ============================================================================
 
-/// Test that a position inside an interface returns the interface
+/// Test that get_context handles interface member scope
 #[test]
-fn test_get_context_typescript_interface() {
+fn test_get_context_handles_interface_member_scope() {
     // Given: TypeScript file with interface
     let file_path = common::fixture_path("typescript", "types/models.ts");
     let arguments = json!({
@@ -478,9 +478,9 @@ fn test_get_context_nested_order() {
     assert_eq!(contexts[contexts.len() - 1]["type"], "function_item");
 }
 
-/// Test that context works with Python nested functions
+/// Test that get_context handles nested function definitions
 #[test]
-fn test_get_context_python_nested_function() {
+fn test_get_context_handles_nested_function_definitions() {
     // Given: Python file with nested function at line 55
     let file_path = common::fixture_path("python", "calculator.py");
     let arguments = json!({
@@ -541,9 +541,9 @@ fn test_get_context_function_signature() {
     assert!(signature.contains("i32"));
 }
 
-/// Test that context works with JavaScript class methods
+/// Test that get_context handles class method scope
 #[test]
-fn test_get_context_javascript_class_method() {
+fn test_get_context_handles_class_method_scope() {
     // Given: JavaScript file with class method at line 80
     let file_path = common::fixture_path("javascript", "calculator.js");
     let arguments = json!({
@@ -575,9 +575,9 @@ fn test_get_context_javascript_class_method() {
     assert_eq!(class["name"], "Calculator");
 }
 
-/// Test that context works with TypeScript class methods
+/// Test that get_context handles TypeScript class methods
 #[test]
-fn test_get_context_typescript_class_method() {
+fn test_get_context_handles_typescript_class_methods() {
     // Given: TypeScript file with class method at line 87
     let file_path = common::fixture_path("typescript", "calculator.ts");
     let arguments = json!({

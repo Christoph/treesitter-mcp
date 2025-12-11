@@ -1,0 +1,29 @@
+# Cargo Mutants Configuration
+# https://github.com/sourcefrog/cargo-mutants
+
+# Exclude test files from mutation
+exclude_globs = [
+    "tests/**",
+    "benches/**",
+]
+
+# Timeout for each test run (in seconds)
+timeout = 300
+
+# Minimum test time to consider (filters out very fast tests)
+minimum_test_time = 0.1
+
+# Show caught mutants (for debugging)
+show_caught = false
+
+# Show missed mutants (important for improving tests)
+show_missed = true
+
+# Show unviable mutants (mutations that don't compile)
+show_unviable = false
+
+# Exclude specific functions from mutation
+# (e.g., trivial getters, debug implementations)
+exclude_functions = [
+    # Add functions to exclude here if needed
+]
