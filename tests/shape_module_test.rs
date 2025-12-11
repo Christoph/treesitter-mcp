@@ -18,8 +18,14 @@ use std::fmt;
 "#;
 
     let tree = parse_code(source, Language::Rust).expect("Failed to parse");
-    let shape = extract_enhanced_shape(&tree, source, Language::Rust, Some("src/calculator.rs"))
-        .expect("Failed to extract shape");
+    let shape = extract_enhanced_shape(
+        &tree,
+        source,
+        Language::Rust,
+        Some("src/calculator.rs"),
+        true,
+    )
+    .expect("Failed to extract shape");
 
     // Verify path and language
     assert_eq!(shape.path, Some("src/calculator.rs".to_string()));
@@ -76,7 +82,7 @@ from typing import List
 "#;
 
     let tree = parse_code(source, Language::Python).expect("Failed to parse");
-    let shape = extract_enhanced_shape(&tree, source, Language::Python, Some("greet.py"))
+    let shape = extract_enhanced_shape(&tree, source, Language::Python, Some("greet.py"), true)
         .expect("Failed to extract shape");
 
     // Functions: greet (top-level) and __init__ (nested in class)
@@ -113,7 +119,7 @@ import { utils } from './utils.js';
 "#;
 
     let tree = parse_code(source, Language::JavaScript).expect("Failed to parse");
-    let shape = extract_enhanced_shape(&tree, source, Language::JavaScript, Some("calc.js"))
+    let shape = extract_enhanced_shape(&tree, source, Language::JavaScript, Some("calc.js"), true)
         .expect("Failed to extract shape");
 
     assert_eq!(shape.functions.len(), 1);

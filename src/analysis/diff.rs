@@ -3,6 +3,7 @@
 //! Provides tools for understanding structural changes between file versions
 //! and identifying potentially affected code across the codebase.
 
+use crate::analysis::path_utils;
 use crate::mcp_types::{CallToolResult, CallToolResultExt};
 use crate::parser::{detect_language, parse_code, Language};
 use regex::Regex;
@@ -844,7 +845,7 @@ pub fn execute_parse_diff(arguments: &Value) -> Result<CallToolResult, io::Error
     let compare_to_sha = resolve_git_sha(&compare_to, file_path).ok();
 
     let result = DiffAnalysis {
-        file_path: file_path_str.to_string(),
+        file_path: path_utils::to_relative_path(file_path_str),
         compare_to,
         compare_to_sha,
         no_structural_change: structural_changes.is_empty(),
@@ -903,7 +904,7 @@ pub fn execute_affected_by_diff(arguments: &Value) -> Result<CallToolResult, io:
     if diff_analysis.no_structural_change {
         // No structural changes, return early
         let result = AffectedUsagesResult {
-            file_path: file_path_str.to_string(),
+            file_path: path_utils::to_relative_path(file_path_str),
             compare_to,
             affected_changes: vec![],
             summary: AffectedSummary {
@@ -1023,7 +1024,7 @@ pub fn execute_affected_by_diff(arguments: &Value) -> Result<CallToolResult, io:
     }
 
     let result = AffectedUsagesResult {
-        file_path: file_path_str.to_string(),
+        file_path: path_utils::to_relative_path(file_path_str),
         compare_to,
         affected_changes,
         summary: AffectedSummary {

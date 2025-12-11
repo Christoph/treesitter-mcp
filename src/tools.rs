@@ -9,8 +9,13 @@ use rust_mcp_sdk::tool_box;
 
 use crate::analysis::{
     code_map, diff, file_shape, find_usages, get_context, get_node_at_position, parse_file,
-    query_pattern,
+    query_pattern, read_focused_code,
 };
+
+// Helper function for serde default
+fn default_true() -> bool {
+    true
+}
 
 /// Parse a source file and return its structure (functions, classes, imports) with signatures and docs
 #[mcp_tool(
@@ -21,6 +26,40 @@ use crate::analysis::{
 pub struct ParseFileTool {
     /// Path to the source file to parse
     pub file_path: String,
+    /// Include full code blocks for functions/classes (default: true)
+    /// When false, returns only signatures, docs, and line ranges (60-80% token reduction)
+    #[serde(default = "default_true")]
+    pub include_code: bool,
+}
+
+/// Read a file with focused code view: FULL code for the target symbol,
+/// signatures-only for everything else. Perfect for editing a specific function
+/// while maintaining context of the surrounding code.
+///
+/// Parameters:
+/// - file_path: Path to the source file
+/// - focus_symbol: Name of the function/class/struct to show full code for
+/// - context_radius (optional, default: 0): Include full code for N symbols before/after target
+///
+/// Returns: File shape with target symbol having full code, others having only signatures.
+///
+/// USE THIS WHEN: You need to edit or understand a specific function while seeing
+/// the structure of surrounding code without wasting tokens on irrelevant implementations.
+#[mcp_tool(
+    name = "treesitter-mcp_read_focused_code",
+    description = "Read a file with focused code view: FULL code for the target symbol, signatures-only for everything else. Perfect for editing a specific function while maintaining context. USE THIS WHEN: You need to edit or understand a specific function while seeing the structure of surrounding code."
+)]
+#[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
+pub struct ReadFocusedCodeTool {
+    /// Path to the source file
+    pub file_path: String,
+
+    /// Symbol name to show full code for (function, class, or struct name)
+    pub focus_symbol: String,
+
+    /// Include full code for N symbols before/after the focused symbol (default: 0)
+    #[serde(default)]
+    pub context_radius: Option<u32>,
 }
 
 /// Extract the structure of a file (functions, classes, imports) without implementation details
@@ -74,6 +113,10 @@ pub struct FindUsagesTool {
     /// Number of context lines around each usage (default: 3)
     #[serde(default)]
     pub context_lines: Option<u32>,
+    /// Maximum total context lines across ALL usages (prevents token explosion)
+    /// When set, limits the total number of context lines returned
+    #[serde(default)]
+    pub max_context_lines: Option<u32>,
 }
 
 /// Execute a custom tree-sitter query pattern on a source file with code context
@@ -162,10 +205,23 @@ pub struct AffectedByDiffTool {
 impl ParseFileTool {
     pub fn call_tool(&self) -> Result<CallToolResult, CallToolError> {
         let args = serde_json::json!({
-            "file_path": self.file_path
+            "file_path": self.file_path,
+            "include_code": self.include_code
         });
 
         parse_file::execute(&args).map_err(CallToolError::new)
+    }
+}
+
+impl ReadFocusedCodeTool {
+    pub fn call_tool(&self) -> Result<CallToolResult, CallToolError> {
+        let args = serde_json::json!({
+            "file_path": self.file_path,
+            "focus_symbol": self.focus_symbol,
+            "context_radius": self.context_radius.unwrap_or(0)
+        });
+
+        read_focused_code::execute(&args).map_err(CallToolError::new)
     }
 }
 
@@ -198,7 +254,8 @@ impl FindUsagesTool {
         let args = serde_json::json!({
             "symbol": self.symbol,
             "path": self.path,
-            "context_lines": self.context_lines
+            "context_lines": self.context_lines,
+            "max_context_lines": self.max_context_lines
         });
 
         find_usages::execute(&args).map_err(CallToolError::new)
@@ -270,6 +327,7 @@ tool_box!(
     TreesitterTools,
     [
         ParseFileTool,
+        ReadFocusedCodeTool,
         FileShapeTool,
         CodeMapTool,
         FindUsagesTool,

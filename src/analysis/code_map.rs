@@ -4,6 +4,7 @@
 //! Walks directory structure, extracts file shapes, and aggregates results.
 //! Supports detail levels: minimal, signatures, and full.
 
+use crate::analysis::path_utils;
 use crate::analysis::shape::{EnhancedClassInfo, EnhancedFunctionInfo, EnhancedStructInfo};
 use crate::mcp_types::{CallToolResult, CallToolResultExt};
 use crate::parser::detect_language;
@@ -105,6 +106,15 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
             pattern,
         )?;
     }
+
+    // Convert all file paths to relative paths
+    let files = files
+        .into_iter()
+        .map(|mut entry| {
+            entry.path = path_utils::to_relative_path(&entry.path);
+            entry
+        })
+        .collect();
 
     let code_map = CodeMap {
         files,
@@ -224,6 +234,7 @@ fn process_file(path: &Path, detail_level: DetailLevel) -> Result<FileEntry, io:
         &source,
         language,
         Some(&path.to_string_lossy()),
+        true,
     )?;
 
     let path_str = path.to_string_lossy().to_string();

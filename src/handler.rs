@@ -55,6 +55,7 @@ impl ServerHandler for TreesitterServerHandler {
         // Match the tool variant and execute its corresponding logic
         match tool {
             TreesitterTools::ParseFileTool(t) => t.call_tool(),
+            TreesitterTools::ReadFocusedCodeTool(t) => t.call_tool(),
             TreesitterTools::FileShapeTool(t) => t.call_tool(),
             TreesitterTools::CodeMapTool(t) => t.call_tool(),
             TreesitterTools::FindUsagesTool(t) => t.call_tool(),

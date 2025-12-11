@@ -3,6 +3,7 @@
 //! This tool parses a source file using tree-sitter and returns the
 //! file shape - structured JSON with functions, classes, imports, and their signatures.
 
+use crate::analysis::path_utils;
 use crate::analysis::shape::extract_enhanced_shape;
 use crate::mcp_types::{CallToolResult, CallToolResultExt};
 use crate::parser::{detect_language, parse_code};
@@ -56,6 +57,8 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
 
     log::debug!("Detected language: {}", language.name());
 
+    let include_code = arguments["include_code"].as_bool().unwrap_or(true);
+
     let tree = parse_code(&source, language).map_err(|e| {
         io::Error::new(
             io::ErrorKind::InvalidData,
@@ -63,7 +66,13 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
         )
     })?;
 
-    let shape = extract_enhanced_shape(&tree, &source, language, Some(file_path))?;
+    let mut shape =
+        extract_enhanced_shape(&tree, &source, language, Some(file_path), include_code)?;
+
+    // Convert to relative path
+    if let Some(ref path) = shape.path {
+        shape.path = Some(path_utils::to_relative_path(path));
+    }
 
     log::debug!(
         "Extracted file shape with {} functions",

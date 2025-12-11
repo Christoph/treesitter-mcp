@@ -14,5 +14,7 @@ pub mod find_usages;
 pub mod get_context;
 pub mod get_node_at_position;
 pub mod parse_file;
+pub mod path_utils;
 pub mod query_pattern;
+pub mod read_focused_code;
 pub mod shape;

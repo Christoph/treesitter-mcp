@@ -72,12 +72,17 @@ pub fn extract_enhanced_shape(
     source: &str,
     language: Language,
     file_path: Option<&str>,
+    include_code: bool,
 ) -> Result<EnhancedFileShape, io::Error> {
     let shape = match language {
-        Language::Rust => extract_rust_enhanced(tree, source)?,
-        Language::Python => extract_python_enhanced(tree, source)?,
-        Language::JavaScript => extract_js_enhanced(tree, source, Language::JavaScript)?,
-        Language::TypeScript => extract_js_enhanced(tree, source, Language::TypeScript)?,
+        Language::Rust => extract_rust_enhanced(tree, source, include_code)?,
+        Language::Python => extract_python_enhanced(tree, source, include_code)?,
+        Language::JavaScript => {
+            extract_js_enhanced(tree, source, Language::JavaScript, include_code)?
+        }
+        Language::TypeScript => {
+            extract_js_enhanced(tree, source, Language::TypeScript, include_code)?
+        }
         Language::Html | Language::Css => {
             // HTML and CSS don't fit the EnhancedFileShape model
             // Return empty shape - they should use file_shape tool instead
@@ -100,7 +105,11 @@ pub fn extract_enhanced_shape(
 }
 
 /// Extract enhanced shape from Rust source code
-fn extract_rust_enhanced(tree: &Tree, source: &str) -> Result<EnhancedFileShape, io::Error> {
+fn extract_rust_enhanced(
+    tree: &Tree,
+    source: &str,
+    include_code: bool,
+) -> Result<EnhancedFileShape, io::Error> {
     let mut functions = Vec::new();
     let mut structs = Vec::new();
     let mut imports = Vec::new();
@@ -137,7 +146,11 @@ fn extract_rust_enhanced(tree: &Tree, source: &str) -> Result<EnhancedFileShape,
                             let end_line = func_node.end_position().row + 1;
                             let signature = extract_signature(func_node, source)?;
                             let doc = extract_doc_comment(func_node, source, Language::Rust)?;
-                            let code = extract_code(func_node, source)?;
+                            let code = if include_code {
+                                extract_code(func_node, source)?
+                            } else {
+                                None
+                            };
 
                             functions.push(EnhancedFunctionInfo {
                                 name: name.to_string(),
@@ -156,7 +169,11 @@ fn extract_rust_enhanced(tree: &Tree, source: &str) -> Result<EnhancedFileShape,
                             let line = struct_node.start_position().row + 1;
                             let end_line = struct_node.end_position().row + 1;
                             let doc = extract_doc_comment(struct_node, source, Language::Rust)?;
-                            let code = extract_code(struct_node, source)?;
+                            let code = if include_code {
+                                extract_code(struct_node, source)?
+                            } else {
+                                None
+                            };
 
                             structs.push(EnhancedStructInfo {
                                 name: name.to_string(),
@@ -192,7 +209,11 @@ fn extract_rust_enhanced(tree: &Tree, source: &str) -> Result<EnhancedFileShape,
 }
 
 /// Extract enhanced shape from Python source code
-fn extract_python_enhanced(tree: &Tree, source: &str) -> Result<EnhancedFileShape, io::Error> {
+fn extract_python_enhanced(
+    tree: &Tree,
+    source: &str,
+    include_code: bool,
+) -> Result<EnhancedFileShape, io::Error> {
     let mut functions = Vec::new();
     let mut classes = Vec::new();
     let mut imports = Vec::new();
@@ -230,7 +251,11 @@ fn extract_python_enhanced(tree: &Tree, source: &str) -> Result<EnhancedFileShap
                             let end_line = func_node.end_position().row + 1;
                             let signature = extract_signature(func_node, source)?;
                             let doc = extract_doc_comment(func_node, source, Language::Python)?;
-                            let code = extract_code(func_node, source)?;
+                            let code = if include_code {
+                                extract_code(func_node, source)?
+                            } else {
+                                None
+                            };
 
                             functions.push(EnhancedFunctionInfo {
                                 name: name.to_string(),
@@ -249,7 +274,11 @@ fn extract_python_enhanced(tree: &Tree, source: &str) -> Result<EnhancedFileShap
                             let line = class_node.start_position().row + 1;
                             let end_line = class_node.end_position().row + 1;
                             let doc = extract_doc_comment(class_node, source, Language::Python)?;
-                            let code = extract_code(class_node, source)?;
+                            let code = if include_code {
+                                extract_code(class_node, source)?
+                            } else {
+                                None
+                            };
 
                             classes.push(EnhancedClassInfo {
                                 name: name.to_string(),
@@ -289,6 +318,7 @@ fn extract_js_enhanced(
     tree: &Tree,
     source: &str,
     language: Language,
+    include_code: bool,
 ) -> Result<EnhancedFileShape, io::Error> {
     let mut functions = Vec::new();
     let mut classes = Vec::new();
@@ -351,7 +381,11 @@ fn extract_js_enhanced(
                                 let signature = extract_signature(func_node, source)?;
                                 let doc =
                                     extract_doc_comment(func_node, source, Language::JavaScript)?;
-                                let code = extract_code(func_node, source)?;
+                                let code = if include_code {
+                                    extract_code(func_node, source)?
+                                } else {
+                                    None
+                                };
 
                                 functions.push(EnhancedFunctionInfo {
                                     name: name.to_string(),
@@ -378,7 +412,11 @@ fn extract_js_enhanced(
                                     let end_line = node.end_position().row + 1;
                                     let signature = extract_signature(node, source)?;
                                     let doc = extract_doc_comment(node, source, language)?;
-                                    let code = extract_code(node, source)?;
+                                    let code = if include_code {
+                                        extract_code(node, source)?
+                                    } else {
+                                        None
+                                    };
 
                                     functions.push(EnhancedFunctionInfo {
                                         name: name.to_string(),
@@ -404,7 +442,11 @@ fn extract_js_enhanced(
                                 let end_line = class_node.end_position().row + 1;
                                 let doc =
                                     extract_doc_comment(class_node, source, Language::JavaScript)?;
-                                let code = extract_code(class_node, source)?;
+                                let code = if include_code {
+                                    extract_code(class_node, source)?
+                                } else {
+                                    None
+                                };
 
                                 classes.push(EnhancedClassInfo {
                                     name: name.to_string(),
@@ -429,7 +471,11 @@ fn extract_js_enhanced(
                                     let line = node.start_position().row + 1;
                                     let end_line = node.end_position().row + 1;
                                     let doc = extract_doc_comment(node, source, language)?;
-                                    let code = extract_code(node, source)?;
+                                    let code = if include_code {
+                                        extract_code(node, source)?
+                                    } else {
+                                        None
+                                    };
 
                                     classes.push(EnhancedClassInfo {
                                         name: name.to_string(),
@@ -1261,13 +1307,13 @@ mod tests {
     #[test]
     fn test_extract_rust_function_signature() {
         let source = r#"
-/// Adds two numbers
-pub fn add(a: i32, b: i32) -> i32 {
-    a + b
-}
-"#;
+ /// Adds two numbers
+ pub fn add(a: i32, b: i32) -> i32 {
+     a + b
+ }
+ "#;
         let tree = parse_code(source, Language::Rust).expect("Failed to parse");
-        let shape = extract_rust_enhanced(&tree, source).expect("Failed to extract shape");
+        let shape = extract_rust_enhanced(&tree, source, true).expect("Failed to extract shape");
 
         assert_eq!(shape.functions.len(), 1);
         let func = &shape.functions[0];
@@ -1281,11 +1327,11 @@ pub fn add(a: i32, b: i32) -> i32 {
     fn test_extract_python_function() {
         let source = r#"
 def greet(name):
-    """Greets a person"""
-    return f"Hello, {name}!"
+     """Greets a person"""
+     return f"Hello, {name}!"
 "#;
         let tree = parse_code(source, Language::Python).expect("Failed to parse");
-        let shape = extract_python_enhanced(&tree, source).expect("Failed to extract shape");
+        let shape = extract_python_enhanced(&tree, source, true).expect("Failed to extract shape");
 
         assert_eq!(shape.functions.len(), 1);
         let func = &shape.functions[0];
@@ -1296,14 +1342,14 @@ def greet(name):
     #[test]
     fn test_extract_js_class() {
         let source = r#"
-class Calculator {
-    add(a, b) {
-        return a + b;
-    }
-}
-"#;
+ class Calculator {
+     add(a, b) {
+         return a + b;
+     }
+ }
+ "#;
         let tree = parse_code(source, Language::JavaScript).expect("Failed to parse");
-        let shape = extract_js_enhanced(&tree, source, Language::JavaScript)
+        let shape = extract_js_enhanced(&tree, source, Language::JavaScript, true)
             .expect("Failed to extract shape");
 
         assert_eq!(shape.classes.len(), 1);
@@ -1315,13 +1361,13 @@ class Calculator {
     #[test]
     fn test_extract_imports() {
         let source = r#"
-use std::fmt;
-use std::io;
-
-fn main() {}
-"#;
+ use std::fmt;
+ use std::io;
+ 
+ fn main() {}
+ "#;
         let tree = parse_code(source, Language::Rust).expect("Failed to parse");
-        let shape = extract_rust_enhanced(&tree, source).expect("Failed to extract shape");
+        let shape = extract_rust_enhanced(&tree, source, true).expect("Failed to extract shape");
 
         assert_eq!(shape.imports.len(), 2);
         assert_eq!(shape.imports[0].text, "use std::fmt;");
