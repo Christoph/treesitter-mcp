@@ -20,7 +20,7 @@ fn default_true() -> bool {
 /// Parse a source file and return its structure (functions, classes, imports) with signatures and docs
 #[mcp_tool(
     name = "parse_file",
-    description = "Parse a single source file and return complete structure with FULL implementation details. Returns: function/class names, signatures, line ranges, doc comments, and complete code blocks. USE THIS WHEN: you need to read, understand, or modify a specific file's code. This is the primary tool for examining file contents before editing."
+    description = "Parse single file with FULL implementation details. Returns complete code for all functions/classes with names, signatures, line ranges, and doc comments. USE WHEN: ✅ Understanding implementation before editing ✅ File <500 lines needing complete context ✅ Modifying multiple functions in same file. DON'T USE: ❌ Only need signatures → use file_shape (10x cheaper) ❌ Only editing one function → use read_focused_code (3x cheaper) ❌ File >500 lines → use file_shape first. TOKEN COST: HIGH. OPTIMIZATION: Set include_code=false for 60-80% reduction."
 )]
 #[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
 pub struct ParseFileTool {
@@ -35,19 +35,9 @@ pub struct ParseFileTool {
 /// Read a file with focused code view: FULL code for the target symbol,
 /// signatures-only for everything else. Perfect for editing a specific function
 /// while maintaining context of the surrounding code.
-///
-/// Parameters:
-/// - file_path: Path to the source file
-/// - focus_symbol: Name of the function/class/struct to show full code for
-/// - context_radius (optional, default: 0): Include full code for N symbols before/after target
-///
-/// Returns: File shape with target symbol having full code, others having only signatures.
-///
-/// USE THIS WHEN: You need to edit or understand a specific function while seeing
-/// the structure of surrounding code without wasting tokens on irrelevant implementations.
 #[mcp_tool(
     name = "treesitter-mcp_read_focused_code",
-    description = "Read a file with focused code view: FULL code for the target symbol, signatures-only for everything else. Perfect for editing a specific function while maintaining context. USE THIS WHEN: You need to edit or understand a specific function while seeing the structure of surrounding code."
+    description = "Read file with FULL code for ONE symbol, signatures-only for everything else. Returns complete implementation of target function/class plus signatures of surrounding code. USE WHEN: ✅ Know exactly which function to edit ✅ Need surrounding context for dependencies ✅ File is large but only care about one function ✅ Want to minimize tokens while maintaining context. DON'T USE: ❌ Need multiple functions → use parse_file ❌ Don't know which function → use file_shape first. TOKEN COST: MEDIUM (~30% of parse_file). OPTIMIZATION: Keep context_radius=0 unless need adjacent functions. WORKFLOW: file_shape → read_focused_code"
 )]
 #[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
 pub struct ReadFocusedCodeTool {
@@ -65,7 +55,7 @@ pub struct ReadFocusedCodeTool {
 /// Extract the structure of a file (functions, classes, imports) without implementation details
 #[mcp_tool(
     name = "file_shape",
-    description = "Extract file structure as a skeleton WITHOUT implementation code. Returns: function/class signatures, imports, and dependencies only - no function bodies. For HTML/CSS: returns IDs, custom classes, theme variables. For templates in templates/ dir: use merge_templates=true to get merged content with extends/includes resolved. USE THIS WHEN: you need a quick overview of a file's API/interface, want to understand imports and exports, or are mapping dependencies. Faster and smaller output than parse_file."
+    description = "Extract file structure WITHOUT implementation code. Returns skeleton: function/class signatures, imports, dependencies only (NO function bodies). For HTML/CSS: returns IDs, classes, theme variables. USE WHEN: ✅ Quick overview of file's API/interface ✅ Deciding which function to focus on before read_focused_code ✅ Mapping dependencies (use include_deps=true) ✅ File >500 lines needing orientation. DON'T USE: ❌ Need implementation logic → use parse_file or read_focused_code ❌ Exploring multiple files → use code_map. TOKEN COST: LOW (10-20% of parse_file). OPTIMIZATION: Use this FIRST, then drill down. WORKFLOW: file_shape → read_focused_code → parse_file (if needed)"
 )]
 #[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
 pub struct FileShapeTool {
@@ -82,7 +72,7 @@ pub struct FileShapeTool {
 /// Generate a high-level code map of a directory with token budget awareness and detail levels
 #[mcp_tool(
     name = "code_map",
-    description = "Generate a hierarchical map of a DIRECTORY (not single file). Scans multiple files and returns structure overview. Detail levels: 'minimal' (names only), 'signatures' (names + signatures, DEFAULT), 'full' (everything). USE THIS WHEN: exploring unfamiliar codebases, finding where code lives, or getting project overview. Respects token budget to avoid context overflow."
+    description = "Generate hierarchical map of a DIRECTORY (not single file). Returns structure overview of multiple files with functions/classes/types. Detail levels: 'minimal' (names only), 'signatures' (DEFAULT, names + signatures), 'full' (includes code). USE WHEN: ✅ First time exploring unfamiliar codebase ✅ Finding where functionality lives across files ✅ Getting project structure overview ✅ Don't know which file to examine. DON'T USE: ❌ Know specific file → use file_shape or parse_file ❌ Need implementation details → use parse_file after identifying files. TOKEN COST: MEDIUM (scales with project size). OPTIMIZATION: Start with detail='minimal' for large projects, use pattern to filter. WORKFLOW: code_map → file_shape → parse_file/read_focused_code"
 )]
 #[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
 pub struct CodeMapTool {
@@ -102,7 +92,7 @@ pub struct CodeMapTool {
 /// Find all usages of a symbol with context and usage type classification
 #[mcp_tool(
     name = "find_usages",
-    description = "Find ALL usages of a symbol (function, variable, class, type) across files. Returns: file locations, surrounding code context, and usage type (definition, call, type_reference, import, reference). USE THIS WHEN: refactoring, checking impact of changes, finding where something is called/used, or tracing data flow. Essential before renaming or modifying shared code."
+    description = "Find ALL usages of a symbol (function, variable, class, type) across files. Semantic search, not text search. Returns file locations, code context, usage type (definition, call, type_reference, import, reference). USE WHEN: ✅ Refactoring: see all places that call a function ✅ Impact analysis: checking what breaks if you change signature ✅ Tracing data flow ✅ Before renaming/modifying shared code. DON'T USE: ❌ Need structural changes only → use parse_diff ❌ Want risk assessment → use affected_by_diff ❌ Symbol used >50 places → use affected_by_diff or set max_context_lines=50. TOKEN COST: MEDIUM-HIGH (scales with usage count × context_lines). OPTIMIZATION: Set max_context_lines=50 for frequent symbols, context_lines=1 for locations only. WORKFLOW: find_usages (before changes) → make changes → affected_by_diff (verify)"
 )]
 #[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
 pub struct FindUsagesTool {
@@ -122,7 +112,7 @@ pub struct FindUsagesTool {
 /// Execute a custom tree-sitter query pattern on a source file with code context
 #[mcp_tool(
     name = "query_pattern",
-    description = "Execute a custom tree-sitter S-expression query for advanced AST matching. USE THIS WHEN: you need precise pattern matching that other tools don't cover, such as finding all 'if' statements, all async functions, or complex structural patterns. Requires knowledge of tree-sitter query syntax. For most tasks, prefer find_usages or parse_file instead."
+    description = "Execute custom tree-sitter S-expression query for advanced AST pattern matching. Returns matches with code context for complex structural patterns. USE WHEN: ✅ Finding all instances of specific syntax pattern (e.g., all if statements) ✅ Complex structural queries (e.g., all async functions with try-catch) ✅ Language-specific patterns find_usages can't handle ✅ You know tree-sitter query syntax. DON'T USE: ❌ Finding function/variable usages → use find_usages (simpler, cross-language) ❌ Don't know tree-sitter syntax → use find_usages or parse_file ❌ Simple symbol search → use find_usages. TOKEN COST: MEDIUM (depends on matches). COMPLEXITY: HIGH - requires tree-sitter query knowledge. RECOMMENDATION: Prefer find_usages for 90% of use cases."
 )]
 #[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
 pub struct QueryPatternTool {
@@ -138,7 +128,7 @@ pub struct QueryPatternTool {
 /// Get the enclosing context (function, class, module) at a specific position
 #[mcp_tool(
     name = "get_context",
-    description = "Get the enclosing scope hierarchy at a specific file:line:column position. Returns: nested contexts from innermost to outermost (e.g., 'this line is inside function X, which is inside class Y, which is in module Z'). USE THIS WHEN: you have a line number from an error, stack trace, or user reference and need to understand what scope/function it belongs to."
+    description = "Get enclosing scope hierarchy at specific file:line:column position. Returns nested contexts from innermost to outermost (e.g., 'inside function X, inside class Y, inside module Z'). USE WHEN: ✅ Have line number from error/stack trace/user reference ✅ Need to know 'what function is this line in?' ✅ Understanding scope hierarchy for debugging ✅ Navigating to specific location in code. DON'T USE: ❌ Need actual code → use read_focused_code after getting function name ❌ Need detailed AST info → use get_node_at_position ❌ Know function name already → use read_focused_code directly. TOKEN COST: LOW (just scope chain). WORKFLOW: get_context (find function) → read_focused_code (see implementation)"
 )]
 #[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
 pub struct GetContextTool {
@@ -154,7 +144,7 @@ pub struct GetContextTool {
 /// Get the AST node at a specific position with ancestor chain
 #[mcp_tool(
     name = "get_node_at_position",
-    description = "Get the precise AST node at a file:line:column position with its parent chain. Returns: node type, text, range, and N ancestor nodes. USE THIS WHEN: you need exact syntactic information at a cursor position - for syntax-aware edits, understanding what token/expression is at a location, or debugging parse issues. More granular than get_context."
+    description = "Get precise AST node at file:line:column position with parent chain. Returns node type, text, range, N ancestor nodes. USE WHEN: ✅ Need exact syntactic information at cursor position ✅ Syntax-aware edits (e.g., wrap this expression in function call) ✅ Understanding what token/expression is at location ✅ Debugging parse issues or AST structure. DON'T USE: ❌ Just need function name → use get_context (simpler) ❌ Need full function code → use read_focused_code ❌ Not doing syntax-aware operations → use get_context. TOKEN COST: LOW (just node info). COMPLEXITY: MEDIUM - requires understanding AST concepts. USE CASE: Advanced/syntax-aware operations only."
 )]
 #[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
 pub struct GetNodeAtPositionTool {
@@ -172,7 +162,7 @@ pub struct GetNodeAtPositionTool {
 /// Analyze structural changes in a file compared to a git revision
 #[mcp_tool(
     name = "parse_diff",
-    description = "Analyze structural changes (functions, classes added/removed/modified) vs git revision. Returns symbol-level diff, not line-by-line. Use to verify changes or check if cosmetic only. Smaller than re-reading file."
+    description = "Analyze structural changes vs git revision. Returns symbol-level diff (functions/classes added/removed/modified), not line-level. USE WHEN: ✅ Verifying what you changed at structural level ✅ Checking if changes are cosmetic (formatting) or substantive ✅ Understanding changes without re-reading entire file ✅ Generating change summaries. DON'T USE: ❌ Need to see what might break → use affected_by_diff ❌ Haven't made changes yet → use parse_file ❌ Need line-by-line diff → use git diff. TOKEN COST: LOW-MEDIUM (much smaller than re-reading file). WORKFLOW: After changes: parse_diff (verify) → affected_by_diff (check impact)"
 )]
 #[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
 pub struct ParseDiffTool {
@@ -187,7 +177,7 @@ pub struct ParseDiffTool {
 /// Find usages that might be affected by changes in a file
 #[mcp_tool(
     name = "affected_by_diff",
-    description = "Find all usages across the codebase that might be AFFECTED by changes in a file. Combines parse_diff with find_usages to show the blast radius of your changes. Returns risk levels (high/medium/low) based on change type and usage context. USE THIS WHEN: you've modified a function signature and want to know what might break, before running tests to anticipate failures, or during refactoring to understand impact."
+    description = "Find usages AFFECTED by your changes. Combines parse_diff + find_usages to show blast radius with risk levels (HIGH/MEDIUM/LOW) based on change type. USE WHEN: ✅ After modifying function signatures - what might break? ✅ Before running tests - anticipate failures ✅ During refactoring - understand impact radius ✅ Risk assessment for code changes. DON'T USE: ❌ Haven't made changes yet → use find_usages first ❌ Just want to see what changed → use parse_diff ❌ Changes are purely internal (no signature changes) → parse_diff is enough. TOKEN COST: MEDIUM-HIGH (combines parse_diff + find_usages). OPTIMIZATION: Use scope parameter to limit search area. WORKFLOW: parse_diff (see changes) → affected_by_diff (assess impact) → fix issues"
 )]
 #[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
 pub struct AffectedByDiffTool {
