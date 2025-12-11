@@ -7,7 +7,7 @@ use serde_json::json;
 // ============================================================================
 
 #[test]
-fn test_find_usages_rust_function_definition() {
+fn test_find_usages_locates_function_definition() {
     // Given: Rust fixture with function
     let file_path = common::fixture_path("rust", "src/calculator.rs");
     let arguments = json!({
@@ -18,7 +18,7 @@ fn test_find_usages_rust_function_definition() {
     // When: find_usages for function name
     let result = treesitter_mcp::analysis::find_usages::execute(&arguments);
 
-    // Then: Finds definition with usage_type="definition"
+    // Then: Locates definition with usage_type="definition"
     assert!(result.is_ok());
     let call_result = result.unwrap();
     let text = common::get_result_text(&call_result);
@@ -36,7 +36,7 @@ fn test_find_usages_rust_function_definition() {
 }
 
 #[test]
-fn test_find_usages_rust_function_calls() {
+fn test_find_usages_locates_all_call_sites() {
     // Given: Rust fixture with function calls
     let dir_path = common::fixture_dir("rust");
     let arguments = json!({
@@ -47,7 +47,7 @@ fn test_find_usages_rust_function_calls() {
     // When: find_usages for function name
     let result = treesitter_mcp::analysis::find_usages::execute(&arguments);
 
-    // Then: Finds all calls with usage_type="call"
+    // Then: Locates all calls with usage_type="call"
     assert!(result.is_ok());
     let call_result = result.unwrap();
     let text = common::get_result_text(&call_result);
@@ -60,7 +60,7 @@ fn test_find_usages_rust_function_calls() {
 }
 
 #[test]
-fn test_find_usages_rust_cross_file() {
+fn test_find_usages_searches_across_multiple_files() {
     // Given: Rust fixture with cross-file references
     let dir_path = common::fixture_dir("rust");
     let arguments = json!({
@@ -71,7 +71,7 @@ fn test_find_usages_rust_cross_file() {
     // When: find_usages on directory
     let result = treesitter_mcp::analysis::find_usages::execute(&arguments);
 
-    // Then: Finds usages in all files
+    // Then: Searches and finds usages in all files
     assert!(result.is_ok());
     let call_result = result.unwrap();
     let text = common::get_result_text(&call_result);
@@ -91,7 +91,7 @@ fn test_find_usages_rust_cross_file() {
 }
 
 #[test]
-fn test_find_usages_rust_with_context() {
+fn test_find_usages_includes_surrounding_context_lines() {
     // Given: Rust fixture
     let file_path = common::fixture_path("rust", "src/calculator.rs");
     let arguments = json!({
@@ -103,7 +103,7 @@ fn test_find_usages_rust_with_context() {
     // When: find_usages with context_lines=5
     let result = treesitter_mcp::analysis::find_usages::execute(&arguments);
 
-    // Then: Returns 5 lines of context around each usage
+    // Then: Includes 5 lines of context around each usage
     assert!(result.is_ok());
     let call_result = result.unwrap();
     let text = common::get_result_text(&call_result);
@@ -131,7 +131,7 @@ fn test_find_usages_rust_with_context() {
 // ============================================================================
 
 #[test]
-fn test_find_usages_python_method() {
+fn test_find_usages_handles_class_method_references() {
     // Given: Python fixture with class method
     let file_path = common::fixture_path("python", "calculator.py");
     let arguments = json!({
@@ -142,7 +142,7 @@ fn test_find_usages_python_method() {
     // When: find_usages for method name
     let result = treesitter_mcp::analysis::find_usages::execute(&arguments);
 
-    // Then: Finds definition and calls
+    // Then: Handles and finds definition and calls
     assert!(result.is_ok());
     let call_result = result.unwrap();
     let text = common::get_result_text(&call_result);
@@ -157,7 +157,7 @@ fn test_find_usages_python_method() {
 // ============================================================================
 
 #[test]
-fn test_find_usages_javascript_function() {
+fn test_find_usages_handles_javascript_function_calls() {
     // Given: JavaScript fixture
     let file_path = common::fixture_path("javascript", "calculator.js");
     let arguments = json!({
@@ -168,7 +168,7 @@ fn test_find_usages_javascript_function() {
     // When: find_usages for function name
     let result = treesitter_mcp::analysis::find_usages::execute(&arguments);
 
-    // Then: Finds all usages
+    // Then: Handles and finds all usages
     assert!(result.is_ok());
     let call_result = result.unwrap();
     let text = common::get_result_text(&call_result);
@@ -183,7 +183,7 @@ fn test_find_usages_javascript_function() {
 // ============================================================================
 
 #[test]
-fn test_find_usages_typescript_interface() {
+fn test_find_usages_handles_typescript_type_references() {
     // Given: TypeScript fixture with interface
     let file_path = common::fixture_path("typescript", "types/models.ts");
     let arguments = json!({
@@ -194,7 +194,7 @@ fn test_find_usages_typescript_interface() {
     // When: find_usages for interface name
     let result = treesitter_mcp::analysis::find_usages::execute(&arguments);
 
-    // Then: Finds definition and type references
+    // Then: Handles and finds definition and type references
     assert!(result.is_ok());
     let call_result = result.unwrap();
     let text = common::get_result_text(&call_result);

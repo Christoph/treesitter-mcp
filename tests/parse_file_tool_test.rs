@@ -7,7 +7,7 @@ mod common;
 // ============================================================================
 
 #[test]
-fn test_parse_file_rust_functions() {
+fn test_parse_file_extracts_function_signatures_and_code() {
     // Given: Rust fixture with functions
     let file_path = common::fixture_path("rust", "src/calculator.rs");
     let arguments = json!({
@@ -49,7 +49,7 @@ fn test_parse_file_rust_functions() {
 }
 
 #[test]
-fn test_parse_file_rust_structs() {
+fn test_parse_file_extracts_struct_definitions_and_fields() {
     // Given: Rust fixture with structs
     let file_path = common::fixture_path("rust", "src/models/mod.rs");
     let arguments = json!({
@@ -124,7 +124,7 @@ fn test_parse_file_rust_docs() {
 }
 
 #[test]
-fn test_parse_file_rust_imports() {
+fn test_parse_file_extracts_import_statements() {
     // Given: Rust fixture with imports
     let file_path = common::fixture_path("rust", "src/lib.rs");
     let arguments = json!({
@@ -156,7 +156,7 @@ fn test_parse_file_rust_imports() {
 // ============================================================================
 
 #[test]
-fn test_parse_file_python_functions() {
+fn test_parse_file_handles_python_function_definitions() {
     // Given: Python fixture with functions
     let file_path = common::fixture_path("python", "calculator.py");
     let arguments = json!({
@@ -198,7 +198,7 @@ fn test_parse_file_python_functions() {
 }
 
 #[test]
-fn test_parse_file_python_classes() {
+fn test_parse_file_handles_python_class_definitions() {
     // Given: Python fixture with classes
     let file_path = common::fixture_path("python", "calculator.py");
     let arguments = json!({
@@ -242,7 +242,7 @@ fn test_parse_file_python_classes() {
 // ============================================================================
 
 #[test]
-fn test_parse_file_javascript_functions() {
+fn test_parse_file_handles_javascript_function_declarations() {
     // Given: JavaScript fixture with functions
     let file_path = common::fixture_path("javascript", "calculator.js");
     let arguments = json!({
@@ -338,7 +338,7 @@ fn test_parse_file_typescript_with_types() {
 }
 
 #[test]
-fn test_parse_file_typescript_interfaces() {
+fn test_parse_file_handles_typescript_interface_definitions() {
     // Given: TypeScript fixture with interfaces
     let file_path = common::fixture_path("typescript", "types/models.ts");
     let arguments = json!({
