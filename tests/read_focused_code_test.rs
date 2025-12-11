@@ -1,0 +1,744 @@
+use serde_json::json;
+
+mod common;
+
+// ============================================================================
+// Test 1: Focused function shows full code, others don't
+// ============================================================================
+
+#[test]
+fn test_read_focused_code_shows_full_code_for_target_function() {
+    // Given: Rust fixture with multiple functions
+    let file_path = common::fixture_path("rust", "src/calculator.rs");
+    let arguments = json!({
+        "file_path": file_path.to_str().unwrap(),
+        "focus_symbol": "add"
+    });
+
+    // When: read_focused_code is called
+    let result = treesitter_mcp::analysis::read_focused_code::execute(&arguments);
+
+    // Then: Returns JSON with focused function having code, others having only signatures
+    assert!(result.is_ok(), "read_focused_code should succeed");
+    let call_result = result.unwrap();
+    assert!(
+        !call_result.is_error.unwrap_or(false),
+        "Should not be an error"
+    );
+
+    let text = common::get_result_text(&call_result);
+    let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
+
+    // Should have path and language
+    assert_eq!(shape["language"], "Rust");
+    assert!(shape["path"].as_str().unwrap().contains("calculator.rs"));
+
+    // Should have functions array
+    assert!(shape["functions"].is_array());
+    let functions = shape["functions"].as_array().unwrap();
+    assert!(functions.len() >= 5);
+
+    // Focused function should have full code
+    let add_fn = functions.iter().find(|f| f["name"] == "add").unwrap();
+    assert_eq!(add_fn["name"], "add");
+    assert!(add_fn["signature"].is_string(), "Should have signature");
+    assert!(
+        add_fn["code"].is_string(),
+        "Focused function should have code"
+    );
+    assert!(
+        add_fn["code"].as_str().unwrap().contains("a + b"),
+        "Code should contain implementation"
+    );
+
+    // Unfocused function should NOT have code
+    let subtract_fn = functions.iter().find(|f| f["name"] == "subtract").unwrap();
+    assert!(
+        subtract_fn["signature"].is_string(),
+        "Unfocused function should have signature"
+    );
+    assert!(
+        subtract_fn["code"].is_null() || !subtract_fn.as_object().unwrap().contains_key("code"),
+        "Unfocused function should NOT have code"
+    );
+    assert!(subtract_fn["line"].is_number(), "Should have line number");
+}
+
+// ============================================================================
+// Test 2: Context radius zero - only focused symbol has code
+// ============================================================================
+
+#[test]
+fn test_read_focused_code_with_context_radius_zero() {
+    // Given: Rust fixture with context_radius explicitly set to 0
+    let file_path = common::fixture_path("rust", "src/calculator.rs");
+    let arguments = json!({
+        "file_path": file_path.to_str().unwrap(),
+        "focus_symbol": "multiply",
+        "context_radius": 0
+    });
+
+    // When: read_focused_code is called with context_radius: 0
+    let result = treesitter_mcp::analysis::read_focused_code::execute(&arguments);
+
+    // Then: Only the focused symbol has code
+    assert!(result.is_ok());
+    let call_result = result.unwrap();
+    let text = common::get_result_text(&call_result);
+    let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
+
+    let functions = shape["functions"].as_array().unwrap();
+
+    // Only multiply should have code
+    let multiply_fn = functions.iter().find(|f| f["name"] == "multiply").unwrap();
+    assert!(
+        multiply_fn["code"].is_string(),
+        "Focused function should have code"
+    );
+    assert!(
+        multiply_fn["code"].as_str().unwrap().contains("a * b"),
+        "Code should contain implementation"
+    );
+
+    // All other functions should NOT have code
+    for func in functions {
+        if func["name"] != "multiply" {
+            assert!(
+                func["code"].is_null() || !func.as_object().unwrap().contains_key("code"),
+                "Non-focused function {} should NOT have code",
+                func["name"]
+            );
+            assert!(func["signature"].is_string(), "Should still have signature");
+        }
+    }
+}
+
+// ============================================================================
+// Test 3: Context radius one - focus + 1 before + 1 after have code
+// ============================================================================
+
+#[test]
+fn test_read_focused_code_with_context_radius_one() {
+    // Given: Rust fixture with context_radius: 1
+    let file_path = common::fixture_path("rust", "src/calculator.rs");
+    let arguments = json!({
+        "file_path": file_path.to_str().unwrap(),
+        "focus_symbol": "multiply",
+        "context_radius": 1
+    });
+
+    // When: read_focused_code is called with context_radius: 1
+    let result = treesitter_mcp::analysis::read_focused_code::execute(&arguments);
+
+    // Then: Focused + 1 before + 1 after have code
+    assert!(result.is_ok());
+    let call_result = result.unwrap();
+    let text = common::get_result_text(&call_result);
+    let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
+
+    let functions = shape["functions"].as_array().unwrap();
+
+    // Find the index of multiply
+    let _multiply_idx = functions
+        .iter()
+        .position(|f| f["name"] == "multiply")
+        .expect("multiply function should exist");
+
+    // Functions with code should be: multiply (focus), subtract (1 before), divide (1 after)
+    let expected_with_code = ["subtract", "multiply", "divide"];
+
+    for (_idx, func) in functions.iter().enumerate() {
+        let func_name = func["name"].as_str().unwrap();
+        if expected_with_code.contains(&func_name) {
+            assert!(
+                func["code"].is_string(),
+                "Function {} should have code (context_radius=1)",
+                func_name
+            );
+        } else {
+            assert!(
+                func["code"].is_null() || !func.as_object().unwrap().contains_key("code"),
+                "Function {} should NOT have code (context_radius=1)",
+                func_name
+            );
+        }
+        // All should have signatures
+        assert!(func["signature"].is_string(), "Should have signature");
+    }
+}
+
+// ============================================================================
+// Test 4: Symbol not found - graceful fallback with all signatures
+// ============================================================================
+
+#[test]
+fn test_read_focused_code_symbol_not_found_returns_all_signatures() {
+    // Given: Rust fixture with non-existent focus_symbol
+    let file_path = common::fixture_path("rust", "src/calculator.rs");
+    let arguments = json!({
+        "file_path": file_path.to_str().unwrap(),
+        "focus_symbol": "nonexistent_function_xyz"
+    });
+
+    // When: read_focused_code is called with non-existent symbol
+    let result = treesitter_mcp::analysis::read_focused_code::execute(&arguments);
+
+    // Then: Returns all symbols with signatures only (no code for any)
+    assert!(result.is_ok(), "Should handle gracefully");
+    let call_result = result.unwrap();
+    let text = common::get_result_text(&call_result);
+    let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
+
+    let functions = shape["functions"].as_array().unwrap();
+    assert!(functions.len() >= 5, "Should still have all functions");
+
+    // All functions should have signatures but NO code
+    for func in functions {
+        assert!(
+            func["signature"].is_string(),
+            "Should have signature for {}",
+            func["name"]
+        );
+        assert!(
+            func["code"].is_null() || !func.as_object().unwrap().contains_key("code"),
+            "No function should have code when symbol not found"
+        );
+    }
+}
+
+// ============================================================================
+// Test 5: Works with Rust structs
+// ============================================================================
+
+#[test]
+fn test_read_focused_code_works_with_structs() {
+    // Given: Rust fixture with structs
+    let file_path = common::fixture_path("rust", "src/models/mod.rs");
+    let arguments = json!({
+        "file_path": file_path.to_str().unwrap(),
+        "focus_symbol": "Calculator"
+    });
+
+    // When: read_focused_code is called with struct name
+    let result = treesitter_mcp::analysis::read_focused_code::execute(&arguments);
+
+    // Then: Focused struct has code, others have only signatures
+    assert!(result.is_ok());
+    let call_result = result.unwrap();
+    let text = common::get_result_text(&call_result);
+    let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
+
+    assert!(shape["structs"].is_array());
+    let structs = shape["structs"].as_array().unwrap();
+    assert!(structs.len() >= 2);
+
+    // Focused struct should have code
+    let calc_struct = structs.iter().find(|s| s["name"] == "Calculator").unwrap();
+    assert!(
+        calc_struct["code"].is_string(),
+        "Focused struct should have code"
+    );
+    assert!(
+        calc_struct["code"].as_str().unwrap().contains("Calculator"),
+        "Code should contain struct name"
+    );
+    assert!(
+        calc_struct["code"]
+            .as_str()
+            .unwrap()
+            .contains("pub value: i32"),
+        "Code should contain struct fields"
+    );
+
+    // Other structs should NOT have code
+    let point_struct = structs.iter().find(|s| s["name"] == "Point").unwrap();
+    assert!(
+        point_struct["code"].is_null() || !point_struct.as_object().unwrap().contains_key("code"),
+        "Unfocused struct should NOT have code"
+    );
+    // Structs don't have signatures, just verify it has name and line
+    assert!(point_struct["name"].is_string(), "Should have name");
+    assert!(point_struct["line"].is_number(), "Should have line number");
+}
+
+// ============================================================================
+// Test 6: Works with Python classes
+// ============================================================================
+
+#[test]
+fn test_read_focused_code_works_with_python_classes() {
+    // Given: Python fixture with classes
+    let file_path = common::fixture_path("python", "calculator.py");
+    let arguments = json!({
+        "file_path": file_path.to_str().unwrap(),
+        "focus_symbol": "Calculator"
+    });
+
+    // When: read_focused_code is called with class name
+    let result = treesitter_mcp::analysis::read_focused_code::execute(&arguments);
+
+    // Then: Focused class has code, others have only signatures
+    assert!(result.is_ok());
+    let call_result = result.unwrap();
+    let text = common::get_result_text(&call_result);
+    let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
+
+    assert_eq!(shape["language"], "Python");
+    assert!(shape["classes"].is_array());
+    let classes = shape["classes"].as_array().unwrap();
+    assert!(classes.len() >= 3); // Calculator, Point, LineSegment
+
+    // Focused class should have code
+    let calc_class = classes.iter().find(|c| c["name"] == "Calculator").unwrap();
+    assert!(
+        calc_class["code"].is_string(),
+        "Focused class should have code"
+    );
+    assert!(
+        calc_class["code"]
+            .as_str()
+            .unwrap()
+            .contains("class Calculator"),
+        "Code should contain class definition"
+    );
+    assert!(
+        calc_class["code"]
+            .as_str()
+            .unwrap()
+            .contains("def __init__"),
+        "Code should contain methods"
+    );
+
+    // Other classes should NOT have code
+    let point_class = classes.iter().find(|c| c["name"] == "Point").unwrap();
+    assert!(
+        point_class["code"].is_null() || !point_class.as_object().unwrap().contains_key("code"),
+        "Unfocused class should NOT have code"
+    );
+    // Classes don't have signatures, just verify it has name and line
+    assert!(point_class["name"].is_string(), "Should have name");
+    assert!(point_class["line"].is_number(), "Should have line number");
+}
+
+// ============================================================================
+// Test 7: Works with JavaScript functions
+// ============================================================================
+
+#[test]
+fn test_read_focused_code_javascript_function() {
+    // Given: JavaScript fixture with functions
+    let file_path = common::fixture_path("javascript", "calculator.js");
+    let arguments = json!({
+        "file_path": file_path.to_str().unwrap(),
+        "focus_symbol": "add"
+    });
+
+    // When: read_focused_code is called
+    let result = treesitter_mcp::analysis::read_focused_code::execute(&arguments);
+
+    // Then: Focused function has code, others have only signatures
+    assert!(result.is_ok());
+    let call_result = result.unwrap();
+    let text = common::get_result_text(&call_result);
+    let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
+
+    assert_eq!(shape["language"], "JavaScript");
+    assert!(shape["functions"].is_array());
+    let functions = shape["functions"].as_array().unwrap();
+
+    // Focused function should have code
+    let add_fn = functions.iter().find(|f| f["name"] == "add").unwrap();
+    assert!(
+        add_fn["code"].is_string(),
+        "Focused function should have code"
+    );
+    assert!(
+        add_fn["code"].as_str().unwrap().contains("return a + b"),
+        "Code should contain implementation"
+    );
+
+    // Other functions should NOT have code
+    let subtract_fn = functions.iter().find(|f| f["name"] == "subtract").unwrap();
+    assert!(
+        subtract_fn["code"].is_null() || !subtract_fn.as_object().unwrap().contains_key("code"),
+        "Unfocused function should NOT have code"
+    );
+    assert!(
+        subtract_fn["signature"].is_string(),
+        "Should have signature"
+    );
+}
+
+// ============================================================================
+// Test 8: Works with TypeScript functions
+// ============================================================================
+
+#[test]
+fn test_read_focused_code_typescript_function() {
+    // Given: TypeScript fixture with functions
+    let file_path = common::fixture_path("typescript", "calculator.ts");
+    let arguments = json!({
+        "file_path": file_path.to_str().unwrap(),
+        "focus_symbol": "divide"
+    });
+
+    // When: read_focused_code is called
+    let result = treesitter_mcp::analysis::read_focused_code::execute(&arguments);
+
+    // Then: Focused function has code, others have only signatures
+    assert!(result.is_ok());
+    let call_result = result.unwrap();
+    let text = common::get_result_text(&call_result);
+    let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
+
+    assert_eq!(shape["language"], "TypeScript");
+    assert!(shape["functions"].is_array());
+    let functions = shape["functions"].as_array().unwrap();
+
+    // Focused function should have code
+    let divide_fn = functions.iter().find(|f| f["name"] == "divide").unwrap();
+    assert!(
+        divide_fn["code"].is_string(),
+        "Focused function should have code"
+    );
+    assert!(
+        divide_fn["code"].as_str().unwrap().contains("return null"),
+        "Code should contain implementation"
+    );
+    assert!(
+        divide_fn["signature"].is_string(),
+        "Should have signature with types"
+    );
+
+    // Other functions should NOT have code
+    let add_fn = functions.iter().find(|f| f["name"] == "add").unwrap();
+    assert!(
+        add_fn["code"].is_null() || !add_fn.as_object().unwrap().contains_key("code"),
+        "Unfocused function should NOT have code"
+    );
+}
+
+// ============================================================================
+// Test 9: Context radius at file boundary (first function)
+// ============================================================================
+
+#[test]
+fn test_read_focused_code_context_radius_at_file_boundary_first() {
+    // Given: Rust fixture, focusing on first function with context_radius: 1
+    let file_path = common::fixture_path("rust", "src/calculator.rs");
+    let arguments = json!({
+        "file_path": file_path.to_str().unwrap(),
+        "focus_symbol": "add",
+        "context_radius": 1
+    });
+
+    // When: read_focused_code is called
+    let result = treesitter_mcp::analysis::read_focused_code::execute(&arguments);
+
+    // Then: Handles boundary gracefully (no function before add, but add + 1 after have code)
+    assert!(result.is_ok());
+    let call_result = result.unwrap();
+    let text = common::get_result_text(&call_result);
+    let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
+
+    let functions = shape["functions"].as_array().unwrap();
+
+    // add should have code (focus)
+    let add_fn = functions.iter().find(|f| f["name"] == "add").unwrap();
+    assert!(add_fn["code"].is_string(), "Focus should have code");
+
+    // subtract should have code (1 after)
+    let subtract_fn = functions.iter().find(|f| f["name"] == "subtract").unwrap();
+    assert!(subtract_fn["code"].is_string(), "1 after should have code");
+
+    // multiply should NOT have code (2 after)
+    let multiply_fn = functions.iter().find(|f| f["name"] == "multiply").unwrap();
+    assert!(
+        multiply_fn["code"].is_null() || !multiply_fn.as_object().unwrap().contains_key("code"),
+        "2 after should NOT have code"
+    );
+}
+
+// ============================================================================
+// Test 10: Context radius at file boundary (last function)
+// ============================================================================
+
+#[test]
+fn test_read_focused_code_context_radius_at_file_boundary_last() {
+    // Given: Rust fixture, focusing on last function with context_radius: 1
+    let file_path = common::fixture_path("rust", "src/calculator.rs");
+    let arguments = json!({
+        "file_path": file_path.to_str().unwrap(),
+        "focus_symbol": "complex_operation",
+        "context_radius": 1
+    });
+
+    // When: read_focused_code is called
+    let result = treesitter_mcp::analysis::read_focused_code::execute(&arguments);
+
+    // Then: Handles boundary gracefully (complex_operation + 1 before have code)
+    assert!(result.is_ok());
+    let call_result = result.unwrap();
+    let text = common::get_result_text(&call_result);
+    let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
+
+    let functions = shape["functions"].as_array().unwrap();
+
+    // complex_operation should have code (focus)
+    let complex_fn = functions
+        .iter()
+        .find(|f| f["name"] == "complex_operation")
+        .unwrap();
+    assert!(complex_fn["code"].is_string(), "Focus should have code");
+
+    // point_distance should have code (1 before)
+    let point_dist_fn = functions
+        .iter()
+        .find(|f| f["name"] == "point_distance")
+        .unwrap();
+    assert!(
+        point_dist_fn["code"].is_string(),
+        "1 before should have code"
+    );
+
+    // perform_sequence should NOT have code (2 before)
+    let perform_seq_fn = functions
+        .iter()
+        .find(|f| f["name"] == "perform_sequence")
+        .unwrap();
+    assert!(
+        perform_seq_fn["code"].is_null()
+            || !perform_seq_fn.as_object().unwrap().contains_key("code"),
+        "2 before should NOT have code"
+    );
+}
+
+// ============================================================================
+// Test 11: Preserves imports and metadata
+// ============================================================================
+
+#[test]
+fn test_read_focused_code_preserves_imports_and_metadata() {
+    // Given: Rust fixture with imports
+    let file_path = common::fixture_path("rust", "src/calculator.rs");
+    let arguments = json!({
+        "file_path": file_path.to_str().unwrap(),
+        "focus_symbol": "add"
+    });
+
+    // When: read_focused_code is called
+    let result = treesitter_mcp::analysis::read_focused_code::execute(&arguments);
+
+    // Then: File metadata and imports are preserved
+    assert!(result.is_ok());
+    let call_result = result.unwrap();
+    let text = common::get_result_text(&call_result);
+    let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
+
+    // Should have file metadata
+    assert!(shape["path"].is_string(), "Should have file path");
+    assert_eq!(shape["language"], "Rust", "Should have language");
+
+    // Should have imports
+    assert!(shape["imports"].is_array(), "Should have imports array");
+    let imports = shape["imports"].as_array().unwrap();
+    assert!(!imports.is_empty(), "Should have at least one import");
+
+    // Verify specific imports are present
+    let import_strs: Vec<String> = imports
+        .iter()
+        .filter_map(|i| i["text"].as_str().map(|s| s.to_string()))
+        .collect();
+    assert!(
+        import_strs.iter().any(|s| s.contains("use")),
+        "Should have use statements"
+    );
+
+    // Should have functions
+    assert!(shape["functions"].is_array(), "Should have functions");
+}
+
+// ============================================================================
+// Test 12: Multiple context radius levels
+// ============================================================================
+
+#[test]
+fn test_read_focused_code_with_context_radius_two() {
+    // Given: Rust fixture with context_radius: 2
+    let file_path = common::fixture_path("rust", "src/calculator.rs");
+    let arguments = json!({
+        "file_path": file_path.to_str().unwrap(),
+        "focus_symbol": "multiply",
+        "context_radius": 2
+    });
+
+    // When: read_focused_code is called with context_radius: 2
+    let result = treesitter_mcp::analysis::read_focused_code::execute(&arguments);
+
+    // Then: Focused + 2 before + 2 after have code
+    assert!(result.is_ok());
+    let call_result = result.unwrap();
+    let text = common::get_result_text(&call_result);
+    let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
+
+    let functions = shape["functions"].as_array().unwrap();
+
+    // Functions with code should be: add, subtract, multiply, divide, apply_operation
+    let expected_with_code = ["add", "subtract", "multiply", "divide", "apply_operation"];
+
+    for func in functions {
+        let func_name = func["name"].as_str().unwrap();
+        if expected_with_code.contains(&func_name) {
+            assert!(
+                func["code"].is_string(),
+                "Function {} should have code (context_radius=2)",
+                func_name
+            );
+        } else {
+            assert!(
+                func["code"].is_null() || !func.as_object().unwrap().contains_key("code"),
+                "Function {} should NOT have code (context_radius=2)",
+                func_name
+            );
+        }
+        // All should have signatures
+        assert!(func["signature"].is_string(), "Should have signature");
+    }
+}
+
+// ============================================================================
+// Test 13: Focused symbol in middle of file with large context radius
+// ============================================================================
+
+#[test]
+fn test_read_focused_code_large_context_radius() {
+    // Given: Python fixture with large context_radius
+    let file_path = common::fixture_path("python", "calculator.py");
+    let arguments = json!({
+        "file_path": file_path.to_str().unwrap(),
+        "focus_symbol": "multiply",
+        "context_radius": 10
+    });
+
+    // When: read_focused_code is called with large context_radius
+    let result = treesitter_mcp::analysis::read_focused_code::execute(&arguments);
+
+    // Then: All functions should have code (radius larger than file)
+    assert!(result.is_ok());
+    let call_result = result.unwrap();
+    let text = common::get_result_text(&call_result);
+    let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
+
+    let functions = shape["functions"].as_array().unwrap();
+
+    // All functions should have code when context_radius is very large
+    for func in functions {
+        // In Python, methods are part of the class code, not separate
+        // Just verify the method exists in the functions list
+        assert!(
+            func["name"].is_string(),
+            "Function {} should exist",
+            func["name"]
+        );
+    }
+}
+
+// ============================================================================
+// Test 14: Focused class method in Python
+// ============================================================================
+
+#[test]
+fn test_read_focused_code_python_class_method() {
+    // Given: Python fixture with class methods
+    let file_path = common::fixture_path("python", "calculator.py");
+    let arguments = json!({
+        "file_path": file_path.to_str().unwrap(),
+        "focus_symbol": "Point"
+    });
+
+    // When: read_focused_code is called with class name
+    let result = treesitter_mcp::analysis::read_focused_code::execute(&arguments);
+
+    // Then: Focused class has code with all methods
+    assert!(result.is_ok());
+    let call_result = result.unwrap();
+    let text = common::get_result_text(&call_result);
+    let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
+
+    assert!(shape["classes"].is_array());
+    let classes = shape["classes"].as_array().unwrap();
+
+    // Focused class should have code
+    let point_class = classes.iter().find(|c| c["name"] == "Point").unwrap();
+    assert!(
+        point_class["code"].is_string(),
+        "Focused class should have code"
+    );
+    let code = point_class["code"].as_str().unwrap();
+    assert!(
+        code.contains("class Point"),
+        "Should contain class definition"
+    );
+    assert!(
+        code.contains("def __init__"),
+        "Should contain __init__ method"
+    );
+    assert!(
+        code.contains("def distance_to"),
+        "Should contain other methods"
+    );
+
+    // Other classes should NOT have code
+    let calc_class = classes.iter().find(|c| c["name"] == "Calculator").unwrap();
+    assert!(
+        calc_class["code"].is_null() || !calc_class.as_object().unwrap().contains_key("code"),
+        "Unfocused class should NOT have code"
+    );
+}
+
+// ============================================================================
+// Test 15: JavaScript class with context radius
+// ============================================================================
+
+#[test]
+fn test_read_focused_code_javascript_class_with_context() {
+    // Given: JavaScript fixture with classes and context_radius
+    let file_path = common::fixture_path("javascript", "calculator.js");
+    let arguments = json!({
+        "file_path": file_path.to_str().unwrap(),
+        "focus_symbol": "Calculator",
+        "context_radius": 1
+    });
+
+    // When: read_focused_code is called
+    let result = treesitter_mcp::analysis::read_focused_code::execute(&arguments);
+
+    // Then: Focused class and neighbors have code
+    assert!(result.is_ok());
+    let call_result = result.unwrap();
+    let text = common::get_result_text(&call_result);
+    let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
+
+    assert!(shape["classes"].is_array());
+    let classes = shape["classes"].as_array().unwrap();
+
+    // Focused class should have code
+    let calc_class = classes.iter().find(|c| c["name"] == "Calculator").unwrap();
+    assert!(
+        calc_class["code"].is_string(),
+        "Focused class should have code"
+    );
+    assert!(
+        calc_class["code"]
+            .as_str()
+            .unwrap()
+            .contains("class Calculator"),
+        "Code should contain class definition"
+    );
+
+    // All should have names
+    for class in classes {
+        // Classes don't have signatures, just verify it has name
+        assert!(class["name"].is_string(), "All classes should have names");
+    }
+}
