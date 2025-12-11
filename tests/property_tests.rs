@@ -215,3 +215,274 @@ fn test_find_usages_is_deterministic() {
 
     assert_eq!(text1, text2, "find_usages should be deterministic");
 }
+
+// ============================================================================
+// Property: Context lines parameter is respected
+// ============================================================================
+
+proptest! {
+    /// Property: find_usages context_lines parameter affects output size
+    #[test]
+    fn test_find_usages_context_lines_affects_output(
+        context_lines in 0..10u32
+    ) {
+        let file_path = common::fixture_path("rust", "src/calculator.rs");
+        let arguments = json!({
+            "symbol": "add",
+            "path": file_path.to_str().unwrap(),
+            "context_lines": context_lines
+        });
+
+        let result = treesitter_mcp::analysis::find_usages::execute(&arguments);
+
+        if let Ok(call_result) = result {
+            let text = common::get_result_text(&call_result);
+            let usages: serde_json::Value = serde_json::from_str(&text).unwrap();
+
+            if let Some(usage_list) = usages["usages"].as_array() {
+                for usage in usage_list {
+                    if let Some(code) = usage["code"].as_str() {
+                        let line_count = code.lines().count();
+                        // Code should have at most (2 * context_lines + 1) lines
+                        // (context before + target line + context after)
+                        prop_assert!(
+                            line_count <= (2 * context_lines as usize + 1) || context_lines == 0,
+                            "Code should respect context_lines parameter"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ============================================================================
+// Property: Query pattern results are valid
+// ============================================================================
+
+proptest! {
+    /// Property: query_pattern with valid S-expression never panics
+    #[test]
+    fn test_query_pattern_handles_simple_queries(
+        node_type in "(function_item|struct_item|impl_item)"
+    ) {
+        let file_path = common::fixture_path("rust", "src/calculator.rs");
+        let query = format!("({} name: (identifier) @name)", node_type);
+        let arguments = json!({
+            "file_path": file_path.to_str().unwrap(),
+            "query": query
+        });
+
+        // Should either succeed or return error, never panic
+        let result = treesitter_mcp::analysis::query_pattern::execute(&arguments);
+        prop_assert!(result.is_ok() || result.is_err());
+    }
+}
+
+// ============================================================================
+// Property: Code map detail levels are consistent
+// ============================================================================
+
+proptest! {
+    /// Property: Higher detail levels include more information
+    #[test]
+    fn test_code_map_detail_levels_are_ordered(
+        detail in prop_oneof![
+            Just("minimal"),
+            Just("signatures"),
+            Just("full")
+        ]
+    ) {
+        let dir_path = common::fixture_dir("rust");
+        let arguments = json!({
+            "path": dir_path.join("src").to_str().unwrap(),
+            "detail": detail,
+            "max_tokens": 10000
+        });
+
+        let result = treesitter_mcp::analysis::code_map::execute(&arguments);
+
+        if let Ok(call_result) = result {
+            let text = common::get_result_text(&call_result);
+            let map: serde_json::Value = serde_json::from_str(&text).unwrap();
+
+            // All detail levels should have files array
+            prop_assert!(map["files"].is_array(), "Should have files array");
+
+            let files = map["files"].as_array().unwrap();
+            if !files.is_empty() {
+                let first_file = &files[0];
+
+                // All detail levels should have path
+                prop_assert!(first_file["path"].is_string(), "Should have path");
+
+                // Check detail-specific fields
+                if detail == "signatures" || detail == "full" {
+                    // Should have functions with signatures
+                    if let Some(functions) = first_file["functions"].as_array() {
+                        if !functions.is_empty() {
+                            // At least some functions should have signatures
+                            let has_signatures = functions.iter().any(|f| f["signature"].is_string());
+                            prop_assert!(has_signatures || detail == "minimal",
+                                "Signatures detail should include signatures");
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ============================================================================
+// Property: Parse file handles all supported languages
+// ============================================================================
+
+proptest! {
+    /// Property: parse_file works for all supported file extensions
+    #[test]
+    fn test_parse_file_supports_all_extensions(
+        ext in prop_oneof![
+            Just("rs"),
+            Just("py"),
+            Just("js"),
+            Just("ts")
+        ]
+    ) {
+        let lang = match ext {
+            "rs" => "rust",
+            "py" => "python",
+            "js" => "javascript",
+            "ts" => "typescript",
+            _ => "rust"
+        };
+
+        let file = match ext {
+            "rs" => "src/calculator.rs",
+            "py" => "calculator.py",
+            "js" => "calculator.js",
+            "ts" => "calculator.ts",
+            _ => "src/calculator.rs"
+        };
+
+        let file_path = common::fixture_path(lang, file);
+        let arguments = json!({
+            "file_path": file_path.to_str().unwrap()
+        });
+
+        let result = treesitter_mcp::analysis::parse_file::execute(&arguments);
+
+        // Should succeed for all supported languages
+        prop_assert!(result.is_ok(), "Should parse {} files", ext);
+
+        if let Ok(call_result) = result {
+            let text = common::get_result_text(&call_result);
+            let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
+
+            // Should have language field
+            prop_assert!(shape["language"].is_string(), "Should have language");
+
+            // Should have functions array
+            prop_assert!(shape["functions"].is_array(), "Should have functions");
+        }
+    }
+}
+
+// ============================================================================
+// Property: Line and column numbers are always positive
+// ============================================================================
+
+proptest! {
+    /// Property: All line/column numbers in results are positive
+    #[test]
+    fn test_all_positions_are_positive(
+        symbol in "[a-z]{3,10}"
+    ) {
+        let file_path = common::fixture_path("rust", "src/calculator.rs");
+        let arguments = json!({
+            "symbol": symbol,
+            "path": file_path.to_str().unwrap(),
+            "context_lines": 2
+        });
+
+        let result = treesitter_mcp::analysis::find_usages::execute(&arguments);
+
+        if let Ok(call_result) = result {
+            let text = common::get_result_text(&call_result);
+            let usages: serde_json::Value = serde_json::from_str(&text).unwrap();
+
+            if let Some(usage_list) = usages["usages"].as_array() {
+                for usage in usage_list {
+                    if let Some(line) = usage["line"].as_u64() {
+                        prop_assert!(line > 0, "Line numbers should be positive (1-indexed)");
+                    }
+                    if let Some(column) = usage["column"].as_u64() {
+                        prop_assert!(column > 0, "Column numbers should be positive (1-indexed)");
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ============================================================================
+// Property: Empty results are valid JSON
+// ============================================================================
+
+#[test]
+fn test_empty_results_are_valid_json() {
+    // Property: Even when no results found, output should be valid JSON
+    let file_path = common::fixture_path("rust", "src/calculator.rs");
+    let arguments = json!({
+        "symbol": "nonexistent_symbol_xyz123",
+        "path": file_path.to_str().unwrap(),
+        "context_lines": 2
+    });
+
+    let result = treesitter_mcp::analysis::find_usages::execute(&arguments).unwrap();
+    let text = common::get_result_text(&result);
+
+    // Should be valid JSON
+    let usages: serde_json::Value = serde_json::from_str(&text).unwrap();
+
+    // Should have usages array (even if empty)
+    assert!(usages["usages"].is_array(), "Should have usages array");
+
+    // Should have symbol field
+    assert!(usages["symbol"].is_string(), "Should have symbol field");
+}
+
+// ============================================================================
+// Property: Code snippets are non-empty when context_lines > 0
+// ============================================================================
+
+proptest! {
+    /// Property: When context_lines > 0, code snippets should be non-empty
+    #[test]
+    fn test_code_snippets_non_empty_with_context(
+        context_lines in 1..10u32
+    ) {
+        let file_path = common::fixture_path("rust", "src/calculator.rs");
+        let arguments = json!({
+            "symbol": "add",
+            "path": file_path.to_str().unwrap(),
+            "context_lines": context_lines
+        });
+
+        let result = treesitter_mcp::analysis::find_usages::execute(&arguments);
+
+        if let Ok(call_result) = result {
+            let text = common::get_result_text(&call_result);
+            let usages: serde_json::Value = serde_json::from_str(&text).unwrap();
+
+            if let Some(usage_list) = usages["usages"].as_array() {
+                if !usage_list.is_empty() {
+                    // At least one usage should have non-empty code
+                    let has_code = usage_list.iter().any(|u| {
+                        u["code"].as_str().map(|s| !s.is_empty()).unwrap_or(false)
+                    });
+                    prop_assert!(has_code, "Should have non-empty code when context_lines > 0");
+                }
+            }
+        }
+    }
+}

@@ -26,3 +26,5 @@ Thumbs.db
 CLAUDE.md
 CODEX.md
 GEMINI.md
+coverage/
+mutants.out/
