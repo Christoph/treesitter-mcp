@@ -36,7 +36,7 @@ pub struct ParseFileTool {
 /// signatures-only for everything else. Perfect for editing a specific function
 /// while maintaining context of the surrounding code.
 #[mcp_tool(
-    name = "treesitter-mcp_read_focused_code",
+    name = "read_focused_code",
     description = "Read file with FULL code for ONE symbol, signatures-only for everything else. Returns complete implementation of target function/class plus signatures of surrounding code. USE WHEN: ✅ Know exactly which function to edit ✅ Need surrounding context for dependencies ✅ File is large but only care about one function ✅ Want to minimize tokens while maintaining context. DON'T USE: ❌ Need multiple functions → use parse_file ❌ Don't know which function → use file_shape first. TOKEN COST: MEDIUM (~30% of parse_file). OPTIMIZATION: Keep context_radius=0 unless need adjacent functions. WORKFLOW: file_shape → read_focused_code"
 )]
 #[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
