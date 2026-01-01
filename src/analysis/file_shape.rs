@@ -622,7 +622,7 @@ fn find_project_root(start: &Path) -> Option<PathBuf> {
 /// Uses tree-sitter to parse `mod foo;` or `pub mod foo;` declarations (not inline modules)
 /// and resolves them to `foo.rs` or `foo/mod.rs` under the same directory, constrained to
 /// `project_root` so that only project files are included.
-fn find_rust_dependencies(source: &str, file_path: &Path, project_root: &Path) -> Vec<PathBuf> {
+pub fn find_rust_dependencies(source: &str, file_path: &Path, project_root: &Path) -> Vec<PathBuf> {
     let mut deps = Vec::new();
 
     let dir = file_path.parent().unwrap_or(project_root);
@@ -690,7 +690,11 @@ fn find_rust_dependencies(source: &str, file_path: &Path, project_root: &Path) -
 /// This currently looks for `import foo` style imports and resolves them to
 /// `foo.py` or `foo/__init__.py` either next to the file or under the
 /// project root, constrained to `project_root`.
-fn find_python_dependencies(source: &str, file_path: &Path, project_root: &Path) -> Vec<PathBuf> {
+pub fn find_python_dependencies(
+    source: &str,
+    file_path: &Path,
+    project_root: &Path,
+) -> Vec<PathBuf> {
     let mut deps = Vec::new();
 
     let dir = file_path.parent().unwrap_or(project_root);
@@ -749,7 +753,11 @@ fn push_python_module(deps: &mut Vec<PathBuf>, module: &str, dir: &Path, project
 /// Uses tree-sitter to parse ESM-style `import` and `export` statements with string
 /// literal module specifiers and resolves relative paths like `./utils.js` against
 /// the current file directory, constrained to `project_root`.
-fn find_js_ts_dependencies(source: &str, file_path: &Path, project_root: &Path) -> Vec<PathBuf> {
+pub fn find_js_ts_dependencies(
+    source: &str,
+    file_path: &Path,
+    project_root: &Path,
+) -> Vec<PathBuf> {
     let mut deps = Vec::new();
 
     let dir = file_path.parent().unwrap_or(project_root);

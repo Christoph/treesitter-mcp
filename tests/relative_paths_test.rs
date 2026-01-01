@@ -525,8 +525,6 @@ pub fn subtract(a: i32, b: i32) -> i32 {
 // Test 10: affected_by_diff returns relative paths
 // ============================================================================
 #[ignore] // Complex git scenario - may fail in some environments
-
-
 #[test]
 fn test_affected_by_diff_returns_relative_paths() {
     // Given: A git repository with multiple files
