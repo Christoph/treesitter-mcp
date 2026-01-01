@@ -146,13 +146,14 @@ Choose the right tool for your task:
 
 ### 1. parse_file
 
-Parse single file with FULL implementation details. Returns complete code for all functions/classes.
+Parse single file with FULL implementation details. Returns complete code for all functions/classes with impl blocks, methods, traits, and interfaces.
 
 **Use When:**
 - ✅ Understanding implementation details before editing
 - ✅ File is <500 lines and you need complete context
 - ✅ Writing tests that require understanding function logic
 - ✅ Modifying multiple functions in same file
+- ✅ **NEW:** Need API signatures of imported modules (`include_deps=true`)
 
 **Don't Use When:**
 - ❌ You only need function names/signatures → use `file_shape` (10x cheaper)
@@ -165,18 +166,79 @@ Parse single file with FULL implementation details. Returns complete code for al
 **Parameters**:
 - `file_path` (string, required): Path to the source file
 - `include_code` (boolean, optional, default: true): Set false for 60-80% token reduction (signatures only)
+- `include_deps` (boolean, optional, default: false): Include module dependencies as signatures
+
+**New Feature: Smart Dependency Context**
+
+When `include_deps=true`, the tool automatically includes the **signatures** of all module dependencies with complete API surface:
+
+- **Rust**: Impl blocks, trait definitions, methods
+- **Python**: Class methods
+- **JavaScript**: Class methods
+- **TypeScript**: Class methods, interfaces
 
 **Example**:
 ```json
 {
-  "file_path": "/path/to/file.rs",
-  "include_code": true
+  "file_path": "src/calculator.rs",
+  "include_code": false,
+  "include_deps": true
 }
 ```
 
-**Returns**: Complete structure with function/class names, signatures, line ranges, doc comments, and code blocks
+**Returns**:
+```json
+{
+  "path": "src/calculator.rs",
+  "functions": [...],
+  "structs": [...],
+  "impl_blocks": [
+    {
+      "type_name": "Calculator",
+      "methods": [
+        {"name": "new", "signature": "pub fn new() -> Self", "line": 12}
+      ]
+    }
+  ],
+  "traits": [
+    {
+      "name": "Calculable",
+      "methods": [
+        {"name": "compute", "signature": "fn compute(&self) -> i32"}
+      ]
+    }
+  ],
+  "dependencies": [
+    {
+      "path": "src/models/mod.rs",
+      "structs": [...],
+      "impl_blocks": [...],
+      "traits": [...]
+    }
+  ]
+}
+```
 
-**Optimization:** Set `include_code=false` to reduce by 60-80% (equivalent to `file_shape`)
+**Token Savings**:
+
+Without `include_deps`:
+- `parse_file(main.rs)` + `parse_file(utils.rs)` + `parse_file(models.rs)`
+- Total: ~2000 tokens
+
+With `include_deps`:
+- `parse_file(main.rs, include_deps=true)`
+- Total: ~1000 tokens (50% reduction!)
+
+**Currently Resolves**:
+- Rust: `mod foo;` and `pub mod foo;` declarations
+- Python: `import foo` and `from foo import bar` statements
+- JavaScript/TypeScript: relative imports (`import ... from './foo'`)
+
+**Note**: Only includes direct dependencies (1-level). Transitive dependencies are not included.
+
+**Optimization:** 
+- Set `include_code=false` to reduce by 60-80% (equivalent to `file_shape`)
+- Set `include_deps=true` for dependency signatures (reduces need for multiple parse_file calls)
 
 ---
 

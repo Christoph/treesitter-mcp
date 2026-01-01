@@ -20,7 +20,7 @@ fn default_true() -> bool {
 /// Parse a source file and return its structure (functions, classes, imports) with signatures and docs
 #[mcp_tool(
     name = "parse_file",
-    description = "Parse single file with FULL implementation details. Returns complete code for all functions/classes with names, signatures, line ranges, and doc comments. USE WHEN: ✅ Understanding implementation before editing ✅ File <500 lines needing complete context ✅ Modifying multiple functions in same file. DON'T USE: ❌ Only need signatures → use file_shape (10x cheaper) ❌ Only editing one function → use read_focused_code (3x cheaper) ❌ File >500 lines → use file_shape first. TOKEN COST: HIGH. OPTIMIZATION: Set include_code=false for 60-80% reduction."
+    description = "Parse single file with FULL implementation details. Returns complete code for all functions/classes with names, signatures, line ranges, and doc comments. USE WHEN: ✅ Understanding implementation before editing ✅ File <500 lines needing complete context ✅ Modifying multiple functions in same file ✅ Need API signatures of imported modules (include_deps=true). DON'T USE: ❌ Only need signatures → use file_shape (10x cheaper) ❌ Only editing one function → use read_focused_code (3x cheaper) ❌ File >500 lines → use file_shape first. TOKEN COST: HIGH. OPTIMIZATION: Set include_code=false for 60-80% reduction, include_deps=true for dependency signatures."
 )]
 #[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
 pub struct ParseFile {
@@ -30,6 +30,19 @@ pub struct ParseFile {
     /// When false, returns only signatures, docs, and line ranges (60-80% token reduction)
     #[serde(default = "default_true")]
     pub include_code: bool,
+    /// Include module dependencies as nested file shapes (default: false)
+    ///
+    /// Dependencies are ALWAYS returned as signatures-only (no code bodies)
+    /// to provide the LLM with API contracts while minimizing token usage.
+    ///
+    /// Currently resolves:
+    /// - Rust: `mod foo;` and `pub mod foo;` declarations + impl blocks + traits
+    /// - Python: `import foo` and `from foo import bar` statements + class methods
+    /// - JavaScript/TypeScript: `import ... from './foo'` relative imports + class methods + interfaces
+    ///
+    /// Note: Only includes direct (1-level) dependencies, not transitive deps.
+    #[serde(default)]
+    pub include_deps: bool,
 }
 
 /// Read a file with focused code view: FULL code for the target symbol,
