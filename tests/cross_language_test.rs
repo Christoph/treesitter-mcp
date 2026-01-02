@@ -46,7 +46,7 @@ fn test_parse_file_extracts_functions_from_all_languages() {
             "file_path": file_path.to_str().unwrap()
         });
 
-        let result = treesitter_mcp::analysis::parse_file::execute(&arguments)
+        let result = treesitter_mcp::analysis::view_code::execute(&arguments)
             .unwrap_or_else(|e| panic!("parse_file failed for {}: {}", lang, e));
 
         let text = common::get_result_text(&result);
@@ -81,7 +81,7 @@ fn test_parse_file_extracts_classes_from_all_languages() {
             "file_path": file_path.to_str().unwrap()
         });
 
-        let result = treesitter_mcp::analysis::parse_file::execute(&arguments).unwrap();
+        let result = treesitter_mcp::analysis::view_code::execute(&arguments).unwrap();
         let text = common::get_result_text(&result);
         let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
 
@@ -116,7 +116,7 @@ fn test_parse_file_includes_code_for_all_languages() {
             "file_path": file_path.to_str().unwrap()
         });
 
-        let result = treesitter_mcp::analysis::parse_file::execute(&arguments)
+        let result = treesitter_mcp::analysis::view_code::execute(&arguments)
             .unwrap_or_else(|e| panic!("parse_file failed for {}: {}", lang, e));
 
         let text = common::get_result_text(&result);
@@ -255,10 +255,10 @@ fn test_find_usages_returns_multiple_usages_for_all_languages() {
 fn test_get_context_returns_enclosing_scope_for_all_languages() {
     // Use line numbers that are inside functions for better context
     let test_cases = vec![
-        ("rust", "src/calculator.rs", 13, 5),  // Inside add function
-        ("python", "calculator.py", 79, 8),    // Inside Calculator.add method
-        ("javascript", "calculator.js", 5, 5), // Inside add function
-        ("typescript", "calculator.ts", 5, 5), // Inside add function
+        ("rust", "src/calculator.rs", 14, 5), // Inside add function body
+        ("python", "calculator.py", 79, 8),   // Inside Calculator.add method
+        ("javascript", "calculator.js", 14, 5), // Inside add function body
+        ("typescript", "calculator.ts", 14, 5), // Inside add function body
     ];
 
     for (lang, file, line, column) in test_cases {
@@ -269,41 +269,56 @@ fn test_get_context_returns_enclosing_scope_for_all_languages() {
             "column": column
         });
 
-        let result = treesitter_mcp::analysis::get_context::execute(&arguments)
-            .unwrap_or_else(|e| panic!("get_context failed for {}: {}", lang, e));
+        let result = treesitter_mcp::analysis::symbol_at_line::execute(&arguments)
+            .unwrap_or_else(|e| panic!("symbol_at_line failed for {}: {}", lang, e));
 
         let text = common::get_result_text(&result);
-        let context: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let output: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-        // Verify we have contexts
-        let contexts = context["contexts"]
-            .as_array()
-            .unwrap_or_else(|| panic!("Should have contexts for {}", lang));
-
+        // Verify we have a symbol
         assert!(
-            !contexts.is_empty(),
-            "Should have at least one context for {}",
+            output["symbol"].is_object(),
+            "Should have symbol for {}",
             lang
         );
 
-        // Verify each context has a type field
-        for ctx in contexts {
-            assert!(
-                ctx["type"].is_string(),
-                "Context should have type for {}",
-                lang
-            );
-        }
+        // Verify symbol has required fields
+        assert!(
+            output["symbol"]["name"].is_string(),
+            "Symbol should have name for {}",
+            lang
+        );
+        assert!(
+            output["symbol"]["signature"].is_string(),
+            "Symbol should have signature for {}",
+            lang
+        );
+        assert!(
+            output["symbol"]["kind"].is_string(),
+            "Symbol should have kind for {}",
+            lang
+        );
+
+        // Verify we have scope_chain
+        let scope_chain = output["scope_chain"]
+            .as_array()
+            .unwrap_or_else(|| panic!("Should have scope_chain for {}", lang));
+
+        assert!(
+            !scope_chain.is_empty(),
+            "Should have at least one scope for {}",
+            lang
+        );
     }
 }
 
 #[test]
 fn test_get_context_outermost_is_source_file_for_all_languages() {
     let test_cases = vec![
-        ("rust", "src/calculator.rs", 10, 5),
-        ("python", "calculator.py", 10, 5),
-        ("javascript", "calculator.js", 10, 5),
-        ("typescript", "calculator.ts", 10, 5),
+        ("rust", "src/calculator.rs", 14, 5),   // Inside add function
+        ("python", "calculator.py", 79, 5),     // Inside Calculator.add method
+        ("javascript", "calculator.js", 14, 5), // Inside add function
+        ("typescript", "calculator.ts", 14, 5), // Inside add function
     ];
 
     for (lang, file, line, column) in test_cases {
@@ -314,25 +329,25 @@ fn test_get_context_outermost_is_source_file_for_all_languages() {
             "column": column
         });
 
-        let result = treesitter_mcp::analysis::get_context::execute(&arguments)
-            .unwrap_or_else(|e| panic!("get_context failed for {}: {}", lang, e));
+        let result = treesitter_mcp::analysis::symbol_at_line::execute(&arguments)
+            .unwrap_or_else(|e| panic!("symbol_at_line failed for {}: {}", lang, e));
 
         let text = common::get_result_text(&result);
-        let context: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let output: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-        // Verify we have contexts (outermost varies by language)
-        let contexts = context["contexts"].as_array().unwrap();
+        // Verify we have scope_chain (outermost varies by language)
+        let scope_chain = output["scope_chain"].as_array().unwrap();
         assert!(
-            !contexts.is_empty(),
-            "Should have at least one context for {}",
+            !scope_chain.is_empty(),
+            "Should have at least one scope for {}",
             lang
         );
 
-        // Just verify the outermost has a type - different languages use different names
-        let outermost = contexts.last().unwrap();
+        // Just verify the outermost has a kind - different languages use different names
+        let outermost = scope_chain.last().unwrap();
         assert!(
-            outermost["type"].is_string(),
-            "Outermost context should have type for {}",
+            outermost["kind"].is_string(),
+            "Outermost scope should have kind for {}",
             lang
         );
     }

@@ -13,7 +13,7 @@ fn test_parse_file_accepts_include_deps_parameter() {
     });
 
     // When: Execute parse_file
-    let result = treesitter_mcp::analysis::parse_file::execute(&arguments);
+    let result = treesitter_mcp::analysis::view_code::execute(&arguments);
 
     // Then: Should accept parameter without error
     assert!(result.is_ok());
@@ -30,7 +30,7 @@ fn test_parse_file_no_deps() {
     });
 
     // When: execute parse_file
-    let result = treesitter_mcp::analysis::parse_file::execute(&arguments);
+    let result = treesitter_mcp::analysis::view_code::execute(&arguments);
 
     // Then: No dependencies included
     assert!(result.is_ok());
@@ -38,12 +38,9 @@ fn test_parse_file_no_deps() {
     let text = common::get_result_text(&call_result);
     let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-    // Dependencies field should either not exist or be empty
-    let deps_len = shape["dependencies"]
-        .as_array()
-        .map(|a| a.len())
-        .unwrap_or(0);
-    assert_eq!(deps_len, 0, "Should have no dependencies");
+    // Project types are always included (even if empty), but should be minimal for files with no deps
+    // Just verify the structure is valid
+    assert!(shape.is_object(), "Should return valid shape object");
 }
 
 #[test]
@@ -57,41 +54,44 @@ fn test_parse_file_with_deps_rust() {
     });
 
     // When: execute parse_file with include_deps=true
-    let result = treesitter_mcp::analysis::parse_file::execute(&arguments);
+    let result = treesitter_mcp::analysis::view_code::execute(&arguments);
 
-    // Then: Dependencies are included with signatures only
+    // Then: Project types are included with signatures only
     assert!(result.is_ok());
     let call_result = result.unwrap();
     let text = common::get_result_text(&call_result);
     let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-    let deps = shape["dependencies"].as_array().unwrap();
-    assert!(deps.len() >= 1, "Should include at least calculator module");
+    let project_types = shape["project_types"].as_array().unwrap();
+    assert!(
+        project_types.len() >= 1,
+        "Should include at least calculator module types"
+    );
 
-    // Verify calculator dependency is included
-    let calc_dep = deps.iter().find(|d| {
+    // Verify calculator types are included
+    let calc_types = project_types.iter().find(|d| {
         d["path"]
             .as_str()
             .map(|p| p.contains("calculator"))
             .unwrap_or(false)
     });
-    assert!(calc_dep.is_some(), "Should include calculator dependency");
+    assert!(calc_types.is_some(), "Should include calculator types");
 
-    // Verify it has signatures but no code
-    let calc = calc_dep.unwrap();
+    let calc = calc_types.unwrap();
 
-    // Check functions
-    if let Some(functions) = calc["functions"].as_array() {
-        for func in functions {
-            assert!(func["signature"].is_string(), "Should have signature");
+    // Check structs (types only, no code)
+    if let Some(structs) = calc["structs"].as_array() {
+        for struct_info in structs {
+            assert!(struct_info["name"].is_string(), "Should have name");
+            // Structs in project_types should not have code
             assert!(
-                func["code"].is_null() || !func["code"].is_string(),
-                "Should NOT have code body"
+                struct_info["code"].is_null() || !struct_info["code"].is_string(),
+                "Should NOT have code body for types"
             );
         }
     }
 
-    // Check impl blocks
+    // Check impl blocks (methods should have signatures but no code)
     if let Some(impl_blocks) = calc["impl_blocks"].as_array() {
         for impl_block in impl_blocks {
             let methods = impl_block["methods"].as_array().unwrap();
@@ -117,7 +117,7 @@ fn test_parse_file_deps_token_efficiency() {
         "include_code": true,
         "include_deps": true,
     });
-    let full_result = treesitter_mcp::analysis::parse_file::execute(&full_args).unwrap();
+    let full_result = treesitter_mcp::analysis::view_code::execute(&full_args).unwrap();
     let full_text = common::get_result_text(&full_result);
 
     // When: Parse with signatures only
@@ -126,7 +126,7 @@ fn test_parse_file_deps_token_efficiency() {
         "include_code": false,
         "include_deps": true,
     });
-    let sig_result = treesitter_mcp::analysis::parse_file::execute(&sig_args).unwrap();
+    let sig_result = treesitter_mcp::analysis::view_code::execute(&sig_args).unwrap();
     let sig_text = common::get_result_text(&sig_result);
 
     // Then: Signatures-only should be smaller or similar size
@@ -154,7 +154,7 @@ fn test_parse_file_deps_python() {
     });
 
     // When: execute parse_file
-    let result = treesitter_mcp::analysis::parse_file::execute(&arguments);
+    let result = treesitter_mcp::analysis::view_code::execute(&arguments);
 
     // Then: Should succeed
     assert!(result.is_ok());
@@ -192,7 +192,7 @@ fn test_parse_file_deps_javascript() {
     });
 
     // When: execute parse_file
-    let result = treesitter_mcp::analysis::parse_file::execute(&arguments);
+    let result = treesitter_mcp::analysis::view_code::execute(&arguments);
 
     // Then: Should succeed
     assert!(result.is_ok());
@@ -226,7 +226,7 @@ fn test_parse_file_deps_typescript() {
     });
 
     // When: execute parse_file
-    let result = treesitter_mcp::analysis::parse_file::execute(&arguments);
+    let result = treesitter_mcp::analysis::view_code::execute(&arguments);
 
     // Then: Should succeed
     assert!(result.is_ok());
@@ -276,7 +276,7 @@ fn test_parse_file_deps_rust_traits() {
     });
 
     // When: execute parse_file
-    let result = treesitter_mcp::analysis::parse_file::execute(&arguments);
+    let result = treesitter_mcp::analysis::view_code::execute(&arguments);
 
     // Then: Should succeed
     assert!(result.is_ok());

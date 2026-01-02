@@ -23,7 +23,7 @@ proptest! {
         });
 
         // Should either succeed or return error, never panic
-        let result = treesitter_mcp::analysis::parse_file::execute(&arguments);
+        let result = treesitter_mcp::analysis::view_code::execute(&arguments);
         prop_assert!(result.is_ok() || result.is_err());
     }
 
@@ -58,7 +58,7 @@ proptest! {
         });
 
         // Should either succeed or return error, never panic
-        let result = treesitter_mcp::analysis::get_context::execute(&arguments);
+        let result = treesitter_mcp::analysis::symbol_at_line::execute(&arguments);
         prop_assert!(result.is_ok() || result.is_err());
     }
 }
@@ -82,18 +82,21 @@ proptest! {
             "column": column
         });
 
-        let result = treesitter_mcp::analysis::get_context::execute(&arguments);
+        let result = treesitter_mcp::analysis::symbol_at_line::execute(&arguments);
 
         if let Ok(call_result) = result {
             let text = common::get_result_text(&call_result);
-            let context: serde_json::Value = serde_json::from_str(&text).unwrap();
+            let output: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-            let contexts = context["contexts"].as_array().unwrap();
-            prop_assert!(!contexts.is_empty(), "Should have at least one context");
+            // Should have symbol and scope_chain
+            prop_assert!(output["symbol"].is_object(), "Should have symbol");
 
-            // Outermost context should be source_file or similar
-            let outermost = contexts.last().unwrap();
-            prop_assert!(outermost["type"].is_string(), "Outermost should have type");
+            let scope_chain = output["scope_chain"].as_array().unwrap();
+            prop_assert!(!scope_chain.is_empty(), "Should have at least one scope");
+
+            // Outermost scope should have kind
+            let outermost = scope_chain.last().unwrap();
+            prop_assert!(outermost["kind"].is_string(), "Outermost should have kind");
         }
     }
 }
@@ -188,10 +191,10 @@ fn test_parse_file_is_deterministic() {
         "file_path": file_path.to_str().unwrap()
     });
 
-    let result1 = treesitter_mcp::analysis::parse_file::execute(&arguments).unwrap();
+    let result1 = treesitter_mcp::analysis::view_code::execute(&arguments).unwrap();
     let text1 = common::get_result_text(&result1);
 
-    let result2 = treesitter_mcp::analysis::parse_file::execute(&arguments).unwrap();
+    let result2 = treesitter_mcp::analysis::view_code::execute(&arguments).unwrap();
     let text2 = common::get_result_text(&result2);
 
     assert_eq!(text1, text2, "parse_file should be deterministic");
@@ -369,7 +372,7 @@ proptest! {
             "file_path": file_path.to_str().unwrap()
         });
 
-        let result = treesitter_mcp::analysis::parse_file::execute(&arguments);
+        let result = treesitter_mcp::analysis::view_code::execute(&arguments);
 
         // Should succeed for all supported languages
         prop_assert!(result.is_ok(), "Should parse {} files", ext);

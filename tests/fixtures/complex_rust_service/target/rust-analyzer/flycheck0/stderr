@@ -1,0 +1,109 @@
+    Updating crates.io index
+     Locking 1 package to latest compatible version
+      Adding async-trait v0.1.89
+   0.278634458s  INFO prepare_target{force=false package_id=complex-service v0.1.0 (/Users/christophmaier/Projects/treesitter-mcp/tests/fixtures/complex_rust_service) target="complex_service"}: cargo::core::compiler::fingerprint: fingerprint error for complex-service v0.1.0 (/Users/christophmaier/Projects/treesitter-mcp/tests/fixtures/complex_rust_service)/Check { test: false }/TargetInner { name_inferred: true, ..: lib_target("complex_service", ["lib"], "/Users/christophmaier/Projects/treesitter-mcp/tests/fixtures/complex_rust_service/src/lib.rs", Edition2021) }
+   0.278650458s  INFO prepare_target{force=false package_id=complex-service v0.1.0 (/Users/christophmaier/Projects/treesitter-mcp/tests/fixtures/complex_rust_service) target="complex_service"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/christophmaier/Projects/treesitter-mcp/tests/fixtures/complex_rust_service/target/debug/.fingerprint/complex-service-1d12cafe298b1be7/lib-complex_service`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: <cargo::core::compiler::build_runner::BuildRunner>::compile
+   8: cargo::ops::cargo_compile::compile_ws
+   9: cargo::ops::cargo_compile::compile_with_exec
+  10: cargo::ops::cargo_compile::compile
+  11: cargo::commands::check::exec
+  12: <cargo::cli::Exec>::exec
+  13: cargo::main
+  14: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  15: std::rt::lang_start::<()>::{closure#0}
+  16: std::rt::lang_start_internal
+  17: _main
+   0.281475000s  INFO prepare_target{force=false package_id=serde v1.0.228 target="serde"}: cargo::core::compiler::fingerprint: fingerprint error for serde v1.0.228/Check { test: false }/TargetInner { ..: lib_target("serde", ["lib"], "/Users/christophmaier/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs", Edition2021) }
+   0.281479208s  INFO prepare_target{force=false package_id=serde v1.0.228 target="serde"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/christophmaier/Projects/treesitter-mcp/tests/fixtures/complex_rust_service/target/debug/.fingerprint/serde-605c5e5967c45003/lib-serde`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: cargo::core::compiler::compile
+   8: <cargo::core::compiler::build_runner::BuildRunner>::compile
+   9: cargo::ops::cargo_compile::compile_ws
+  10: cargo::ops::cargo_compile::compile_with_exec
+  11: cargo::ops::cargo_compile::compile
+  12: cargo::commands::check::exec
+  13: <cargo::cli::Exec>::exec
+  14: cargo::main
+  15: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  16: std::rt::lang_start::<()>::{closure#0}
+  17: std::rt::lang_start_internal
+  18: _main
+   0.282259792s  INFO prepare_target{force=false package_id=tokio v1.48.0 target="tokio"}: cargo::core::compiler::fingerprint: fingerprint error for tokio v1.48.0/Check { test: false }/TargetInner { ..: lib_target("tokio", ["lib"], "/Users/christophmaier/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.48.0/src/lib.rs", Edition2021) }
+   0.282263125s  INFO prepare_target{force=false package_id=tokio v1.48.0 target="tokio"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/christophmaier/Projects/treesitter-mcp/tests/fixtures/complex_rust_service/target/debug/.fingerprint/tokio-f98ddfe3eaf86310/lib-tokio`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: cargo::core::compiler::compile
+   8: <cargo::core::compiler::build_runner::BuildRunner>::compile
+   9: cargo::ops::cargo_compile::compile_ws
+  10: cargo::ops::cargo_compile::compile_with_exec
+  11: cargo::ops::cargo_compile::compile
+  12: cargo::commands::check::exec
+  13: <cargo::cli::Exec>::exec
+  14: cargo::main
+  15: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  16: std::rt::lang_start::<()>::{closure#0}
+  17: std::rt::lang_start_internal
+  18: _main
+   0.283256042s  INFO prepare_target{force=false package_id=complex-service v0.1.0 (/Users/christophmaier/Projects/treesitter-mcp/tests/fixtures/complex_rust_service) target="complex_service"}: cargo::core::compiler::fingerprint: fingerprint error for complex-service v0.1.0 (/Users/christophmaier/Projects/treesitter-mcp/tests/fixtures/complex_rust_service)/Check { test: true }/TargetInner { name_inferred: true, ..: lib_target("complex_service", ["lib"], "/Users/christophmaier/Projects/treesitter-mcp/tests/fixtures/complex_rust_service/src/lib.rs", Edition2021) }
+   0.283260375s  INFO prepare_target{force=false package_id=complex-service v0.1.0 (/Users/christophmaier/Projects/treesitter-mcp/tests/fixtures/complex_rust_service) target="complex_service"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/christophmaier/Projects/treesitter-mcp/tests/fixtures/complex_rust_service/target/debug/.fingerprint/complex-service-9b11fc5b143a3dda/test-lib-complex_service`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: <cargo::core::compiler::build_runner::BuildRunner>::compile
+   8: cargo::ops::cargo_compile::compile_ws
+   9: cargo::ops::cargo_compile::compile_with_exec
+  10: cargo::ops::cargo_compile::compile
+  11: cargo::commands::check::exec
+  12: <cargo::cli::Exec>::exec
+  13: cargo::main
+  14: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  15: std::rt::lang_start::<()>::{closure#0}
+  16: std::rt::lang_start_internal
+  17: _main
+    Checking tokio v1.48.0
+    Checking serde v1.0.228
+    Checking complex-service v0.1.0 (/Users/christophmaier/Projects/treesitter-mcp/tests/fixtures/complex_rust_service)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.71s

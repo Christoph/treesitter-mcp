@@ -12,10 +12,11 @@ pub mod dependencies;
 pub mod diff;
 pub mod file_shape;
 pub mod find_usages;
-pub mod get_context;
-pub mod get_node_at_position;
-pub mod parse_file;
 pub mod path_utils;
 pub mod query_pattern;
-pub mod read_focused_code;
 pub mod shape;
+pub mod symbol_at_line;
+pub mod view_code;
+
+#[cfg(test)]
+mod shape_tests;
