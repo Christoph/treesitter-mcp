@@ -82,7 +82,7 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
 
         // Find associated Rust structs for Askama templates
         let template_structs = crate::analysis::askama::find_askama_structs_for_template(
-            &path,
+            path,
             &std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
         )
         .ok()

@@ -1,12 +1,35 @@
 use eyre::{Result, WrapErr};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::io;
 use std::path::{Path, PathBuf};
 use tree_sitter::Node;
 
 use crate::analysis::file_shape::find_templates_dir;
+use crate::mcp_types::{CallToolResult, CallToolResultExt};
 use crate::parser::{parse_code, Language};
 
 const MAX_NESTED_DEPTH: u8 = 3;
+
+/// MCP tool execute function for template_context
+pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
+    let template_path_str = arguments["template_path"]
+        .as_str()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "template_path is required"))?;
+
+    let template_path = Path::new(template_path_str);
+    let project_root = std::env::current_dir()
+        .map_err(|e| io::Error::other(format!("Failed to get current directory: {}", e)))?;
+
+    let structs = find_askama_structs_for_template(template_path, &project_root)
+        .map_err(|e| io::Error::other(format!("Failed to find template structs: {}", e)))?;
+
+    let output = serde_json::json!({ "structs": structs });
+    let json_string = serde_json::to_string_pretty(&output)
+        .map_err(|e| io::Error::other(format!("Failed to serialize output: {}", e)))?;
+
+    Ok(CallToolResult::success(json_string))
+}
 
 /// Information about a struct that serves as a template context
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

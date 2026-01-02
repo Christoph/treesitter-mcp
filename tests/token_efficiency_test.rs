@@ -145,8 +145,7 @@ fn test_read_focused_code_is_cheaper_than_full_parse() {
         "detail": "full",
         "include_deps": false
     });
-    let full_parse_result =
-        treesitter_mcp::analysis::view_code::execute(&full_parse_args).unwrap();
+    let full_parse_result = treesitter_mcp::analysis::view_code::execute(&full_parse_args).unwrap();
     let full_parse_text = common::get_result_text(&full_parse_result);
     let full_tokens = common::helpers::approx_tokens(&full_parse_text);
 
@@ -155,8 +154,7 @@ fn test_read_focused_code_is_cheaper_than_full_parse() {
         "focus_symbol": "add",
         "context_radius": 0
     });
-    let focused_result =
-        treesitter_mcp::analysis::view_code::execute(&focused_args).unwrap();
+    let focused_result = treesitter_mcp::analysis::view_code::execute(&focused_args).unwrap();
     let focused_text = common::get_result_text(&focused_result);
     let focused_tokens = common::helpers::approx_tokens(&focused_text);
 
