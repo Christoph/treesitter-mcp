@@ -1,0 +1,12 @@
+/Users/christophmaier/Projects/treesitter-mcp/tests/fixtures/complex_rust_service/target/debug/deps/serde-605c5e5967c45003.d: /Users/christophmaier/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /Users/christophmaier/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /Users/christophmaier/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /Users/christophmaier/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /Users/christophmaier/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /Users/christophmaier/Projects/treesitter-mcp/tests/fixtures/complex_rust_service/target/debug/build/serde-2beb76a2a4a45d11/out/private.rs
+
+/Users/christophmaier/Projects/treesitter-mcp/tests/fixtures/complex_rust_service/target/debug/deps/libserde-605c5e5967c45003.rmeta: /Users/christophmaier/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /Users/christophmaier/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /Users/christophmaier/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /Users/christophmaier/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /Users/christophmaier/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /Users/christophmaier/Projects/treesitter-mcp/tests/fixtures/complex_rust_service/target/debug/build/serde-2beb76a2a4a45d11/out/private.rs
+
+/Users/christophmaier/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs:
+/Users/christophmaier/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs:
+/Users/christophmaier/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs:
+/Users/christophmaier/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs:
+/Users/christophmaier/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs:
+/Users/christophmaier/Projects/treesitter-mcp/tests/fixtures/complex_rust_service/target/debug/build/serde-2beb76a2a4a45d11/out/private.rs:
+
+# env-dep:OUT_DIR=/Users/christophmaier/Projects/treesitter-mcp/tests/fixtures/complex_rust_service/target/debug/build/serde-2beb76a2a4a45d11/out

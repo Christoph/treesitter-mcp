@@ -12,11 +12,11 @@ fn test_parse_file_include_code_false_omits_function_code() {
     let file_path = common::fixture_path("rust", "src/calculator.rs");
     let arguments = json!({
         "file_path": file_path.to_str().unwrap(),
-        "include_code": false
+        "detail": "signatures"
     });
 
     // When: parse_file is called
-    let result = treesitter_mcp::analysis::parse_file::execute(&arguments);
+    let result = treesitter_mcp::analysis::view_code::execute(&arguments);
 
     // Then: Functions should NOT have code field
     assert!(result.is_ok(), "parse_file should succeed");
@@ -54,11 +54,11 @@ fn test_parse_file_include_code_false_omits_struct_code() {
     let file_path = common::fixture_path("rust", "src/models/mod.rs");
     let arguments = json!({
         "file_path": file_path.to_str().unwrap(),
-        "include_code": false
+        "detail": "signatures"
     });
 
     // When: parse_file is called
-    let result = treesitter_mcp::analysis::parse_file::execute(&arguments);
+    let result = treesitter_mcp::analysis::view_code::execute(&arguments);
 
     // Then: Structs should NOT have code field
     assert!(result.is_ok());
@@ -91,11 +91,11 @@ fn test_parse_file_include_code_false_omits_class_code() {
     let file_path = common::fixture_path("python", "calculator.py");
     let arguments = json!({
         "file_path": file_path.to_str().unwrap(),
-        "include_code": false
+        "detail": "signatures"
     });
 
     // When: parse_file is called
-    let result = treesitter_mcp::analysis::parse_file::execute(&arguments);
+    let result = treesitter_mcp::analysis::view_code::execute(&arguments);
 
     // Then: Classes should NOT have code field
     assert!(result.is_ok());
@@ -132,11 +132,11 @@ fn test_parse_file_include_code_true_includes_code() {
     let file_path = common::fixture_path("rust", "src/calculator.rs");
     let arguments = json!({
         "file_path": file_path.to_str().unwrap(),
-        "include_code": true
+        "detail": "full"
     });
 
     // When: parse_file is called
-    let result = treesitter_mcp::analysis::parse_file::execute(&arguments);
+    let result = treesitter_mcp::analysis::view_code::execute(&arguments);
 
     // Then: Functions SHOULD have code field with content
     assert!(result.is_ok());
@@ -179,7 +179,7 @@ fn test_parse_file_include_code_defaults_to_true() {
     });
 
     // When: parse_file is called
-    let result = treesitter_mcp::analysis::parse_file::execute(&arguments);
+    let result = treesitter_mcp::analysis::view_code::execute(&arguments);
 
     // Then: Should include code by default (backward compatible)
     assert!(result.is_ok());
@@ -210,11 +210,11 @@ fn test_parse_file_include_code_false_preserves_docs() {
     let file_path = common::fixture_path("rust", "src/calculator.rs");
     let arguments = json!({
         "file_path": file_path.to_str().unwrap(),
-        "include_code": false
+        "detail": "signatures"
     });
 
     // When: parse_file is called
-    let result = treesitter_mcp::analysis::parse_file::execute(&arguments);
+    let result = treesitter_mcp::analysis::view_code::execute(&arguments);
 
     // Then: Doc comments should still be present even without code
     assert!(result.is_ok());
@@ -251,11 +251,11 @@ fn test_parse_file_include_code_false_javascript() {
     let file_path = common::fixture_path("javascript", "calculator.js");
     let arguments = json!({
         "file_path": file_path.to_str().unwrap(),
-        "include_code": false
+        "detail": "signatures"
     });
 
     // When: parse_file is called
-    let result = treesitter_mcp::analysis::parse_file::execute(&arguments);
+    let result = treesitter_mcp::analysis::view_code::execute(&arguments);
 
     // Then: Functions should NOT have code
     assert!(result.is_ok());
@@ -291,11 +291,11 @@ fn test_parse_file_include_code_false_javascript_classes() {
     let file_path = common::fixture_path("javascript", "calculator.js");
     let arguments = json!({
         "file_path": file_path.to_str().unwrap(),
-        "include_code": false
+        "detail": "signatures"
     });
 
     // When: parse_file is called
-    let result = treesitter_mcp::analysis::parse_file::execute(&arguments);
+    let result = treesitter_mcp::analysis::view_code::execute(&arguments);
 
     // Then: Classes should NOT have code
     assert!(result.is_ok());
@@ -335,11 +335,11 @@ fn test_parse_file_include_code_false_typescript() {
     let file_path = common::fixture_path("typescript", "calculator.ts");
     let arguments = json!({
         "file_path": file_path.to_str().unwrap(),
-        "include_code": false
+        "detail": "signatures"
     });
 
     // When: parse_file is called
-    let result = treesitter_mcp::analysis::parse_file::execute(&arguments);
+    let result = treesitter_mcp::analysis::view_code::execute(&arguments);
 
     // Then: Functions should NOT have code
     assert!(result.is_ok());
@@ -379,11 +379,11 @@ fn test_parse_file_include_code_false_python() {
     let file_path = common::fixture_path("python", "calculator.py");
     let arguments = json!({
         "file_path": file_path.to_str().unwrap(),
-        "include_code": false
+        "detail": "signatures"
     });
 
     // When: parse_file is called
-    let result = treesitter_mcp::analysis::parse_file::execute(&arguments);
+    let result = treesitter_mcp::analysis::view_code::execute(&arguments);
 
     // Then: Functions should NOT have code
     assert!(result.is_ok());
@@ -419,11 +419,11 @@ fn test_parse_file_include_code_false_python_classes() {
     let file_path = common::fixture_path("python", "calculator.py");
     let arguments = json!({
         "file_path": file_path.to_str().unwrap(),
-        "include_code": false
+        "detail": "signatures"
     });
 
     // When: parse_file is called
-    let result = treesitter_mcp::analysis::parse_file::execute(&arguments);
+    let result = treesitter_mcp::analysis::view_code::execute(&arguments);
 
     // Then: Classes should NOT have code
     assert!(result.is_ok());
@@ -465,18 +465,18 @@ fn test_parse_file_include_code_false_reduces_output_size() {
     // Parse with code
     let args_with_code = json!({
         "file_path": file_path.to_str().unwrap(),
-        "include_code": true
+        "detail": "full"
     });
-    let result_with_code = treesitter_mcp::analysis::parse_file::execute(&args_with_code).unwrap();
+    let result_with_code = treesitter_mcp::analysis::view_code::execute(&args_with_code).unwrap();
     let text_with_code = common::get_result_text(&result_with_code);
 
     // Parse without code
     let args_without_code = json!({
         "file_path": file_path.to_str().unwrap(),
-        "include_code": false
+        "detail": "signatures"
     });
     let result_without_code =
-        treesitter_mcp::analysis::parse_file::execute(&args_without_code).unwrap();
+        treesitter_mcp::analysis::view_code::execute(&args_without_code).unwrap();
     let text_without_code = common::get_result_text(&result_without_code);
 
     // Then: Output without code should be smaller
@@ -492,11 +492,11 @@ fn test_parse_file_include_code_false_preserves_all_metadata() {
     let file_path = common::fixture_path("rust", "src/calculator.rs");
     let arguments = json!({
         "file_path": file_path.to_str().unwrap(),
-        "include_code": false
+        "detail": "signatures"
     });
 
     // When: parse_file is called
-    let result = treesitter_mcp::analysis::parse_file::execute(&arguments).unwrap();
+    let result = treesitter_mcp::analysis::view_code::execute(&arguments).unwrap();
     let text = common::get_result_text(&result);
     let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
 
@@ -532,11 +532,11 @@ fn test_parse_file_include_code_false_with_empty_functions() {
     let file_path = common::fixture_path("rust", "src/calculator.rs");
     let arguments = json!({
         "file_path": file_path.to_str().unwrap(),
-        "include_code": false
+        "detail": "signatures"
     });
 
     // When: parse_file is called
-    let result = treesitter_mcp::analysis::parse_file::execute(&arguments);
+    let result = treesitter_mcp::analysis::view_code::execute(&arguments);
 
     // Then: Should still succeed even with no code
     assert!(
@@ -553,18 +553,18 @@ fn test_parse_file_include_code_explicit_false_vs_true() {
     // Parse with include_code=false
     let args_false = json!({
         "file_path": file_path.to_str().unwrap(),
-        "include_code": false
+        "detail": "signatures"
     });
-    let result_false = treesitter_mcp::analysis::parse_file::execute(&args_false).unwrap();
+    let result_false = treesitter_mcp::analysis::view_code::execute(&args_false).unwrap();
     let text_false = common::get_result_text(&result_false);
     let shape_false: serde_json::Value = serde_json::from_str(&text_false).unwrap();
 
     // Parse with include_code=true
     let args_true = json!({
         "file_path": file_path.to_str().unwrap(),
-        "include_code": true
+        "detail": "full"
     });
-    let result_true = treesitter_mcp::analysis::parse_file::execute(&args_true).unwrap();
+    let result_true = treesitter_mcp::analysis::view_code::execute(&args_true).unwrap();
     let text_true = common::get_result_text(&result_true);
     let shape_true: serde_json::Value = serde_json::from_str(&text_true).unwrap();
 

@@ -13,8 +13,10 @@ use std::io;
 use std::path::{Path, PathBuf};
 use tree_sitter::{Query, QueryCursor, Tree};
 
+#[allow(dead_code)]
 const MAX_TEMPLATE_DEPTH: usize = 50;
 
+#[allow(dead_code)]
 #[derive(Debug, serde::Serialize)]
 pub struct FileShape {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -29,24 +31,28 @@ pub struct FileShape {
     pub dependencies: Vec<FileShape>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, serde::Serialize)]
 pub struct FunctionInfo {
     pub name: String,
     pub line: usize,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, serde::Serialize)]
 pub struct StructInfo {
     pub name: String,
     pub line: usize,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, serde::Serialize)]
 pub struct ClassInfo {
     pub name: String,
     pub line: usize,
 }
 
+#[allow(dead_code)]
 pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
     let file_path_str = arguments["file_path"].as_str().ok_or_else(|| {
         io::Error::new(
@@ -80,10 +86,25 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
             merge_template(path, &templates_dir, &mut visited, &mut recursion_stack)?;
         let dependencies = find_template_dependencies(&source, &templates_dir)?;
 
+        // Find associated Rust structs for Askama templates
+        let template_structs = crate::analysis::askama::find_askama_structs_for_template(
+            path,
+            &std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+        )
+        .ok()
+        .and_then(|structs| {
+            if structs.is_empty() {
+                None
+            } else {
+                Some(structs)
+            }
+        });
+
         let merged_shape = MergedTemplateShape {
             path: path.to_string_lossy().to_string(),
             merged_content,
             dependencies,
+            template_structs,
         };
 
         let shape_json = serde_json::to_string(&merged_shape).map_err(|e| {
@@ -166,6 +187,7 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
     Ok(CallToolResult::success(shape_json))
 }
 
+#[allow(dead_code)]
 pub fn extract_shape(
     tree: &Tree,
     source: &str,
@@ -191,6 +213,7 @@ pub fn extract_shape(
     }
 }
 
+#[allow(dead_code)]
 fn extract_rust_shape(tree: &Tree, source: &str) -> Result<FileShape, io::Error> {
     let mut functions = Vec::new();
     let mut structs = Vec::new();
@@ -268,6 +291,7 @@ fn extract_rust_shape(tree: &Tree, source: &str) -> Result<FileShape, io::Error>
     })
 }
 
+#[allow(dead_code)]
 fn extract_python_shape(tree: &Tree, source: &str) -> Result<FileShape, io::Error> {
     let mut functions = Vec::new();
     let mut classes = Vec::new();
@@ -346,6 +370,7 @@ fn extract_python_shape(tree: &Tree, source: &str) -> Result<FileShape, io::Erro
     })
 }
 
+#[allow(dead_code)]
 fn extract_js_shape(tree: &Tree, source: &str) -> Result<FileShape, io::Error> {
     let mut functions = Vec::new();
     let mut classes = Vec::new();
@@ -423,6 +448,7 @@ fn extract_js_shape(tree: &Tree, source: &str) -> Result<FileShape, io::Error> {
     })
 }
 
+#[allow(dead_code)]
 fn extract_ts_shape(tree: &Tree, source: &str) -> Result<FileShape, io::Error> {
     let mut functions = Vec::new();
     let mut classes = Vec::new();
@@ -501,6 +527,7 @@ fn extract_ts_shape(tree: &Tree, source: &str) -> Result<FileShape, io::Error> {
 }
 
 /// Build a file shape (and optionally its dependency tree) starting from a path.
+#[allow(dead_code)]
 fn build_shape_tree(
     path: &Path,
     project_root: &Path,
@@ -595,6 +622,7 @@ fn build_shape_tree(
 }
 
 /// Find the project root by walking up to the nearest directory containing Cargo.toml.
+#[allow(dead_code)]
 fn find_project_root(start: &Path) -> Option<PathBuf> {
     let mut current = if start.is_dir() {
         start.to_path_buf()
@@ -622,7 +650,7 @@ fn find_project_root(start: &Path) -> Option<PathBuf> {
 /// Uses tree-sitter to parse `mod foo;` or `pub mod foo;` declarations (not inline modules)
 /// and resolves them to `foo.rs` or `foo/mod.rs` under the same directory, constrained to
 /// `project_root` so that only project files are included.
-fn find_rust_dependencies(source: &str, file_path: &Path, project_root: &Path) -> Vec<PathBuf> {
+pub fn find_rust_dependencies(source: &str, file_path: &Path, project_root: &Path) -> Vec<PathBuf> {
     let mut deps = Vec::new();
 
     let dir = file_path.parent().unwrap_or(project_root);
@@ -648,7 +676,7 @@ fn find_rust_dependencies(source: &str, file_path: &Path, project_root: &Path) -
     // We don't want: `mod foo { ... }`
     let query_str = r#"
         (mod_item
-            name: (identifier) @mod.name
+            name: (identifier) @mod_name
             !body
         )
     "#;
@@ -656,7 +684,7 @@ fn find_rust_dependencies(source: &str, file_path: &Path, project_root: &Path) -
     let query = match Query::new(&language, query_str) {
         Ok(q) => q,
         Err(e) => {
-            log::warn!("Failed to create mod query: {}", e);
+            log::warn!("Failed to create Rust mod query: {e}");
             return deps;
         }
     };
@@ -666,145 +694,17 @@ fn find_rust_dependencies(source: &str, file_path: &Path, project_root: &Path) -
 
     for match_ in matches {
         for capture in match_.captures {
-            if let Ok(name) = capture.node.utf8_text(source.as_bytes()) {
-                let candidate_files = [
-                    dir.join(format!("{name}.rs")),
-                    dir.join(name).join("mod.rs"),
-                ];
-
-                for candidate in candidate_files {
-                    if candidate.is_file() && candidate.starts_with(project_root) {
-                        deps.push(candidate);
-                        break;
-                    }
-                }
-            }
-        }
-    }
-
-    deps
-}
-
-/// For Python files, find simple module dependencies that live in this project.
-///
-/// This currently looks for `import foo` style imports and resolves them to
-/// `foo.py` or `foo/__init__.py` either next to the file or under the
-/// project root, constrained to `project_root`.
-fn find_python_dependencies(source: &str, file_path: &Path, project_root: &Path) -> Vec<PathBuf> {
-    let mut deps = Vec::new();
-
-    let dir = file_path.parent().unwrap_or(project_root);
-
-    for line in source.lines() {
-        let trimmed = line.trim_start();
-
-        if let Some(rest) = trimmed.strip_prefix("import ") {
-            for part in rest.split(',') {
-                let name = part.split_whitespace().next().unwrap_or("");
-                if name.is_empty() {
+            if let Ok(mod_name) = capture.node.utf8_text(source.as_bytes()) {
+                // Try foo.rs
+                let candidate = dir.join(format!("{mod_name}.rs"));
+                if candidate.is_file() && candidate.starts_with(project_root) {
+                    deps.push(candidate);
                     continue;
                 }
 
-                push_python_module(&mut deps, name, dir, project_root);
-            }
-        } else if let Some(rest) = trimmed.strip_prefix("from ") {
-            let module = rest.split_whitespace().next().unwrap_or("");
-            if module.is_empty() {
-                continue;
-            }
-
-            // Ignore relative imports like `from . import foo` for now
-            if module.starts_with('.') {
-                continue;
-            }
-
-            push_python_module(&mut deps, module, dir, project_root);
-        }
-    }
-
-    deps
-}
-
-fn push_python_module(deps: &mut Vec<PathBuf>, module: &str, dir: &Path, project_root: &Path) {
-    let base = module.split('.').next().unwrap_or(module);
-
-    let candidate_files = [
-        dir.join(format!("{base}.py")),
-        project_root.join(format!("{base}.py")),
-        dir.join(base).join("__init__.py"),
-        project_root.join(base).join("__init__.py"),
-    ];
-
-    for candidate in candidate_files {
-        if candidate.is_file() && candidate.starts_with(project_root) {
-            deps.push(candidate);
-            break;
-        }
-    }
-}
-
-/// For JavaScript/TypeScript files, find relative import dependencies that live
-/// in this project.
-///
-/// Uses tree-sitter to parse ESM-style `import` and `export` statements with string
-/// literal module specifiers and resolves relative paths like `./utils.js` against
-/// the current file directory, constrained to `project_root`.
-fn find_js_ts_dependencies(source: &str, file_path: &Path, project_root: &Path) -> Vec<PathBuf> {
-    let mut deps = Vec::new();
-
-    let dir = file_path.parent().unwrap_or(project_root);
-
-    // Determine language based on file extension
-    let is_typescript = file_path
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(|e| e == "ts" || e == "tsx")
-        .unwrap_or(false);
-
-    let language = if is_typescript {
-        tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()
-    } else {
-        tree_sitter_javascript::LANGUAGE.into()
-    };
-
-    let mut parser = tree_sitter::Parser::new();
-    if parser.set_language(&language).is_err() {
-        log::warn!("Failed to set JS/TS language for parser");
-        return deps;
-    }
-
-    let tree = match parser.parse(source, None) {
-        Some(t) => t,
-        None => {
-            log::warn!("Failed to parse JS/TS source for dependencies");
-            return deps;
-        }
-    };
-
-    // Query for import/export statements with string sources
-    // Handles: import ... from "module", export ... from "module", import "module"
-    let query_str = r#"
-        (import_statement source: (string) @import.source)
-        (export_statement source: (string) @export.source)
-    "#;
-
-    let query = match Query::new(&language, query_str) {
-        Ok(q) => q,
-        Err(e) => {
-            log::warn!("Failed to create import query: {}", e);
-            return deps;
-        }
-    };
-
-    let mut cursor = QueryCursor::new();
-    let matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
-
-    for match_ in matches {
-        for capture in match_.captures {
-            if let Ok(text) = capture.node.utf8_text(source.as_bytes()) {
-                // Extract the string content (remove quotes)
-                let spec = text.trim_matches(|c| c == '"' || c == '\'' || c == '`');
-                if let Some(candidate) = resolve_js_ts_spec(spec, dir, project_root) {
+                // Try foo/mod.rs
+                let candidate = dir.join(mod_name).join("mod.rs");
+                if candidate.is_file() && candidate.starts_with(project_root) {
                     deps.push(candidate);
                 }
             }
@@ -814,25 +714,170 @@ fn find_js_ts_dependencies(source: &str, file_path: &Path, project_root: &Path) 
     deps
 }
 
-fn resolve_js_ts_spec(spec: &str, dir: &Path, project_root: &Path) -> Option<PathBuf> {
-    // Only consider relative imports; skip bare module specifiers so that we
-    // don't accidentally include external dependencies.
-    if !(spec.starts_with("./") || spec.starts_with("../")) {
-        return None;
+/// For Python files, find import dependencies that live in this project.
+///
+/// Parses `import foo` and `from foo import bar` statements and resolves them to
+/// `foo.py` or `foo/__init__.py` under the project root.
+pub fn find_python_dependencies(
+    source: &str,
+    file_path: &Path,
+    project_root: &Path,
+) -> Vec<PathBuf> {
+    let mut deps = Vec::new();
+    let dir = file_path.parent().unwrap_or(project_root);
+
+    let language = tree_sitter_python::LANGUAGE.into();
+    let mut parser = tree_sitter::Parser::new();
+    if parser.set_language(&language).is_err() {
+        return deps;
     }
 
-    let candidate = dir.join(spec);
+    let tree = match parser.parse(source, None) {
+        Some(t) => t,
+        None => return deps,
+    };
 
-    // If the specifier has no extension, try common JS/TS extensions
-    if candidate.extension().is_none() {
-        for ext in &["js", "jsx", "ts", "tsx"] {
-            let with_ext = candidate.with_extension(ext);
-            if with_ext.is_file() && with_ext.starts_with(project_root) {
-                return Some(with_ext);
+    // Query for import statements
+    let query_str = r#"
+        (import_statement
+            name: (dotted_name) @import_name
+        )
+        (import_from_statement
+            module_name: (dotted_name) @import_name
+        )
+    "#;
+
+    let query = match Query::new(&language, query_str) {
+        Ok(q) => q,
+        Err(_) => return deps,
+    };
+
+    let mut cursor = QueryCursor::new();
+    let matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
+
+    for match_ in matches {
+        for capture in match_.captures {
+            if let Ok(module) = capture.node.utf8_text(source.as_bytes()) {
+                push_python_module(&mut deps, module, dir, project_root);
             }
         }
     }
 
+    deps
+}
+
+fn push_python_module(deps: &mut Vec<PathBuf>, module: &str, dir: &Path, project_root: &Path) {
+    // Convert dotted module name to path
+    let parts: Vec<&str> = module.split('.').collect();
+
+    // Try relative to current directory first
+    let mut candidate = dir.to_path_buf();
+    for part in &parts {
+        candidate = candidate.join(part);
+    }
+
+    // Try module.py
+    let with_py = candidate.with_extension("py");
+    if with_py.is_file() && with_py.starts_with(project_root) {
+        deps.push(with_py);
+        return;
+    }
+
+    // Try module/__init__.py
+    let with_init = candidate.join("__init__.py");
+    if with_init.is_file() && with_init.starts_with(project_root) {
+        deps.push(with_init);
+    }
+}
+
+/// For JavaScript/TypeScript files, find import dependencies that live in this project.
+///
+/// Parses `import ... from './foo'` statements and resolves relative imports to actual files.
+pub fn find_js_ts_dependencies(
+    source: &str,
+    file_path: &Path,
+    project_root: &Path,
+) -> Vec<PathBuf> {
+    let mut deps = Vec::new();
+    let dir = file_path.parent().unwrap_or(project_root);
+
+    // Detect if this is TypeScript or JavaScript
+    let is_ts = file_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e == "ts" || e == "tsx")
+        .unwrap_or(false);
+
+    let language = if is_ts {
+        tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()
+    } else {
+        tree_sitter_javascript::LANGUAGE.into()
+    };
+
+    let mut parser = tree_sitter::Parser::new();
+    if parser.set_language(&language).is_err() {
+        return deps;
+    }
+
+    let tree = match parser.parse(source, None) {
+        Some(t) => t,
+        None => return deps,
+    };
+
+    // Query for import statements
+    let query_str = r#"
+        (import_statement
+            source: (string) @import_source
+        )
+    "#;
+
+    let query = match Query::new(&language, query_str) {
+        Ok(q) => q,
+        Err(_) => return deps,
+    };
+
+    let mut cursor = QueryCursor::new();
+    let matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
+
+    for match_ in matches {
+        for capture in match_.captures {
+            if let Ok(import_spec) = capture.node.utf8_text(source.as_bytes()) {
+                // Remove quotes
+                let spec = import_spec.trim_matches(|c| c == '"' || c == '\'');
+
+                // Only process relative imports (starting with ./ or ../)
+                if spec.starts_with('.') {
+                    if let Some(resolved) = resolve_js_ts_spec(spec, dir, project_root) {
+                        deps.push(resolved);
+                    }
+                }
+            }
+        }
+    }
+
+    deps
+}
+
+fn resolve_js_ts_spec(spec: &str, dir: &Path, project_root: &Path) -> Option<PathBuf> {
+    let candidate = dir.join(spec);
+
+    // Try with various extensions
+    for ext in &["ts", "tsx", "js", "jsx", "mjs", "cjs"] {
+        let with_ext = candidate.with_extension(ext);
+        if with_ext.is_file() && with_ext.starts_with(project_root) {
+            return Some(with_ext);
+        }
+    }
+
+    // Try as directory with index file
+    for ext in &["ts", "tsx", "js", "jsx"] {
+        let index = candidate.join(format!("index.{ext}"));
+        if index.is_file() && index.starts_with(project_root) {
+            return Some(index);
+        }
+    }
+
+    // Try exact path
     if candidate.is_file() && candidate.starts_with(project_root) {
         return Some(candidate);
     }
@@ -847,18 +892,23 @@ fn resolve_js_ts_spec(spec: &str, dir: &Path, project_root: &Path) -> Option<Pat
 use regex::Regex;
 
 /// Template dependency info
+#[allow(dead_code)]
 #[derive(Debug, serde::Serialize, Clone)]
 pub struct TemplateDependency {
     pub path: String,
     pub dependency_type: String, // "extends" or "include"
+    pub name: String,
 }
 
 /// Template file shape (when merge_templates=true)
+#[allow(dead_code)]
 #[derive(Debug, serde::Serialize)]
 pub struct MergedTemplateShape {
     pub path: String,
     pub merged_content: String,
     pub dependencies: Vec<TemplateDependency>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub template_structs: Option<Vec<crate::analysis::askama::TemplateStructInfo>>,
 }
 
 /// Find templates directory by walking up from file path
@@ -893,186 +943,158 @@ pub fn find_templates_dir(file_path: &Path) -> Option<PathBuf> {
     None
 }
 
-/// Find template dependencies (extends and includes)
+/// Find template dependencies (extends/includes) in a template file
 ///
-/// Validates paths to prevent directory traversal attacks.
+/// Returns a list of template dependencies with their types and paths.
+#[allow(dead_code)]
 pub fn find_template_dependencies(
     source: &str,
     templates_dir: &Path,
 ) -> Result<Vec<TemplateDependency>, io::Error> {
-    let mut deps = Vec::new();
-    let canonical_templates = templates_dir.canonicalize()?;
+    let mut dependencies = Vec::new();
 
-    // {% extends "path" %} - supports both single and double quotes
-    let extends_re = Regex::new(r#"\{%\s*extends\s+["']([^"']+)["']\s*%\}"#)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("Invalid regex: {e}")))?;
+    // Regex for {% extends "base.html" %}
+    let extends_re = Regex::new(r#"\{%\s*extends\s+["']([^"']+)["']\s*%\}"#).unwrap();
+    // Regex for {% include "partial.html" %}
+    let include_re = Regex::new(r#"\{%\s*include\s+["']([^"']+)["']\s*%\}"#).unwrap();
 
+    // Find extends
     for cap in extends_re.captures_iter(source) {
-        let template_path = &cap[1];
-        let path = templates_dir.join(template_path);
-
-        // Security: Validate path is within templates_dir
-        if let Ok(canonical_path) = path.canonicalize() {
-            if canonical_path.starts_with(&canonical_templates) && path.exists() {
-                deps.push(TemplateDependency {
-                    path: template_path.to_string(),
-                    dependency_type: "extends".to_string(),
-                });
-            }
+        let template_name = &cap[1];
+        let template_path = templates_dir.join(template_name);
+        // Only include if the template file exists
+        if template_path.exists() {
+            dependencies.push(TemplateDependency {
+                path: template_name.to_string(),
+                dependency_type: "extends".to_string(),
+                name: template_name.to_string(),
+            });
         }
     }
 
-    // {% include "path" %} - supports both single and double quotes
-    let include_re = Regex::new(r#"\{%\s*include\s+["']([^"']+)["']\s*%\}"#)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("Invalid regex: {e}")))?;
-
+    // Find includes
     for cap in include_re.captures_iter(source) {
-        let template_path = &cap[1];
-        let path = templates_dir.join(template_path);
-
-        // Security: Validate path is within templates_dir
-        if let Ok(canonical_path) = path.canonicalize() {
-            if canonical_path.starts_with(&canonical_templates) && path.exists() {
-                deps.push(TemplateDependency {
-                    path: template_path.to_string(),
-                    dependency_type: "include".to_string(),
-                });
-            }
+        let template_name = &cap[1];
+        let template_path = templates_dir.join(template_name);
+        // Only include if the template file exists
+        if template_path.exists() {
+            dependencies.push(TemplateDependency {
+                path: template_name.to_string(),
+                dependency_type: "include".to_string(),
+                name: template_name.to_string(),
+            });
         }
     }
 
-    Ok(deps)
+    Ok(dependencies)
 }
 
-/// Merge template with its dependencies (extends and includes)
+/// Recursively merge a template with its parent templates and includes
 ///
-/// Uses separate tracking for visited files and recursion stack to properly
-/// handle circular dependencies while allowing the same file to be included
-/// multiple times in different branches.
+/// Handles {% extends %} and {% include %} directives, merging content appropriately.
+#[allow(dead_code)]
 fn merge_template(
     template_path: &Path,
     templates_dir: &Path,
     visited: &mut HashSet<PathBuf>,
     recursion_stack: &mut Vec<PathBuf>,
 ) -> Result<String, io::Error> {
-    if recursion_stack.len() > MAX_TEMPLATE_DEPTH {
+    // Check for circular dependencies
+    if recursion_stack.contains(&template_path.to_path_buf()) {
         return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "Template inheritance depth exceeded maximum",
-        ));
-    }
-
-    let canonical = template_path.canonicalize().map_err(|_e| {
-        io::Error::new(
-            io::ErrorKind::NotFound,
-            format!("Template not found: {}", template_path.display()),
-        )
-    })?;
-
-    // Check for circular dependency
-    if recursion_stack.contains(&canonical) {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
+            io::ErrorKind::InvalidInput,
             format!(
-                "Circular template dependency detected: {:?}",
-                recursion_stack
+                "Circular template dependency detected: {}",
+                template_path.display()
             ),
         ));
     }
 
-    recursion_stack.push(canonical.clone());
-    visited.insert(canonical.clone());
+    // Check recursion depth
+    if recursion_stack.len() >= MAX_TEMPLATE_DEPTH {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("Template recursion depth exceeded (max: {MAX_TEMPLATE_DEPTH})"),
+        ));
+    }
+
+    recursion_stack.push(template_path.to_path_buf());
+    visited.insert(template_path.to_path_buf());
 
     let source = fs::read_to_string(template_path)?;
 
-    // Handle {% extends "base.html" %}
-    let extends_re = Regex::new(r#"\{%\s*extends\s+["']([^"']+)["']\s*%\}"#)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("Invalid regex: {e}")))?;
-
+    // Check for {% extends "parent.html" %}
+    let extends_re = Regex::new(r#"\{%\s*extends\s+["']([^"']+)["']\s*%\}"#).unwrap();
     if let Some(cap) = extends_re.captures(&source) {
-        let parent_path = templates_dir.join(&cap[1]);
+        let parent_name = &cap[1];
+        let parent_path = templates_dir.join(parent_name);
 
-        // Security: Validate path
-        let canonical_parent = parent_path
-            .canonicalize()
-            .map_err(|_e| io::Error::new(io::ErrorKind::NotFound, "Parent template not found"))?;
-        let canonical_templates = templates_dir.canonicalize()?;
-
-        if !canonical_parent.starts_with(&canonical_templates) {
-            recursion_stack.pop();
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "Path traversal detected in template extends",
-            ));
-        }
-
+        // Recursively merge parent
         let parent_content = merge_template(&parent_path, templates_dir, visited, recursion_stack)?;
 
-        // Extract blocks from child
-        let child_blocks = extract_blocks(&source)?;
+        // Extract blocks from current template
+        let blocks = extract_blocks(&source)?;
 
         // Replace blocks in parent
-        let result = replace_blocks(&parent_content, &child_blocks)?;
+        let merged = replace_blocks(&parent_content, &blocks)?;
+
         recursion_stack.pop();
-        return Ok(result);
+        return Ok(merged);
     }
 
     // Handle {% include "partial.html" %}
-    let include_re = Regex::new(r#"\{%\s*include\s+["']([^"']+)["']\s*%\}"#)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("Invalid regex: {e}")))?;
+    let include_re = Regex::new(r#"\{%\s*include\s+["']([^"']+)["']\s*%\}"#).unwrap();
+    let mut result = source.clone();
 
-    let result = include_re.replace_all(&source, |caps: &regex::Captures| {
-        let include_path = templates_dir.join(&caps[1]);
+    for cap in include_re.captures_iter(&source) {
+        let include_name = &cap[1];
+        let include_path = templates_dir.join(include_name);
 
-        // Security: Validate path
-        if let Ok(canonical_include) = include_path.canonicalize() {
-            if let Ok(canonical_templates) = templates_dir.canonicalize() {
-                if canonical_include.starts_with(&canonical_templates) {
-                    return merge_template(&include_path, templates_dir, visited, recursion_stack)
-                        .unwrap_or_else(|e| {
-                            format!("<!-- include error: {} - {} -->", &caps[1], e)
-                        });
-                }
-            }
-        }
-        format!(
-            "<!-- include error: {} - path validation failed -->",
-            &caps[1]
-        )
-    });
+        let include_content =
+            merge_template(&include_path, templates_dir, visited, recursion_stack)?;
+
+        // Replace the include directive with the content
+        let directive = &cap[0];
+        result = result.replace(directive, &include_content);
+    }
 
     recursion_stack.pop();
-    Ok(result.to_string())
+    Ok(result)
 }
 
-/// Extract block definitions from template source
+/// Extract {% block name %}...{% endblock %} sections from a template
+#[allow(dead_code)]
 fn extract_blocks(source: &str) -> Result<std::collections::HashMap<String, String>, io::Error> {
     let mut blocks = std::collections::HashMap::new();
-    let block_re = Regex::new(r#"\{%\s*block\s+(\w+)\s*%\}([\s\S]*?)\{%\s*endblock\s*%\}"#)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("Invalid regex: {e}")))?;
+
+    let block_re = Regex::new(r#"\{%\s*block\s+(\w+)\s*%\}(.*?)\{%\s*endblock\s*%\}"#).unwrap();
 
     for cap in block_re.captures_iter(source) {
-        blocks.insert(cap[1].to_string(), cap[2].to_string());
+        let block_name = cap[1].to_string();
+        let block_content = cap[2].to_string();
+        blocks.insert(block_name, block_content);
     }
+
     Ok(blocks)
 }
 
-/// Replace block placeholders in parent template with child blocks
+/// Replace {% block name %}...{% endblock %} sections in a template with provided blocks
+#[allow(dead_code)]
 fn replace_blocks(
-    parent: &str,
-    child_blocks: &std::collections::HashMap<String, String>,
+    template: &str,
+    blocks: &std::collections::HashMap<String, String>,
 ) -> Result<String, io::Error> {
-    let block_re = Regex::new(r#"\{%\s*block\s+(\w+)\s*%\}([\s\S]*?)\{%\s*endblock\s*%\}"#)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("Invalid regex: {e}")))?;
+    let block_re = Regex::new(r#"\{%\s*block\s+(\w+)\s*%\}.*?\{%\s*endblock\s*%\}"#).unwrap();
 
-    let result = block_re.replace_all(parent, |caps: &regex::Captures| {
-        let block_name = &caps[1];
-        // Use child block if exists, otherwise keep parent default
-        child_blocks
-            .get(block_name)
-            .cloned()
-            .unwrap_or_else(|| caps[2].to_string())
-    });
+    let mut result = template.to_string();
 
-    Ok(result.to_string())
+    for cap in block_re.captures_iter(template) {
+        let block_name = &cap[1];
+        if let Some(replacement) = blocks.get(block_name) {
+            let full_block = &cap[0];
+            result = result.replace(full_block, replacement);
+        }
+    }
+
+    Ok(result)
 }

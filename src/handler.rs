@@ -54,16 +54,14 @@ impl ServerHandler for TreesitterServerHandler {
 
         // Match the tool variant and execute its corresponding logic
         match tool {
-            TreesitterTools::ParseFile(t) => t.call_tool(),
-            TreesitterTools::ReadFocusedCode(t) => t.call_tool(),
-            TreesitterTools::FileShape(t) => t.call_tool(),
+            TreesitterTools::ViewCode(t) => t.call_tool(),
             TreesitterTools::CodeMap(t) => t.call_tool(),
             TreesitterTools::FindUsages(t) => t.call_tool(),
-            TreesitterTools::QueryPattern(t) => t.call_tool(),
-            TreesitterTools::GetContext(t) => t.call_tool(),
-            TreesitterTools::GetNodeAtPosition(t) => t.call_tool(),
+            TreesitterTools::SymbolAtLine(t) => t.call_tool(),
             TreesitterTools::ParseDiff(t) => t.call_tool(),
             TreesitterTools::AffectedByDiff(t) => t.call_tool(),
+            TreesitterTools::QueryPattern(t) => t.call_tool(),
+            TreesitterTools::TemplateContext(t) => t.call_tool(),
         }
     }
 }

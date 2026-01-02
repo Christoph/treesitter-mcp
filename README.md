@@ -67,15 +67,15 @@ Choose the right tool for your task:
 
 #### "I need to understand code"
 - **Don't know which file?** → `code_map` (directory overview)
-- **Know the file, need overview?** → `file_shape` (signatures only, 10x cheaper than parse_file)
-- **Know the file, need full details?** → `parse_file` (complete code)
-- **Know the specific function?** → `read_focused_code` (focused view, 3x cheaper than parse_file)
+- **Know the file, need overview?** → `view_code` with `detail="signatures"` (signatures only)
+- **Know the file, need full details?** → `view_code` with `detail="full"` (complete code)
+- **Know the specific function?** → `view_code` with `focus_symbol` (focused view, optimized tokens)
 
 #### "I need to find something"
 - **Where is symbol X used?** → `find_usages` (semantic search with usage types)
 - **Complex pattern matching?** → `query_pattern` (advanced, requires tree-sitter syntax)
-- **What function is at line N?** → `get_context` (scope hierarchy)
-- **What's the exact AST node?** → `get_node_at_position` (syntax details, advanced)
+- **What function is at line N?** → `symbol_at_line` (symbol info with scope hierarchy)
+- **What data is available in a template?** → `template_context` (Askama template variables)
 
 #### "I'm refactoring/changing code"
 - **Before changes:** `find_usages` (see all usages)
@@ -87,23 +87,23 @@ Choose the right tool for your task:
 | Tool | Scope | Token Cost | Speed | Best For |
 |------|-------|------------|-------|----------|
 | `code_map` | Directory | Medium | Fast | First-time exploration |
-| `file_shape` | Single file | **Low** | Fast | Quick overview, API understanding |
-| `parse_file` | Single file | **High** | Fast | Deep understanding, multiple functions |
-| `read_focused_code` | Single file | Medium | Fast | Editing specific function |
+| `view_code` (signatures) | Single file | **Low** | Fast | Quick overview, API understanding |
+| `view_code` (full) | Single file | **High** | Fast | Deep understanding, multiple functions |
+| `view_code` (focused) | Single file | Medium | Fast | Editing specific function |
 | `find_usages` | Multi-file | Medium-High | Medium | Refactoring, impact analysis |
 | `affected_by_diff` | Multi-file | Medium-High | Medium | Post-change validation |
 | `parse_diff` | Single file | **Low-Medium** | Fast | Verify changes |
-| `get_context` | Single file | **Low** | Fast | Error debugging, scope lookup |
-| `get_node_at_position` | Single file | **Low** | Fast | Syntax-aware edits (advanced) |
+| `symbol_at_line` | Single file | **Low** | Fast | Error debugging, scope lookup |
 | `query_pattern` | Single file | Medium | Medium | Complex patterns (advanced) |
+| `template_context` | Single file | **Low-Medium** | Fast | Askama template editing |
 
 ### Common Workflow Patterns
 
 #### Pattern 1: Exploring New Codebase
 ```
 1. code_map (path="src", detail="minimal")      → Get lay of the land
-2. file_shape (interesting files)               → Understand interfaces
-3. read_focused_code (specific functions)       → Deep dive
+2. view_code (detail="signatures")              → Understand interfaces
+3. view_code (focus_symbol="function_name")     → Deep dive
 ```
 
 #### Pattern 2: Refactoring Function
@@ -116,134 +116,125 @@ Choose the right tool for your task:
 
 #### Pattern 3: Debugging Error
 ```
-1. get_context (line=error_line)                → Find function
-2. read_focused_code (focus_symbol=func_name)   → See implementation
+1. symbol_at_line (line=error_line)             → Find function
+2. view_code (focus_symbol=func_name)           → See implementation
 3. find_usages (symbol=variable_name)           → Trace data flow
 ```
 
 #### Pattern 4: Understanding Large File
 ```
-1. file_shape ()                                → See all functions
-2. read_focused_code (focus_symbol=main_func)   → Start with entry point
-3. read_focused_code (focus_symbol=helper)      → Drill into helpers as needed
+1. view_code (detail="signatures")              → See all functions
+2. view_code (focus_symbol=main_func)           → Start with entry point
+3. view_code (focus_symbol=helper)              → Drill into helpers as needed
 ```
 
 ### Token Optimization Strategies
 
-- **Low Budget (<2000 tokens):** Use `file_shape` instead of `parse_file`, `code_map` with `detail="minimal"`, set `find_usages` `max_context_lines=20`
-- **Medium Budget (2000-5000 tokens):** Use `read_focused_code` for focused editing, default settings
-- **High Budget (>5000 tokens):** Use `parse_file` freely, `code_map` with `detail="full"`
+- **Low Budget (<2000 tokens):** Use `view_code` with `detail="signatures"`, `code_map` with `detail="minimal"`, set `find_usages` `max_context_lines=20`
+- **Medium Budget (2000-5000 tokens):** Use `view_code` with `focus_symbol` for focused editing, default settings
+- **High Budget (>5000 tokens):** Use `view_code` with `detail="full"` freely, `code_map` with `detail="full"`
 
 ### Common Anti-Patterns (What NOT to Do)
 
-❌ **Using parse_file for quick overview** → Use `file_shape` instead (10x cheaper)  
+❌ **Using view_code with detail="full" for quick overview** → Use `detail="signatures"` instead (10x cheaper)  
 ❌ **Using query_pattern for symbol search** → Use `find_usages` instead (simpler, cross-language)  
-❌ **Using parse_file on large files (>500 lines) without checking file_shape first** → Always start with `file_shape`  
+❌ **Using view_code with detail="full" on large files without checking signatures first** → Always start with `detail="signatures"`  
 ❌ **Not setting max_context_lines when using find_usages on common symbols** → Can cause token explosion  
-❌ **Using get_node_at_position when you just need function name** → Use `get_context` instead (simpler)
+❌ **Not using focus_symbol when editing specific functions** → Use `focus_symbol` for 3x token savings
 
 ---
 
-### 1. parse_file
+### 1. view_code
 
-Parse single file with FULL implementation details. Returns complete code for all functions/classes.
+View a source file with flexible detail levels and automatic type inclusion from project dependencies.
 
 **Use When:**
-- ✅ Understanding implementation details before editing
-- ✅ File is <500 lines and you need complete context
-- ✅ Writing tests that require understanding function logic
-- ✅ Modifying multiple functions in same file
+- ✅ Need to view/edit a file
+- ✅ Want type definitions from dependencies
+- ✅ Need full code or just signatures
+- ✅ Editing specific function (use `focus_symbol`)
 
 **Don't Use When:**
-- ❌ You only need function names/signatures → use `file_shape` (10x cheaper)
-- ❌ You only need to edit one function → use `read_focused_code` (3x cheaper)
-- ❌ File is >500 lines and you need overview → use `file_shape` first
 - ❌ Exploring multiple files → use `code_map`
+- ❌ You haven't identified the file yet → use `code_map` first
 
-**Token Cost:** HIGH (full file contents)
+**Token Cost:** MEDIUM-HIGH (varies by detail level)
 
 **Parameters**:
 - `file_path` (string, required): Path to the source file
-- `include_code` (boolean, optional, default: true): Set false for 60-80% token reduction (signatures only)
+- `detail` (string, optional, default: "full"): Detail level
+  - `"signatures"`: Function/class signatures only (no bodies) - 10x cheaper
+  - `"full"`: Complete implementation code
+- `focus_symbol` (string, optional): Focus on ONE symbol, show full code only for it
+  - When set, returns full code for this symbol + signatures for rest - 3x cheaper
 
-**Example**:
+**Auto-Includes**: All struct/class/interface definitions from project dependencies (not external libs)
+
+**Examples**:
+
+Quick overview (signatures only):
 ```json
 {
-  "file_path": "/path/to/file.rs",
-  "include_code": true
+  "file_path": "src/calculator.rs",
+  "detail": "signatures"
 }
 ```
 
-**Returns**: Complete structure with function/class names, signatures, line ranges, doc comments, and code blocks
-
-**Optimization:** Set `include_code=false` to reduce by 60-80% (equivalent to `file_shape`)
-
----
-
-### 2. file_shape
-
-Extract file structure WITHOUT implementation code. Returns skeleton: function/class signatures, imports, dependencies only (NO function bodies).
-
-**Use When:**
-- ✅ Quick overview of file's API/interface
-- ✅ Deciding which function to focus on before using `read_focused_code`
-- ✅ Mapping dependencies between files (use `include_deps=true`)
-- ✅ File is >500 lines and you need to orient yourself
-
-**Don't Use When:**
-- ❌ You need implementation logic → use `parse_file` or `read_focused_code`
-- ❌ Exploring multiple files → use `code_map`
-- ❌ You already know which function to edit → use `read_focused_code` directly
-
-**Token Cost:** LOW (10-20% of parse_file)
-
-**Parameters**:
-- `file_path` (string, required): Path to the source file
-- `include_deps` (boolean, optional, default: false): Include project dependencies as nested file shapes
-- `merge_templates` (boolean, optional, default: false): For templates in `templates/` dir: merge extends/includes into single output
-
-**Example**:
+Full implementation:
 ```json
 {
-  "file_path": "/path/to/lib.rs",
-  "include_deps": true
+  "file_path": "src/calculator.rs",
+  "detail": "full"
 }
 ```
 
-**Optimization:** Use this FIRST, then drill down with `parse_file` or `read_focused_code`
-
-**Typical Workflow:** `file_shape` → `read_focused_code` (specific function) → `parse_file` (if needed)
-
-**Returns**: JSON object with:
+Focused editing (optimized):
 ```json
 {
-  "path": "src/lib.rs",
+  "file_path": "src/calculator.rs",
+  "detail": "full",
+  "focus_symbol": "add"
+}
+```
+
+**Returns**:
+```json
+{
+  "path": "src/calculator.rs",
   "functions": [
-    {"name": "add", "line": 5},
-    {"name": "multiply", "line": 10}
+    {"name": "add", "signature": "pub fn add(a: i32, b: i32) -> i32", "line": 5, "code": "..."}
   ],
   "structs": [
-    {"name": "Point", "line": 15}
+    {"name": "Calculator", "line": 15, "fields": [...]}
   ],
-  "imports": [
-    "use std::fmt;"
+  "impl_blocks": [
+    {
+      "type_name": "Calculator",
+      "methods": [
+        {"name": "new", "signature": "pub fn new() -> Self", "line": 20}
+      ]
+    }
   ],
+  "traits": [...],
   "dependencies": [
     {
-      "path": "src/utils.rs",
-      "functions": [
-        {"name": "add", "line": 3}
-      ],
-      "imports": [],
-      "dependencies": []
+      "path": "src/models.rs",
+      "structs": [...],
+      "impl_blocks": [...]
     }
   ]
 }
 ```
 
+**Optimization:** 
+- Use `detail="signatures"` for quick overview (10x cheaper)
+- Use `focus_symbol` for focused editing (3x cheaper)
+
+**Typical Workflow:** `code_map` → `view_code`
+
 ---
 
-### 3. code_map
+### 2. code_map
 
 Generate hierarchical map of a DIRECTORY (not single file). Returns structure overview of multiple files.
 
@@ -300,46 +291,7 @@ Generate hierarchical map of a DIRECTORY (not single file). Returns structure ov
 
 ---
 
-### 4. read_focused_code
-
-Read file with FULL code for ONE symbol, signatures-only for everything else. Optimized for focused editing.
-
-**Use When:**
-- ✅ You know exactly which function to edit
-- ✅ You need surrounding context to understand dependencies
-- ✅ File is large but you only care about one function
-- ✅ You want to minimize tokens while maintaining context
-
-**Don't Use When:**
-- ❌ You need to understand multiple functions → use `parse_file`
-- ❌ You don't know which function to focus on → use `file_shape` first
-- ❌ You need all implementations → use `parse_file`
-
-**Token Cost:** MEDIUM (one function + file skeleton, ~30% of parse_file)
-
-**Parameters**:
-- `file_path` (string, required): Path to the source file
-- `focus_symbol` (string, required): Function/class/struct name to show full code for
-- `context_radius` (integer, optional, default: 0): Include full code for N symbols before/after the focused symbol
-
-**Example**:
-```json
-{
-  "file_path": "/path/to/calculator.rs",
-  "focus_symbol": "add",
-  "context_radius": 0
-}
-```
-
-**Returns**: Complete implementation of target function/class plus signatures of surrounding code
-
-**Optimization:** Keep `context_radius=0` unless you need adjacent functions
-
-**Typical Workflow:** `file_shape` (find function name) → `read_focused_code` (edit it)
-
----
-
-### 5. find_usages
+### 3. find_usages
 
 Find ALL usages of a symbol (function, variable, class, type) across files. Semantic search, not text search.
 
@@ -400,7 +352,58 @@ Find ALL usages of a symbol (function, variable, class, type) across files. Sema
 
 ---
 
-### 6. parse_diff
+### 4. symbol_at_line
+
+Get symbol (function/class/method) at specific line with signature and scope chain.
+
+**Use When:**
+- ✅ Have line number from error/stack trace
+- ✅ Need to know "what function is this line in?"
+- ✅ Want function signature at a location
+- ✅ Understanding scope hierarchy
+
+**Don't Use When:**
+- ❌ Need full code → use `view_code` with `focus_symbol`
+- ❌ Know symbol name already → use `view_code` directly
+
+**Token Cost:** LOW
+
+**Parameters**:
+- `file_path` (string, required): Path to the source file
+- `line` (integer, required): Line number (1-indexed)
+- `column` (integer, optional, default: 1): Column number (1-indexed)
+
+**Example**:
+```json
+{
+  "file_path": "/path/to/file.rs",
+  "line": 42,
+  "column": 15
+}
+```
+
+**Returns**: Symbol name, signature, kind, and enclosing scopes from innermost to outermost
+```json
+{
+  "symbol": {
+    "name": "calculate",
+    "kind": "function",
+    "signature": "pub fn calculate(x: i32) -> i32",
+    "line": 40
+  },
+  "scope_chain": [
+    {"kind": "function", "name": "calculate"},
+    {"kind": "impl_block", "name": "Calculator"},
+    {"kind": "module", "name": "math"}
+  ]
+}
+```
+
+**Typical Workflow:** `symbol_at_line` (find symbol) → `view_code` (see code)
+
+---
+
+### 5. parse_diff
 
 Analyze structural changes vs git revision. Returns symbol-level diff (functions/classes added/removed/modified), not line-level.
 
@@ -484,7 +487,7 @@ Analyze structural changes vs git revision. Returns symbol-level diff (functions
 
 ---
 
-### 7. affected_by_diff
+### 6. affected_by_diff
 
 Find usages AFFECTED by your changes. Combines `parse_diff` + `find_usages` to show blast radius with risk levels.
 
@@ -567,7 +570,7 @@ Find usages AFFECTED by your changes. Combines `parse_diff` + `find_usages` to s
 
 ---
 
-### 8. query_pattern
+### 7. query_pattern
 
 Execute custom tree-sitter S-expression query for advanced AST pattern matching. Returns matches with code context for complex structural patterns.
 
@@ -648,83 +651,57 @@ Execute custom tree-sitter S-expression query for advanced AST pattern matching.
 
 ---
 
-### 9. get_context
+### 8. template_context
 
-Get enclosing scope hierarchy at specific file:line:column position. Returns nested contexts from innermost to outermost.
+Find Rust structs associated with an Askama template file. Returns struct names, fields, and types (resolved up to 3 levels deep) that are available as variables in the template.
 
 **Use When:**
-- ✅ You have a line number from an error, stack trace, or user reference
-- ✅ You need to know "what function is this line in?"
-- ✅ Understanding scope hierarchy for debugging
-- ✅ Navigating to a specific location in code
+- ✅ Editing Askama HTML templates and need to know available variables
+- ✅ Understanding what data is passed to a template
+- ✅ Debugging template rendering issues
 
 **Don't Use When:**
-- ❌ You need the actual code → use `read_focused_code` after getting function name
-- ❌ You need detailed AST info → use `get_node_at_position`
-- ❌ You know the function name already → use `read_focused_code` directly
+- ❌ Not using Askama templates
+- ❌ Working with non-template files
 
-**Token Cost:** LOW (just scope chain)
+**Token Cost:** LOW-MEDIUM
 
 **Parameters**:
-- `file_path` (string, required): Path to the source file
-- `line` (integer, required): Line number (1-indexed)
-- `column` (integer, optional, default: 1): Column number (1-indexed)
+- `template_path` (string, required): Path to the template file (relative or absolute)
 
 **Example**:
 ```json
 {
-  "file_path": "/path/to/file.rs",
-  "line": 42,
-  "column": 15
+  "template_path": "templates/calculator.html"
 }
 ```
 
-**Returns**: Nested contexts from innermost to outermost (e.g., "inside function X, inside class Y, inside module Z")
-
-**Typical Workflow:** `get_context` (find function) → `read_focused_code` (see implementation)
-
----
-
-### 10. get_node_at_position
-
-Get precise AST node at file:line:column position with parent chain. Returns node type, text, range, and ancestor nodes.
-
-**Use When:**
-- ✅ You need exact syntactic information at a cursor position
-- ✅ Syntax-aware edits (e.g., "wrap this expression in a function call")
-- ✅ Understanding what token/expression is at a location
-- ✅ Debugging parse issues or AST structure
-
-**Don't Use When:**
-- ❌ You just need to know the function name → use `get_context` (simpler)
-- ❌ You need the full function code → use `read_focused_code`
-- ❌ You're not doing syntax-aware operations → use `get_context`
-
-**Token Cost:** LOW (just node info)
-
-**Complexity:** MEDIUM - requires understanding AST concepts
-
-**Use Case:** Advanced/syntax-aware operations only
-
-**Parameters**:
-- `file_path` (string, required): Path to the source file
-- `line` (integer, required): Line number (1-indexed)
-- `column` (integer, required): Column number (1-indexed)
-- `ancestor_levels` (integer, optional, default: 3): Number of ancestor levels to return
-
-**Example**:
+**Returns**: Struct names and fields with types
 ```json
 {
-  "file_path": "/path/to/file.rs",
-  "line": 42,
-  "column": 15,
-  "ancestor_levels": 3
+  "structs": [
+    {
+      "name": "CalculatorContext",
+      "fields": [
+        {
+          "name": "result",
+          "type": "i32"
+        },
+        {
+          "name": "history",
+          "type": "Vec<HistoryEntry>",
+          "nested_fields": [
+            {"name": "operation", "type": "String"},
+            {"name": "value", "type": "i32"}
+          ]
+        }
+      ]
+    }
+  ]
 }
 ```
 
-**Returns**: Node type, text, range, and N ancestor nodes
-
-**Optimization:** Reduce `ancestor_levels` if you don't need deep hierarchy
+**Typical Workflow:** `template_context` → edit template with known variables
 
 ---
 

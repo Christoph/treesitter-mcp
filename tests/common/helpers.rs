@@ -73,3 +73,31 @@ pub fn assert_min_count(value: &Value, field: &str, min: usize) {
         items.len()
     );
 }
+
+/// Approximate token count (chars / 4 is standard approximation)
+pub fn approx_tokens(text: &str) -> usize {
+    text.len() / 4
+}
+
+/// Assert output is within token budget
+pub fn assert_within_token_budget(text: &str, max_tokens: usize, context: &str) {
+    let actual = approx_tokens(text);
+    assert!(
+        actual <= max_tokens,
+        "{}: Output exceeds token budget: {} > {} tokens",
+        context,
+        actual,
+        max_tokens
+    );
+}
+
+/// Assert error message contains expected context
+pub fn assert_error_contains(err: &str, expected: &str, context: &str) {
+    assert!(
+        err.to_lowercase().contains(&expected.to_lowercase()),
+        "{}: Error should contain '{}', got: {}",
+        context,
+        expected,
+        err
+    );
+}

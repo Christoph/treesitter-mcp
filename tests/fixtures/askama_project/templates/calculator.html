@@ -1,0 +1,12 @@
+<!DOCTYPE html>
+<html>
+<head><title>Calculator</title></head>
+<body>
+    <h1>Result: {{ result }}</h1>
+    <ul>
+    {% for item in history %}
+        <li>{{ item }}</li>
+    {% endfor %}
+    </ul>
+</body>
+</html>

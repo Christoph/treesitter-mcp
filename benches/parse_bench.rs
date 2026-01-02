@@ -1,4 +1,4 @@
-//! Performance benchmarks for parse_file operations
+//! Performance benchmarks for view_code operations
 //!
 //! Run with: cargo bench --bench parse_bench
 
@@ -14,8 +14,8 @@ fn fixture_path(lang: &str, file: &str) -> PathBuf {
         .join(file)
 }
 
-fn bench_parse_file_by_language(c: &mut Criterion) {
-    let mut group = c.benchmark_group("parse_file_by_language");
+fn bench_view_code_by_language(c: &mut Criterion) {
+    let mut group = c.benchmark_group("view_code_by_language");
 
     let test_cases = vec![
         ("rust", "src/calculator.rs"),
@@ -27,19 +27,20 @@ fn bench_parse_file_by_language(c: &mut Criterion) {
     for (lang, file) in test_cases {
         let file_path = fixture_path(lang, file);
         let arguments = json!({
-            "file_path": file_path.to_str().unwrap()
+            "file_path": file_path.to_str().unwrap(),
+            "detail": "full"
         });
 
         group.bench_with_input(BenchmarkId::from_parameter(lang), &arguments, |b, args| {
-            b.iter(|| treesitter_mcp::analysis::parse_file::execute(black_box(args)));
+            b.iter(|| treesitter_mcp::analysis::view_code::execute(black_box(args)));
         });
     }
 
     group.finish();
 }
 
-fn bench_parse_file_by_size(c: &mut Criterion) {
-    let mut group = c.benchmark_group("parse_file_by_size");
+fn bench_view_code_by_size(c: &mut Criterion) {
+    let mut group = c.benchmark_group("view_code_by_size");
 
     // Benchmark files of different sizes
     let test_cases = vec![
@@ -51,29 +52,41 @@ fn bench_parse_file_by_size(c: &mut Criterion) {
     for (size, lang, file) in test_cases {
         let file_path = fixture_path(lang, file);
         let arguments = json!({
-            "file_path": file_path.to_str().unwrap()
+            "file_path": file_path.to_str().unwrap(),
+            "detail": "full"
         });
 
         group.bench_with_input(BenchmarkId::from_parameter(size), &arguments, |b, args| {
-            b.iter(|| treesitter_mcp::analysis::parse_file::execute(black_box(args)));
+            b.iter(|| treesitter_mcp::analysis::view_code::execute(black_box(args)));
         });
     }
 
     group.finish();
 }
 
-fn bench_parse_file_with_code_inclusion(c: &mut Criterion) {
-    let mut group = c.benchmark_group("parse_file_code_inclusion");
+fn bench_view_code_detail_levels(c: &mut Criterion) {
+    let mut group = c.benchmark_group("view_code_detail_levels");
 
     let file_path = fixture_path("rust", "src/calculator.rs");
 
-    // Benchmark with code inclusion (default behavior)
-    let arguments = json!({
-        "file_path": file_path.to_str().unwrap()
+    // Benchmark with full code (default behavior)
+    let full_args = json!({
+        "file_path": file_path.to_str().unwrap(),
+        "detail": "full"
     });
 
-    group.bench_function("with_code", |b| {
-        b.iter(|| treesitter_mcp::analysis::parse_file::execute(black_box(&arguments)));
+    group.bench_function("detail_full", |b| {
+        b.iter(|| treesitter_mcp::analysis::view_code::execute(black_box(&full_args)));
+    });
+
+    // Benchmark with signatures only
+    let sig_args = json!({
+        "file_path": file_path.to_str().unwrap(),
+        "detail": "signatures"
+    });
+
+    group.bench_function("detail_signatures", |b| {
+        b.iter(|| treesitter_mcp::analysis::view_code::execute(black_box(&sig_args)));
     });
 
     group.finish();
@@ -81,8 +94,8 @@ fn bench_parse_file_with_code_inclusion(c: &mut Criterion) {
 
 criterion_group!(
     benches,
-    bench_parse_file_by_language,
-    bench_parse_file_by_size,
-    bench_parse_file_with_code_inclusion
+    bench_view_code_by_language,
+    bench_view_code_by_size,
+    bench_view_code_detail_levels
 );
 criterion_main!(benches);

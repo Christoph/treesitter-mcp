@@ -82,7 +82,14 @@ fn find_git_root(path: &Path) -> Option<PathBuf> {
 }
 
 /// Find project root by looking for common project markers
-fn find_project_root(path: &Path) -> Option<PathBuf> {
+///
+/// Searches upward from the given path for:
+/// - Cargo.toml (Rust)
+/// - package.json (JavaScript/TypeScript)
+/// - pyproject.toml (Python)
+/// - go.mod (Go)
+/// - .git (Git repository)
+pub fn find_project_root(path: &Path) -> Option<PathBuf> {
     let mut current = path;
 
     // If path is a file, start from its parent

@@ -7,72 +7,43 @@ use rust_mcp_sdk::macros::{mcp_tool, JsonSchema};
 use rust_mcp_sdk::schema::{schema_utils::CallToolError, CallToolResult};
 use rust_mcp_sdk::tool_box;
 
-use crate::analysis::{
-    code_map, diff, file_shape, find_usages, get_context, get_node_at_position, parse_file,
-    query_pattern, read_focused_code,
-};
+use crate::analysis::{code_map, diff, find_usages, query_pattern, symbol_at_line, view_code};
 
 // Helper function for serde default
-fn default_true() -> bool {
-    true
+fn default_full() -> String {
+    "full".to_string()
 }
 
-/// Parse a source file and return its structure (functions, classes, imports) with signatures and docs
-#[mcp_tool(
-    name = "parse_file",
-    description = "Parse single file with FULL implementation details. Returns complete code for all functions/classes with names, signatures, line ranges, and doc comments. USE WHEN: ✅ Understanding implementation before editing ✅ File <500 lines needing complete context ✅ Modifying multiple functions in same file. DON'T USE: ❌ Only need signatures → use file_shape (10x cheaper) ❌ Only editing one function → use read_focused_code (3x cheaper) ❌ File >500 lines → use file_shape first. TOKEN COST: HIGH. OPTIMIZATION: Set include_code=false for 60-80% reduction."
-)]
-#[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
-pub struct ParseFile {
-    /// Path to the source file to parse
-    pub file_path: String,
-    /// Include full code blocks for functions/classes (default: true)
-    /// When false, returns only signatures, docs, and line ranges (60-80% token reduction)
-    #[serde(default = "default_true")]
-    pub include_code: bool,
+fn default_one() -> Option<u32> {
+    Some(1)
 }
 
-/// Read a file with focused code view: FULL code for the target symbol,
-/// signatures-only for everything else. Perfect for editing a specific function
-/// while maintaining context of the surrounding code.
+/// View a source file with flexible detail levels and automatic type inclusion
 #[mcp_tool(
-    name = "read_focused_code",
-    description = "Read file with FULL code for ONE symbol, signatures-only for everything else. Returns complete implementation of target function/class plus signatures of surrounding code. USE WHEN: ✅ Know exactly which function to edit ✅ Need surrounding context for dependencies ✅ File is large but only care about one function ✅ Want to minimize tokens while maintaining context. DON'T USE: ❌ Need multiple functions → use parse_file ❌ Don't know which function → use file_shape first. TOKEN COST: MEDIUM (~30% of parse_file). OPTIMIZATION: Keep context_radius=0 unless need adjacent functions. WORKFLOW: file_shape → read_focused_code"
+    name = "view_code",
+    description = "View file with flexible detail levels. Returns code/signatures with automatic project type inclusion to prevent hallucinations. USE WHEN: ✅ Need to view/edit a file ✅ Want type definitions from dependencies ✅ Need full code or just signatures. DETAIL LEVELS: 'signatures' (skeleton only), 'full' (complete code). FOCUS: Set focus_symbol to get full code for one symbol + signatures for rest. AUTO-INCLUDES: All struct/class/interface definitions from project dependencies (not external libs). TOKEN COST: MEDIUM-HIGH. WORKFLOW: code_map → view_code"
 )]
 #[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
-pub struct ReadFocusedCode {
+pub struct ViewCode {
     /// Path to the source file
     pub file_path: String,
 
-    /// Symbol name to show full code for (function, class, or struct name)
-    pub focus_symbol: String,
+    /// Detail level: "signatures" or "full" (default: "full")
+    /// - "signatures": Function/class signatures only (no bodies)
+    /// - "full": Complete implementation code
+    #[serde(default = "default_full")]
+    pub detail: String,
 
-    /// Include full code for N symbols before/after the focused symbol (default: 0)
+    /// Optional: Focus on ONE symbol, show full code only for it
+    /// When set, returns full code for this symbol + signatures for rest
     #[serde(default)]
-    pub context_radius: Option<u32>,
-}
-
-/// Extract the structure of a file (functions, classes, imports) without implementation details
-#[mcp_tool(
-    name = "file_shape",
-    description = "Extract file structure WITHOUT implementation code. Returns skeleton: function/class signatures, imports, dependencies only (NO function bodies). For HTML/CSS: returns IDs, classes, theme variables. USE WHEN: ✅ Quick overview of file's API/interface ✅ Deciding which function to focus on before read_focused_code ✅ Mapping dependencies (use include_deps=true) ✅ File >500 lines needing orientation. DON'T USE: ❌ Need implementation logic → use parse_file or read_focused_code ❌ Exploring multiple files → use code_map. TOKEN COST: LOW (10-20% of parse_file). OPTIMIZATION: Use this FIRST, then drill down. WORKFLOW: file_shape → read_focused_code → parse_file (if needed)"
-)]
-#[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
-pub struct FileShape {
-    /// Path to the source file
-    pub file_path: String,
-    /// Include project dependencies as nested file shapes (default: false)
-    #[serde(default)]
-    pub include_deps: bool,
-    /// For Askama/Jinja2 templates (.html in templates/ dir): merge extends/includes into single output. Returns error if used on non-template files. (default: false)
-    #[serde(default)]
-    pub merge_templates: bool,
+    pub focus_symbol: Option<String>,
 }
 
 /// Generate a high-level code map of a directory with token budget awareness and detail levels
 #[mcp_tool(
     name = "code_map",
-    description = "Generate hierarchical map of a DIRECTORY (not single file). Returns structure overview of multiple files with functions/classes/types. Detail levels: 'minimal' (names only), 'signatures' (DEFAULT, names + signatures), 'full' (includes code). USE WHEN: ✅ First time exploring unfamiliar codebase ✅ Finding where functionality lives across files ✅ Getting project structure overview ✅ Don't know which file to examine. DON'T USE: ❌ Know specific file → use file_shape or parse_file ❌ Need implementation details → use parse_file after identifying files. TOKEN COST: MEDIUM (scales with project size). OPTIMIZATION: Start with detail='minimal' for large projects, use pattern to filter. WORKFLOW: code_map → file_shape → parse_file/read_focused_code"
+    description = "Generate hierarchical map of a DIRECTORY (not single file). Returns structure overview of multiple files with functions/classes/types. Detail levels: 'minimal' (names only), 'signatures' (DEFAULT, names + signatures), 'full' (includes code). USE WHEN: ✅ First time exploring unfamiliar codebase ✅ Finding where functionality lives across files ✅ Getting project structure overview ✅ Don't know which file to examine. DON'T USE: ❌ Know specific file → use view_code ❌ Need implementation details → use view_code after identifying files. TOKEN COST: MEDIUM (scales with project size). OPTIMIZATION: Start with detail='minimal' for large projects, use pattern to filter. WORKFLOW: code_map → view_code"
 )]
 #[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
 pub struct CodeMap {
@@ -109,60 +80,28 @@ pub struct FindUsages {
     pub max_context_lines: Option<u32>,
 }
 
-/// Execute a custom tree-sitter query pattern on a source file with code context
+/// Get symbol information at a specific line with signature and scope chain
 #[mcp_tool(
-    name = "query_pattern",
-    description = "Execute custom tree-sitter S-expression query for advanced AST pattern matching. Returns matches with code context for complex structural patterns. USE WHEN: ✅ Finding all instances of specific syntax pattern (e.g., all if statements) ✅ Complex structural queries (e.g., all async functions with try-catch) ✅ Language-specific patterns find_usages can't handle ✅ You know tree-sitter query syntax. DON'T USE: ❌ Finding function/variable usages → use find_usages (simpler, cross-language) ❌ Don't know tree-sitter syntax → use find_usages or parse_file ❌ Simple symbol search → use find_usages. TOKEN COST: MEDIUM (depends on matches). COMPLEXITY: HIGH - requires tree-sitter query knowledge. RECOMMENDATION: Prefer find_usages for 90% of use cases."
+    name = "symbol_at_line",
+    description = "Get symbol (function/class/method) at specific line with signature and scope chain. Returns symbol name, signature, kind, and enclosing scopes from innermost to outermost. USE WHEN: ✅ Have line number from error/stack trace ✅ Need to know 'what function is this line in?' ✅ Want function signature at a location ✅ Understanding scope hierarchy. DON'T USE: ❌ Need full code → use view_code with focus_symbol ❌ Know symbol name already → use view_code directly. TOKEN COST: LOW. WORKFLOW: symbol_at_line (find symbol) → view_code (see code)"
 )]
 #[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
-pub struct QueryPattern {
+pub struct SymbolAtLine {
     /// Path to the source file
     pub file_path: String,
-    /// Tree-sitter query pattern in S-expression format
-    pub query: String,
-    /// Number of context lines around each match (default: 2)
-    #[serde(default)]
-    pub context_lines: Option<u32>,
-}
 
-/// Get the enclosing context (function, class, module) at a specific position
-#[mcp_tool(
-    name = "get_context",
-    description = "Get enclosing scope hierarchy at specific file:line:column position. Returns nested contexts from innermost to outermost (e.g., 'inside function X, inside class Y, inside module Z'). USE WHEN: ✅ Have line number from error/stack trace/user reference ✅ Need to know 'what function is this line in?' ✅ Understanding scope hierarchy for debugging ✅ Navigating to specific location in code. DON'T USE: ❌ Need actual code → use read_focused_code after getting function name ❌ Need detailed AST info → use get_node_at_position ❌ Know function name already → use read_focused_code directly. TOKEN COST: LOW (just scope chain). WORKFLOW: get_context (find function) → read_focused_code (see implementation)"
-)]
-#[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
-pub struct GetContext {
-    /// Path to the source file
-    pub file_path: String,
     /// Line number (1-indexed)
     pub line: u32,
+
     /// Column number (1-indexed, default: 1)
-    #[serde(default)]
+    #[serde(default = "default_one")]
     pub column: Option<u32>,
-}
-
-/// Get the AST node at a specific position with ancestor chain
-#[mcp_tool(
-    name = "get_node_at_position",
-    description = "Get precise AST node at file:line:column position with parent chain. Returns node type, text, range, N ancestor nodes. USE WHEN: ✅ Need exact syntactic information at cursor position ✅ Syntax-aware edits (e.g., wrap this expression in function call) ✅ Understanding what token/expression is at location ✅ Debugging parse issues or AST structure. DON'T USE: ❌ Just need function name → use get_context (simpler) ❌ Need full function code → use read_focused_code ❌ Not doing syntax-aware operations → use get_context. TOKEN COST: LOW (just node info). COMPLEXITY: MEDIUM - requires understanding AST concepts. USE CASE: Advanced/syntax-aware operations only."
-)]
-#[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
-pub struct GetNodeAtPosition {
-    /// Path to the source file
-    pub file_path: String,
-    /// Line number (1-indexed)
-    pub line: u32,
-    /// Column number (1-indexed)
-    pub column: u32,
-    /// Number of ancestor levels to return (default: 3)
-    #[serde(default)]
-    pub ancestor_levels: Option<u32>,
 }
 
 /// Analyze structural changes in a file compared to a git revision
 #[mcp_tool(
     name = "parse_diff",
-    description = "Analyze structural changes vs git revision. Returns symbol-level diff (functions/classes added/removed/modified), not line-level. USE WHEN: ✅ Verifying what you changed at structural level ✅ Checking if changes are cosmetic (formatting) or substantive ✅ Understanding changes without re-reading entire file ✅ Generating change summaries. DON'T USE: ❌ Need to see what might break → use affected_by_diff ❌ Haven't made changes yet → use parse_file ❌ Need line-by-line diff → use git diff. TOKEN COST: LOW-MEDIUM (much smaller than re-reading file). WORKFLOW: After changes: parse_diff (verify) → affected_by_diff (check impact)"
+    description = "Analyze structural changes vs git revision. Returns symbol-level diff (functions/classes added/removed/modified), not line-level. USE WHEN: ✅ Verifying what you changed at structural level ✅ Checking if changes are cosmetic (formatting) or substantive ✅ Understanding changes without re-reading entire file ✅ Generating change summaries. DON'T USE: ❌ Need to see what might break → use affected_by_diff ❌ Haven't made changes yet → use view_code ❌ Need line-by-line diff → use git diff. TOKEN COST: LOW-MEDIUM (much smaller than re-reading file). WORKFLOW: After changes: parse_diff (verify) → affected_by_diff (check impact)"
 )]
 #[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
 pub struct ParseDiff {
@@ -191,38 +130,32 @@ pub struct AffectedByDiff {
     pub scope: Option<String>,
 }
 
+/// Execute a custom tree-sitter query pattern on a source file with code context
+#[mcp_tool(
+    name = "query_pattern",
+    description = "Execute custom tree-sitter S-expression query for advanced AST pattern matching. Returns matches with code context for complex structural patterns. USE WHEN: ✅ Finding all instances of specific syntax pattern (e.g., all if statements) ✅ Complex structural queries (e.g., all async functions with try-catch) ✅ Language-specific patterns find_usages can't handle ✅ You know tree-sitter query syntax. DON'T USE: ❌ Finding function/variable usages → use find_usages (simpler, cross-language) ❌ Don't know tree-sitter syntax → use find_usages or view_code ❌ Simple symbol search → use find_usages. TOKEN COST: MEDIUM (depends on matches). COMPLEXITY: HIGH - requires tree-sitter query knowledge. RECOMMENDATION: Prefer find_usages for 90% of use cases."
+)]
+#[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
+pub struct QueryPattern {
+    /// Path to the source file
+    pub file_path: String,
+    /// Tree-sitter query pattern in S-expression format
+    pub query: String,
+    /// Number of context lines around each match (default: 2)
+    #[serde(default)]
+    pub context_lines: Option<u32>,
+}
+
 // Implement tool execution logic for each tool
-impl ParseFile {
+impl ViewCode {
     pub fn call_tool(&self) -> Result<CallToolResult, CallToolError> {
         let args = serde_json::json!({
             "file_path": self.file_path,
-            "include_code": self.include_code
+            "detail": self.detail,
+            "focus_symbol": self.focus_symbol
         });
 
-        parse_file::execute(&args).map_err(CallToolError::new)
-    }
-}
-
-impl ReadFocusedCode {
-    pub fn call_tool(&self) -> Result<CallToolResult, CallToolError> {
-        let args = serde_json::json!({
-            "file_path": self.file_path,
-            "focus_symbol": self.focus_symbol,
-            "context_radius": self.context_radius.unwrap_or(0)
-        });
-
-        read_focused_code::execute(&args).map_err(CallToolError::new)
-    }
-}
-
-impl FileShape {
-    pub fn call_tool(&self) -> Result<CallToolResult, CallToolError> {
-        let args = serde_json::json!({
-            "file_path": self.file_path,
-            "include_deps": self.include_deps
-        });
-
-        file_shape::execute(&args).map_err(CallToolError::new)
+        view_code::execute(&args).map_err(CallToolError::new)
     }
 }
 
@@ -252,19 +185,7 @@ impl FindUsages {
     }
 }
 
-impl QueryPattern {
-    pub fn call_tool(&self) -> Result<CallToolResult, CallToolError> {
-        let args = serde_json::json!({
-            "file_path": self.file_path,
-            "query": self.query,
-            "context_lines": self.context_lines
-        });
-
-        query_pattern::execute(&args).map_err(CallToolError::new)
-    }
-}
-
-impl GetContext {
+impl SymbolAtLine {
     pub fn call_tool(&self) -> Result<CallToolResult, CallToolError> {
         let args = serde_json::json!({
             "file_path": self.file_path,
@@ -272,20 +193,7 @@ impl GetContext {
             "column": self.column
         });
 
-        get_context::execute(&args).map_err(CallToolError::new)
-    }
-}
-
-impl GetNodeAtPosition {
-    pub fn call_tool(&self) -> Result<CallToolResult, CallToolError> {
-        let args = serde_json::json!({
-            "file_path": self.file_path,
-            "line": self.line,
-            "column": self.column,
-            "ancestor_levels": self.ancestor_levels
-        });
-
-        get_node_at_position::execute(&args).map_err(CallToolError::new)
+        symbol_at_line::execute(&args).map_err(CallToolError::new)
     }
 }
 
@@ -312,19 +220,67 @@ impl AffectedByDiff {
     }
 }
 
+impl QueryPattern {
+    pub fn call_tool(&self) -> Result<CallToolResult, CallToolError> {
+        let args = serde_json::json!({
+            "file_path": self.file_path,
+            "query": self.query,
+            "context_lines": self.context_lines
+        });
+
+        query_pattern::execute(&args).map_err(CallToolError::new)
+    }
+}
+
+/// Find Rust structs that provide context for an Askama template.
+///
+/// USE WHEN:
+/// ✅ Editing Askama HTML templates and need to know available variables
+/// ✅ Understanding what data is passed to a template
+/// ✅ Debugging template rendering issues
+///
+/// DON'T USE:
+/// ❌ Not using Askama templates
+/// ❌ Working with non-template files
+///
+/// RETURNS:
+/// - Struct names associated with the template
+/// - All fields with their types (resolved up to 3 levels deep)
+/// - Nested struct field expansions
+///
+/// TOKEN COST: LOW-MEDIUM
+/// WORKFLOW: template_context → edit template with known variables
+#[mcp_tool(
+    name = "template_context",
+    description = "Find Rust structs associated with an Askama template file. Returns struct names, fields, and types (resolved up to 3 levels deep) that are available as variables in the template. Use this when editing templates to know what variables can be used and their types."
+)]
+#[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
+pub struct TemplateContext {
+    /// Path to the template file (relative or absolute)
+    pub template_path: String,
+}
+
+impl TemplateContext {
+    pub fn call_tool(&self) -> Result<CallToolResult, CallToolError> {
+        let args = serde_json::json!({
+            "template_path": self.template_path
+        });
+
+        crate::analysis::askama::execute(&args).map_err(CallToolError::new)
+    }
+}
+
 // Generate an enum with all tools
 tool_box!(
     TreesitterTools,
     [
-        ParseFile,
-        ReadFocusedCode,
-        FileShape,
+        ViewCode,
         CodeMap,
         FindUsages,
-        QueryPattern,
-        GetContext,
-        GetNodeAtPosition,
+        SymbolAtLine,
         ParseDiff,
-        AffectedByDiff
+        AffectedByDiff,
+        QueryPattern,
+        TemplateContext
     ]
 );

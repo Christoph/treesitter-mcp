@@ -87,7 +87,7 @@ fn test_parse_file_returns_relative_path() {
     });
 
     // When: parse_file is called
-    let result = treesitter_mcp::analysis::parse_file::execute(&arguments);
+    let result = treesitter_mcp::analysis::view_code::execute(&arguments);
 
     // Then: Returns relative path without absolute markers
     assert!(result.is_ok(), "parse_file should succeed");
@@ -258,7 +258,7 @@ pub fn add(a: i32, b: i32) -> i32 {
     });
 
     // When: parse_file is called on a file in git repo
-    let result = treesitter_mcp::analysis::parse_file::execute(&arguments);
+    let result = treesitter_mcp::analysis::view_code::execute(&arguments);
 
     // Then: Path is relative to git root
     assert!(result.is_ok());
@@ -303,7 +303,7 @@ fn test_relative_path_strips_absolute_markers() {
         });
 
         // When: parse_file is called
-        let result = treesitter_mcp::analysis::parse_file::execute(&arguments);
+        let result = treesitter_mcp::analysis::view_code::execute(&arguments);
         assert!(result.is_ok());
 
         let call_result = result.unwrap();
@@ -354,7 +354,7 @@ fn test_relative_path_preserves_structure() {
     });
 
     // When: parse_file is called
-    let result = treesitter_mcp::analysis::parse_file::execute(&arguments);
+    let result = treesitter_mcp::analysis::view_code::execute(&arguments);
     assert!(result.is_ok());
 
     let call_result = result.unwrap();
@@ -393,7 +393,7 @@ fn test_relative_path_multiple_tools_consistent() {
     let parse_file_args = json!({
         "file_path": file_path.to_str().unwrap()
     });
-    let parse_file_result = treesitter_mcp::analysis::parse_file::execute(&parse_file_args);
+    let parse_file_result = treesitter_mcp::analysis::view_code::execute(&parse_file_args);
     assert!(parse_file_result.is_ok());
 
     let parse_file_text = common::get_result_text(&parse_file_result.unwrap());
@@ -525,8 +525,6 @@ pub fn subtract(a: i32, b: i32) -> i32 {
 // Test 10: affected_by_diff returns relative paths
 // ============================================================================
 #[ignore] // Complex git scenario - may fail in some environments
-
-
 #[test]
 fn test_affected_by_diff_returns_relative_paths() {
     // Given: A git repository with multiple files
@@ -622,7 +620,7 @@ fn test_relative_path_token_savings() {
     });
 
     // When: parse_file is called
-    let result = treesitter_mcp::analysis::parse_file::execute(&arguments);
+    let result = treesitter_mcp::analysis::view_code::execute(&arguments);
     assert!(result.is_ok());
 
     let call_result = result.unwrap();
@@ -687,7 +685,7 @@ pub fn add(a: i32, b: i32) -> i32 {
     });
 
     // When: parse_file is called (no git root, should use project root)
-    let result = treesitter_mcp::analysis::parse_file::execute(&arguments);
+    let result = treesitter_mcp::analysis::view_code::execute(&arguments);
 
     // Then: Path is still relative (from project root or parent)
     assert!(result.is_ok());

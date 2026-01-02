@@ -51,3 +51,7 @@ harness = false
 [[bench]]
 name = "find_usages_bench"
 harness = false
+
+[[bench]]
+name = "dependency_resolution_bench"
+harness = false

@@ -1,0 +1,11 @@
+<!DOCTYPE html>
+<html>
+<body>
+    <ul>
+    {% for item in items %}
+        <li>{{ item }}</li>
+    {% endfor %}
+    </ul>
+    <div>Page {{ page }} of {{ total_pages }}</div>
+</body>
+</html>

@@ -15,7 +15,7 @@ fn test_parse_file_extracts_function_signatures_and_code() {
     });
 
     // When: parse_file is called
-    let result = treesitter_mcp::analysis::parse_file::execute(&arguments);
+    let result = treesitter_mcp::analysis::view_code::execute(&arguments);
 
     // Then: Returns JSON with function names, signatures, line numbers
     assert!(result.is_ok(), "parse_file should succeed");
@@ -57,7 +57,7 @@ fn test_parse_file_extracts_struct_definitions_and_fields() {
     });
 
     // When: parse_file is called
-    let result = treesitter_mcp::analysis::parse_file::execute(&arguments);
+    let result = treesitter_mcp::analysis::view_code::execute(&arguments);
 
     // Then: Returns JSON with struct names, line numbers
     assert!(result.is_ok());
@@ -97,7 +97,7 @@ fn test_parse_file_rust_docs() {
     });
 
     // When: parse_file is called
-    let result = treesitter_mcp::analysis::parse_file::execute(&arguments);
+    let result = treesitter_mcp::analysis::view_code::execute(&arguments);
 
     // Then: Returns JSON with doc strings extracted
     assert!(result.is_ok());
@@ -132,7 +132,7 @@ fn test_parse_file_extracts_import_statements() {
     });
 
     // When: parse_file is called
-    let result = treesitter_mcp::analysis::parse_file::execute(&arguments);
+    let result = treesitter_mcp::analysis::view_code::execute(&arguments);
 
     // Then: Returns JSON with imports
     assert!(result.is_ok());
@@ -164,7 +164,7 @@ fn test_parse_file_handles_python_function_definitions() {
     });
 
     // When: parse_file is called
-    let result = treesitter_mcp::analysis::parse_file::execute(&arguments);
+    let result = treesitter_mcp::analysis::view_code::execute(&arguments);
 
     // Then: Returns JSON with function names, signatures
     assert!(result.is_ok());
@@ -206,7 +206,7 @@ fn test_parse_file_handles_python_class_definitions() {
     });
 
     // When: parse_file is called
-    let result = treesitter_mcp::analysis::parse_file::execute(&arguments);
+    let result = treesitter_mcp::analysis::view_code::execute(&arguments);
 
     // Then: Returns JSON with class names, methods
     assert!(result.is_ok());
@@ -250,7 +250,7 @@ fn test_parse_file_handles_javascript_function_declarations() {
     });
 
     // When: parse_file is called
-    let result = treesitter_mcp::analysis::parse_file::execute(&arguments);
+    let result = treesitter_mcp::analysis::view_code::execute(&arguments);
 
     // Then: Returns JSON with function names
     assert!(result.is_ok());
@@ -286,7 +286,7 @@ fn test_parse_file_javascript_classes() {
     });
 
     // When: parse_file is called
-    let result = treesitter_mcp::analysis::parse_file::execute(&arguments);
+    let result = treesitter_mcp::analysis::view_code::execute(&arguments);
 
     // Then: Returns JSON with class names, methods
     assert!(result.is_ok());
@@ -312,7 +312,7 @@ fn test_parse_file_typescript_with_types() {
     });
 
     // When: parse_file is called
-    let result = treesitter_mcp::analysis::parse_file::execute(&arguments);
+    let result = treesitter_mcp::analysis::view_code::execute(&arguments);
 
     // Then: Returns JSON with types, interfaces, typed functions
     assert!(result.is_ok());
@@ -346,7 +346,7 @@ fn test_parse_file_handles_typescript_interface_definitions() {
     });
 
     // When: parse_file is called
-    let result = treesitter_mcp::analysis::parse_file::execute(&arguments);
+    let result = treesitter_mcp::analysis::view_code::execute(&arguments);
 
     // Then: Returns JSON with interfaces
     assert!(result.is_ok());
@@ -371,7 +371,7 @@ fn test_parse_file_nonexistent_file() {
     });
 
     // When: parse_file is called
-    let result = treesitter_mcp::analysis::parse_file::execute(&arguments);
+    let result = treesitter_mcp::analysis::view_code::execute(&arguments);
 
     // Then: Returns error
     assert!(result.is_err(), "Should return error for non-existent file");
@@ -391,7 +391,7 @@ fn test_parse_file_unsupported_extension() {
     });
 
     // When: parse_file is called
-    let result = treesitter_mcp::analysis::parse_file::execute(&arguments);
+    let result = treesitter_mcp::analysis::view_code::execute(&arguments);
 
     // Then: Returns error
     assert!(
@@ -413,7 +413,7 @@ fn test_parse_file_rust_code_matches_fixture() {
     });
 
     // When: parse_file is called
-    let result = treesitter_mcp::analysis::parse_file::execute(&arguments);
+    let result = treesitter_mcp::analysis::view_code::execute(&arguments);
 
     // Then: Code in result matches actual fixture content
     assert!(result.is_ok());
@@ -454,7 +454,7 @@ fn test_parse_file_python_code_matches_fixture() {
     });
 
     // When: parse_file is called
-    let result = treesitter_mcp::analysis::parse_file::execute(&arguments);
+    let result = treesitter_mcp::analysis::view_code::execute(&arguments);
 
     // Then: Code in result matches actual fixture content
     assert!(result.is_ok());
