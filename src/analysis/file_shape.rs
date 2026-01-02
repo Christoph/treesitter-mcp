@@ -13,8 +13,10 @@ use std::io;
 use std::path::{Path, PathBuf};
 use tree_sitter::{Query, QueryCursor, Tree};
 
+#[allow(dead_code)]
 const MAX_TEMPLATE_DEPTH: usize = 50;
 
+#[allow(dead_code)]
 #[derive(Debug, serde::Serialize)]
 pub struct FileShape {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -29,24 +31,28 @@ pub struct FileShape {
     pub dependencies: Vec<FileShape>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, serde::Serialize)]
 pub struct FunctionInfo {
     pub name: String,
     pub line: usize,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, serde::Serialize)]
 pub struct StructInfo {
     pub name: String,
     pub line: usize,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, serde::Serialize)]
 pub struct ClassInfo {
     pub name: String,
     pub line: usize,
 }
 
+#[allow(dead_code)]
 pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
     let file_path_str = arguments["file_path"].as_str().ok_or_else(|| {
         io::Error::new(
@@ -181,6 +187,7 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
     Ok(CallToolResult::success(shape_json))
 }
 
+#[allow(dead_code)]
 pub fn extract_shape(
     tree: &Tree,
     source: &str,
@@ -206,6 +213,7 @@ pub fn extract_shape(
     }
 }
 
+#[allow(dead_code)]
 fn extract_rust_shape(tree: &Tree, source: &str) -> Result<FileShape, io::Error> {
     let mut functions = Vec::new();
     let mut structs = Vec::new();
@@ -283,6 +291,7 @@ fn extract_rust_shape(tree: &Tree, source: &str) -> Result<FileShape, io::Error>
     })
 }
 
+#[allow(dead_code)]
 fn extract_python_shape(tree: &Tree, source: &str) -> Result<FileShape, io::Error> {
     let mut functions = Vec::new();
     let mut classes = Vec::new();
@@ -361,6 +370,7 @@ fn extract_python_shape(tree: &Tree, source: &str) -> Result<FileShape, io::Erro
     })
 }
 
+#[allow(dead_code)]
 fn extract_js_shape(tree: &Tree, source: &str) -> Result<FileShape, io::Error> {
     let mut functions = Vec::new();
     let mut classes = Vec::new();
@@ -438,6 +448,7 @@ fn extract_js_shape(tree: &Tree, source: &str) -> Result<FileShape, io::Error> {
     })
 }
 
+#[allow(dead_code)]
 fn extract_ts_shape(tree: &Tree, source: &str) -> Result<FileShape, io::Error> {
     let mut functions = Vec::new();
     let mut classes = Vec::new();
@@ -516,6 +527,7 @@ fn extract_ts_shape(tree: &Tree, source: &str) -> Result<FileShape, io::Error> {
 }
 
 /// Build a file shape (and optionally its dependency tree) starting from a path.
+#[allow(dead_code)]
 fn build_shape_tree(
     path: &Path,
     project_root: &Path,
@@ -610,6 +622,7 @@ fn build_shape_tree(
 }
 
 /// Find the project root by walking up to the nearest directory containing Cargo.toml.
+#[allow(dead_code)]
 fn find_project_root(start: &Path) -> Option<PathBuf> {
     let mut current = if start.is_dir() {
         start.to_path_buf()
@@ -879,6 +892,7 @@ fn resolve_js_ts_spec(spec: &str, dir: &Path, project_root: &Path) -> Option<Pat
 use regex::Regex;
 
 /// Template dependency info
+#[allow(dead_code)]
 #[derive(Debug, serde::Serialize, Clone)]
 pub struct TemplateDependency {
     pub path: String,
@@ -887,6 +901,7 @@ pub struct TemplateDependency {
 }
 
 /// Template file shape (when merge_templates=true)
+#[allow(dead_code)]
 #[derive(Debug, serde::Serialize)]
 pub struct MergedTemplateShape {
     pub path: String,
@@ -931,6 +946,7 @@ pub fn find_templates_dir(file_path: &Path) -> Option<PathBuf> {
 /// Find template dependencies (extends/includes) in a template file
 ///
 /// Returns a list of template dependencies with their types and paths.
+#[allow(dead_code)]
 pub fn find_template_dependencies(
     source: &str,
     templates_dir: &Path,
@@ -946,22 +962,28 @@ pub fn find_template_dependencies(
     for cap in extends_re.captures_iter(source) {
         let template_name = &cap[1];
         let template_path = templates_dir.join(template_name);
-        dependencies.push(TemplateDependency {
-            path: template_path.to_string_lossy().to_string(),
-            dependency_type: "extends".to_string(),
-            name: template_name.to_string(),
-        });
+        // Only include if the template file exists
+        if template_path.exists() {
+            dependencies.push(TemplateDependency {
+                path: template_name.to_string(),
+                dependency_type: "extends".to_string(),
+                name: template_name.to_string(),
+            });
+        }
     }
 
     // Find includes
     for cap in include_re.captures_iter(source) {
         let template_name = &cap[1];
         let template_path = templates_dir.join(template_name);
-        dependencies.push(TemplateDependency {
-            path: template_path.to_string_lossy().to_string(),
-            dependency_type: "include".to_string(),
-            name: template_name.to_string(),
-        });
+        // Only include if the template file exists
+        if template_path.exists() {
+            dependencies.push(TemplateDependency {
+                path: template_name.to_string(),
+                dependency_type: "include".to_string(),
+                name: template_name.to_string(),
+            });
+        }
     }
 
     Ok(dependencies)
@@ -970,6 +992,7 @@ pub fn find_template_dependencies(
 /// Recursively merge a template with its parent templates and includes
 ///
 /// Handles {% extends %} and {% include %} directives, merging content appropriately.
+#[allow(dead_code)]
 fn merge_template(
     template_path: &Path,
     templates_dir: &Path,
@@ -1040,6 +1063,7 @@ fn merge_template(
 }
 
 /// Extract {% block name %}...{% endblock %} sections from a template
+#[allow(dead_code)]
 fn extract_blocks(source: &str) -> Result<std::collections::HashMap<String, String>, io::Error> {
     let mut blocks = std::collections::HashMap::new();
 
@@ -1055,6 +1079,7 @@ fn extract_blocks(source: &str) -> Result<std::collections::HashMap<String, Stri
 }
 
 /// Replace {% block name %}...{% endblock %} sections in a template with provided blocks
+#[allow(dead_code)]
 fn replace_blocks(
     template: &str,
     blocks: &std::collections::HashMap<String, String>,

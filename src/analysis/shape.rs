@@ -1115,6 +1115,7 @@ fn find_parent_by_type<'a>(mut node: Node<'a>, target_type: &str) -> Result<Node
 use std::borrow::Cow;
 
 /// Theme variable from @theme block
+#[allow(dead_code)]
 #[derive(Debug, serde::Serialize, Clone)]
 pub struct ThemeVariable {
     pub name: String,  // "--color-primary", "--spacing-lg"
@@ -1123,6 +1124,7 @@ pub struct ThemeVariable {
 }
 
 /// Custom component class (defined with @apply or custom styles)
+#[allow(dead_code)]
 #[derive(Debug, serde::Serialize, Clone)]
 pub struct CustomClass {
     pub name: String,                     // "btn-primary", "card"
@@ -1132,6 +1134,7 @@ pub struct CustomClass {
 }
 
 /// Keyframe animation
+#[allow(dead_code)]
 #[derive(Debug, serde::Serialize, Clone)]
 pub struct KeyframeInfo {
     pub name: String,
@@ -1139,6 +1142,7 @@ pub struct KeyframeInfo {
 }
 
 /// CSS file shape (Tailwind v4 focused)
+#[allow(dead_code)]
 #[derive(Debug, serde::Serialize)]
 pub struct CssFileShape {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1156,6 +1160,7 @@ pub struct CssFileShape {
 }
 
 /// HTML element with id
+#[allow(dead_code)]
 #[derive(Debug, serde::Serialize, Clone)]
 pub struct HtmlIdInfo {
     pub tag: String,
@@ -1164,6 +1169,7 @@ pub struct HtmlIdInfo {
 }
 
 /// Script reference
+#[allow(dead_code)]
 #[derive(Debug, serde::Serialize, Clone)]
 pub struct ScriptInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1173,6 +1179,7 @@ pub struct ScriptInfo {
 }
 
 /// Style reference
+#[allow(dead_code)]
 #[derive(Debug, serde::Serialize, Clone)]
 pub struct StyleInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1182,6 +1189,7 @@ pub struct StyleInfo {
 }
 
 /// HTML file shape
+#[allow(dead_code)]
 #[derive(Debug, serde::Serialize)]
 pub struct HtmlFileShape {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1211,6 +1219,7 @@ pub struct HtmlFileShape {
 /// NOTE: This list covers common Tailwind v4 utilities but is not exhaustive.
 /// It may need updates as Tailwind evolves. Consider making this configurable
 /// in the future to allow users to add custom utility patterns.
+#[allow(dead_code)]
 fn is_tailwind_utility(class: &str) -> bool {
     // Handle important modifier at the start
     let class = class.strip_prefix('!').unwrap_or(class);
@@ -1416,6 +1425,7 @@ use regex::Regex;
 ///
 /// This function uses regex to parse Tailwind-specific directives (@theme, @layer, @apply)
 /// which are not part of standard CSS and thus not handled by tree-sitter-css.
+#[allow(dead_code)]
 pub fn extract_css_tailwind(
     source: &str,
     file_path: Option<&str>,
@@ -1535,6 +1545,7 @@ pub fn extract_css_tailwind(
 }
 
 /// Calculate line number from byte offset
+#[allow(dead_code)]
 fn calculate_line(source: &str, byte_offset: usize) -> usize {
     source[..byte_offset].matches('\n').count() + 1
 }
@@ -1546,6 +1557,7 @@ fn calculate_line(source: &str, byte_offset: usize) -> usize {
 use std::collections::HashSet;
 
 /// Extract HTML shape from parsed tree
+#[allow(dead_code)]
 pub fn extract_html_shape(
     tree: &Tree,
     source: &str,
@@ -1664,6 +1676,7 @@ pub fn extract_html_shape(
 }
 
 /// Helper to extract attribute value from a node
+#[allow(dead_code)]
 fn extract_attribute(node: &tree_sitter::Node, source: &str, attr_name: &str) -> Option<String> {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
