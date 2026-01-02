@@ -1,4 +1,4 @@
-//! Performance benchmarks for dependency resolution in parse_file
+//! Performance benchmarks for dependency resolution in view_code
 //!
 //! Run with: cargo bench --bench dependency_resolution_bench
 
@@ -14,70 +14,66 @@ fn fixture_path(lang: &str, file: &str) -> PathBuf {
         .join(file)
 }
 
-fn bench_parse_file_without_deps(c: &mut Criterion) {
+fn bench_view_code_signatures_only(c: &mut Criterion) {
     let file_path = fixture_path("rust", "src/lib.rs");
     let arguments = json!({
         "file_path": file_path.to_str().unwrap(),
-        "include_code": false,
-        "include_deps": false,
+        "detail": "signatures",
     });
 
-    c.bench_function("parse_file_without_deps", |b| {
-        b.iter(|| treesitter_mcp::analysis::parse_file::execute(black_box(&arguments)));
+    c.bench_function("view_code_signatures_only", |b| {
+        b.iter(|| treesitter_mcp::analysis::view_code::execute(black_box(&arguments)));
     });
 }
 
-fn bench_parse_file_with_deps(c: &mut Criterion) {
+fn bench_view_code_full_code(c: &mut Criterion) {
     let file_path = fixture_path("rust", "src/lib.rs");
     let arguments = json!({
         "file_path": file_path.to_str().unwrap(),
-        "include_code": false,
-        "include_deps": true,
+        "detail": "full",
     });
 
-    c.bench_function("parse_file_with_deps", |b| {
-        b.iter(|| treesitter_mcp::analysis::parse_file::execute(black_box(&arguments)));
+    c.bench_function("view_code_full_code", |b| {
+        b.iter(|| treesitter_mcp::analysis::view_code::execute(black_box(&arguments)));
     });
 }
 
-fn bench_parse_file_with_deps_and_code(c: &mut Criterion) {
-    let file_path = fixture_path("rust", "src/lib.rs");
+fn bench_view_code_with_focus(c: &mut Criterion) {
+    let file_path = fixture_path("rust", "src/calculator.rs");
     let arguments = json!({
         "file_path": file_path.to_str().unwrap(),
-        "include_code": true,
-        "include_deps": true,
+        "detail": "full",
+        "focus_symbol": "add",
     });
 
-    c.bench_function("parse_file_with_deps_and_code", |b| {
-        b.iter(|| treesitter_mcp::analysis::parse_file::execute(black_box(&arguments)));
+    c.bench_function("view_code_with_focus", |b| {
+        b.iter(|| treesitter_mcp::analysis::view_code::execute(black_box(&arguments)));
     });
 }
 
-fn bench_dependency_resolution_overhead(c: &mut Criterion) {
-    let mut group = c.benchmark_group("dependency_resolution_overhead");
+fn bench_detail_level_overhead(c: &mut Criterion) {
+    let mut group = c.benchmark_group("detail_level_overhead");
 
     let file_path = fixture_path("rust", "src/lib.rs");
 
-    // Without deps
-    let no_deps_args = json!({
+    // Signatures only
+    let sig_args = json!({
         "file_path": file_path.to_str().unwrap(),
-        "include_code": false,
-        "include_deps": false,
+        "detail": "signatures",
     });
 
-    group.bench_function("no_deps", |b| {
-        b.iter(|| treesitter_mcp::analysis::parse_file::execute(black_box(&no_deps_args)));
+    group.bench_function("signatures", |b| {
+        b.iter(|| treesitter_mcp::analysis::view_code::execute(black_box(&sig_args)));
     });
 
-    // With deps
-    let with_deps_args = json!({
+    // Full code
+    let full_args = json!({
         "file_path": file_path.to_str().unwrap(),
-        "include_code": false,
-        "include_deps": true,
+        "detail": "full",
     });
 
-    group.bench_function("with_deps", |b| {
-        b.iter(|| treesitter_mcp::analysis::parse_file::execute(black_box(&with_deps_args)));
+    group.bench_function("full", |b| {
+        b.iter(|| treesitter_mcp::analysis::view_code::execute(black_box(&full_args)));
     });
 
     group.finish();
@@ -85,9 +81,9 @@ fn bench_dependency_resolution_overhead(c: &mut Criterion) {
 
 criterion_group!(
     benches,
-    bench_parse_file_without_deps,
-    bench_parse_file_with_deps,
-    bench_parse_file_with_deps_and_code,
-    bench_dependency_resolution_overhead
+    bench_view_code_signatures_only,
+    bench_view_code_full_code,
+    bench_view_code_with_focus,
+    bench_detail_level_overhead
 );
 criterion_main!(benches);
