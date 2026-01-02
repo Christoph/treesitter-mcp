@@ -24,7 +24,7 @@ jobs:
             target: x86_64-pc-windows-msvc
             artifact_name: treesitter-mcp.exe
             asset_name: treesitter-mcp-windows-x86_64.exe
-          - os: macos-13
+          - os: macos-latest
             target: x86_64-apple-darwin
             artifact_name: treesitter-mcp
             asset_name: treesitter-mcp-macos-x86_64
