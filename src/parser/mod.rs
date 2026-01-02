@@ -20,6 +20,8 @@ pub enum Language {
     Html,
     /// CSS stylesheets (.css)
     Css,
+    /// Go programming language (.go)
+    Go,
 }
 
 impl Language {
@@ -32,6 +34,7 @@ impl Language {
             Language::TypeScript => "TypeScript",
             Language::Html => "HTML",
             Language::Css => "CSS",
+            Language::Go => "Go",
         }
     }
 
@@ -44,6 +47,7 @@ impl Language {
             Language::TypeScript => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
             Language::Html => tree_sitter_html::LANGUAGE.into(),
             Language::Css => tree_sitter_css::LANGUAGE.into(),
+            Language::Go => tree_sitter_go::LANGUAGE.into(),
         }
     }
 }
@@ -102,6 +106,7 @@ pub fn detect_language(path: impl AsRef<Path>) -> Result<Language> {
         Some("ts") | Some("tsx") => Ok(Language::TypeScript),
         Some("html") | Some("htm") => Ok(Language::Html),
         Some("css") => Ok(Language::Css),
+        Some("go") => Ok(Language::Go),
         Some(ext) => {
             bail!("Unsupported file extension: .{}", ext)
         }

@@ -198,6 +198,7 @@ pub fn extract_shape(
         Language::Python => extract_python_shape(tree, source),
         Language::JavaScript => extract_js_shape(tree, source),
         Language::TypeScript => extract_ts_shape(tree, source),
+        Language::Go => extract_go_shape(tree, source),
         Language::Html | Language::Css => {
             // HTML and CSS don't fit the FileShape model
             // Return empty shape - they are handled separately in execute()
@@ -495,6 +496,97 @@ fn extract_ts_shape(tree: &Tree, source: &str) -> Result<FileShape, io::Error> {
                         io::Error::new(
                             io::ErrorKind::InvalidData,
                             format!("Invalid UTF-8 in class name: {e}"),
+                        )
+                    })?;
+                    classes.push(ClassInfo {
+                        name: text.to_string(),
+                        line: node.start_position().row + 1,
+                    });
+                }
+                "import" => {
+                    let text = node.utf8_text(source.as_bytes()).map_err(|e| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("Invalid UTF-8 in import: {e}"),
+                        )
+                    })?;
+                    imports.push(text.to_string());
+                }
+                _ => {}
+            }
+        }
+    }
+
+    Ok(FileShape {
+        path: None,
+        functions,
+        structs: vec![],
+        classes,
+        imports,
+        dependencies: vec![],
+    })
+}
+
+#[allow(dead_code)]
+fn extract_go_shape(tree: &Tree, source: &str) -> Result<FileShape, io::Error> {
+    let mut functions = Vec::new();
+    let mut classes = Vec::new();
+    let mut imports = Vec::new();
+
+    let query = Query::new(
+        &tree_sitter_go::LANGUAGE.into(),
+        r#"
+        (function_declaration name: (identifier) @func.name) @func
+        (method_declaration name: (field_identifier) @method.name) @method
+        (type_declaration (type_spec name: (type_identifier) @type.name)) @type
+        (import_declaration) @import
+        "#,
+    )
+    .map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Failed to create tree-sitter query: {e}"),
+        )
+    })?;
+
+    let mut cursor = QueryCursor::new();
+    let matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
+
+    for match_ in matches {
+        for capture in match_.captures {
+            let node = capture.node;
+            let name = capture.index;
+
+            match query.capture_names()[name as usize] {
+                "func.name" => {
+                    let text = node.utf8_text(source.as_bytes()).map_err(|e| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("Invalid UTF-8 in function name: {e}"),
+                        )
+                    })?;
+                    functions.push(FunctionInfo {
+                        name: text.to_string(),
+                        line: node.start_position().row + 1,
+                    });
+                }
+                "method.name" => {
+                    let text = node.utf8_text(source.as_bytes()).map_err(|e| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("Invalid UTF-8 in method name: {e}"),
+                        )
+                    })?;
+                    functions.push(FunctionInfo {
+                        name: text.to_string(),
+                        line: node.start_position().row + 1,
+                    });
+                }
+                "type.name" => {
+                    let text = node.utf8_text(source.as_bytes()).map_err(|e| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("Invalid UTF-8 in type name: {e}"),
                         )
                     })?;
                     classes.push(ClassInfo {

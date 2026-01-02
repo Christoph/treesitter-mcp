@@ -149,6 +149,7 @@ pub fn extract_enhanced_shape(
         Language::TypeScript => {
             extract_js_enhanced(tree, source, Language::TypeScript, include_code)?
         }
+        Language::Go => extract_go_enhanced(tree, source, include_code)?,
         Language::Html | Language::Css => {
             // HTML and CSS don't fit the EnhancedFileShape model
             // Return empty shape - they should use file_shape tool instead
@@ -653,6 +654,177 @@ fn extract_js_enhanced(
         impl_blocks: vec![],
         traits: vec![],
         interfaces,
+        dependencies: vec![],
+    })
+}
+
+/// Extract enhanced shape from Go source code
+fn extract_go_enhanced(
+    tree: &Tree,
+    source: &str,
+    include_code: bool,
+) -> Result<EnhancedFileShape, io::Error> {
+    let query = Query::new(
+        &tree_sitter_go::LANGUAGE.into(),
+        r#"
+        (function_declaration
+            name: (identifier) @func.name) @func
+        
+        (method_declaration
+            receiver: (parameter_list)
+            name: (field_identifier) @method.name) @method
+        
+        (type_declaration
+            (type_spec
+                name: (type_identifier) @struct.name
+                type: (struct_type))) @struct
+        
+        (type_declaration
+            (type_spec
+                name: (type_identifier) @interface.name
+                type: (interface_type))) @interface
+        
+        (import_declaration) @import
+        "#,
+    )
+    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
+
+    let mut cursor = QueryCursor::new();
+    let matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
+
+    let mut imports = Vec::new();
+    let mut functions = Vec::new();
+    let mut classes = Vec::new();
+
+    let func_name_idx = query.capture_index_for_name("func.name").unwrap();
+    let func_idx = query.capture_index_for_name("func").unwrap();
+    let method_name_idx = query.capture_index_for_name("method.name").unwrap();
+    let method_idx = query.capture_index_for_name("method").unwrap();
+    let struct_name_idx = query.capture_index_for_name("struct.name").unwrap();
+    let struct_idx = query.capture_index_for_name("struct").unwrap();
+    let interface_name_idx = query.capture_index_for_name("interface.name").unwrap();
+    let interface_idx = query.capture_index_for_name("interface").unwrap();
+    let import_idx = query.capture_index_for_name("import").unwrap();
+
+    for m in matches {
+        for capture in m.captures {
+            if capture.index == import_idx {
+                let node = capture.node;
+                let import_text = node.utf8_text(source.as_bytes()).unwrap_or("");
+                imports.push(ImportInfo {
+                    text: import_text.to_string(),
+                    line: node.start_position().row + 1,
+                });
+            } else if capture.index == func_name_idx {
+                if let Some(func_capture) = m.captures.iter().find(|c| c.index == func_idx) {
+                    let name_node = capture.node;
+                    let func_node = func_capture.node;
+                    let name = name_node.utf8_text(source.as_bytes()).unwrap_or("");
+                    let line = func_node.start_position().row + 1;
+                    let end_line = func_node.end_position().row + 1;
+                    let signature = extract_signature(func_node, source)?;
+                    let doc = extract_doc_comment(func_node, source, Language::Go)?;
+                    let code = if include_code {
+                        extract_code(func_node, source)?
+                    } else {
+                        None
+                    };
+
+                    functions.push(EnhancedFunctionInfo {
+                        name: name.to_string(),
+                        signature,
+                        line,
+                        end_line,
+                        doc,
+                        code,
+                    });
+                }
+            } else if capture.index == method_name_idx {
+                if let Some(method_capture) = m.captures.iter().find(|c| c.index == method_idx) {
+                    let name_node = capture.node;
+                    let method_node = method_capture.node;
+                    let name = name_node.utf8_text(source.as_bytes()).unwrap_or("");
+                    let line = method_node.start_position().row + 1;
+                    let end_line = method_node.end_position().row + 1;
+                    let signature = extract_signature(method_node, source)?;
+                    let doc = extract_doc_comment(method_node, source, Language::Go)?;
+                    let code = if include_code {
+                        extract_code(method_node, source)?
+                    } else {
+                        None
+                    };
+
+                    functions.push(EnhancedFunctionInfo {
+                        name: name.to_string(),
+                        signature,
+                        line,
+                        end_line,
+                        doc,
+                        code,
+                    });
+                }
+            } else if capture.index == struct_name_idx {
+                if let Some(struct_capture) = m.captures.iter().find(|c| c.index == struct_idx) {
+                    let name_node = capture.node;
+                    let struct_node = struct_capture.node;
+                    let name = name_node.utf8_text(source.as_bytes()).unwrap_or("");
+                    let line = struct_node.start_position().row + 1;
+                    let end_line = struct_node.end_position().row + 1;
+                    let doc = extract_doc_comment(struct_node, source, Language::Go)?;
+                    let code = if include_code {
+                        extract_code(struct_node, source)?
+                    } else {
+                        None
+                    };
+
+                    classes.push(EnhancedClassInfo {
+                        name: name.to_string(),
+                        line,
+                        end_line,
+                        doc,
+                        code,
+                        methods: vec![],
+                    });
+                }
+            } else if capture.index == interface_name_idx {
+                if let Some(interface_capture) =
+                    m.captures.iter().find(|c| c.index == interface_idx)
+                {
+                    let name_node = capture.node;
+                    let interface_node = interface_capture.node;
+                    let name = name_node.utf8_text(source.as_bytes()).unwrap_or("");
+                    let line = interface_node.start_position().row + 1;
+                    let end_line = interface_node.end_position().row + 1;
+                    let doc = extract_doc_comment(interface_node, source, Language::Go)?;
+                    let code = if include_code {
+                        extract_code(interface_node, source)?
+                    } else {
+                        None
+                    };
+
+                    classes.push(EnhancedClassInfo {
+                        name: name.to_string(),
+                        line,
+                        end_line,
+                        doc,
+                        code,
+                        methods: vec![],
+                    });
+                }
+            }
+        }
+    }
+
+    Ok(EnhancedFileShape {
+        path: None,
+        language: None,
+        functions,
+        structs: vec![],
+        classes,
+        imports,
+        impl_blocks: vec![],
+        traits: vec![],
+        interfaces: vec![],
         dependencies: vec![],
     })
 }

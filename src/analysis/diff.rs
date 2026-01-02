@@ -271,6 +271,7 @@ fn extract_symbols(
         Language::Python => extract_python_symbols(tree, source, &mut symbols)?,
         Language::JavaScript => extract_js_symbols(tree, source, &mut symbols)?,
         Language::TypeScript => extract_ts_symbols(tree, source, &mut symbols)?,
+        Language::Go => extract_go_symbols(tree, source, &mut symbols)?,
         Language::Html | Language::Css => {
             // HTML and CSS don't have traditional symbols like functions/classes
             // Return empty - structural diff not applicable
@@ -474,6 +475,59 @@ fn extract_ts_symbols(
                 "class.name" => (SymbolType::Class, node.parent()),
                 "method.name" => (SymbolType::Function, node.parent()),
                 "interface.name" => (SymbolType::Interface, node.parent()),
+                _ => continue,
+            };
+
+            if let (Ok(name), Some(full_node)) = (node.utf8_text(source.as_bytes()), full_node) {
+                let signature = extract_signature_from_node(&full_node, source);
+                let body_hash = hash_node_body(&full_node, source);
+
+                symbols.insert(
+                    format!("{:?}::{}", symbol_type, name),
+                    ExtractedSymbol {
+                        symbol_type,
+                        name: name.to_string(),
+                        line: node.start_position().row + 1,
+                        signature,
+                        body_hash,
+                    },
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn extract_go_symbols(
+    tree: &tree_sitter::Tree,
+    source: &str,
+    symbols: &mut HashMap<String, ExtractedSymbol>,
+) -> Result<(), io::Error> {
+    use tree_sitter::{Query, QueryCursor};
+
+    let query = Query::new(
+        &tree_sitter_go::LANGUAGE.into(),
+        r#"
+        (function_declaration name: (identifier) @func.name) @func
+        (method_declaration name: (field_identifier) @method.name) @method
+        (type_declaration (type_spec name: (type_identifier) @type.name)) @type
+        "#,
+    )
+    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("Query error: {e}")))?;
+
+    let mut cursor = QueryCursor::new();
+    let matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
+
+    for match_ in matches {
+        for capture in match_.captures {
+            let capture_name = query.capture_names()[capture.index as usize];
+            let node = capture.node;
+
+            let (symbol_type, full_node) = match capture_name {
+                "func.name" => (SymbolType::Function, node.parent()),
+                "method.name" => (SymbolType::Function, node.parent()),
+                "type.name" => (SymbolType::Class, node.parent()),
                 _ => continue,
             };
 

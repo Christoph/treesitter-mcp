@@ -218,7 +218,11 @@ fn is_context_node(node_type: &str, language: Language) -> bool {
                 | "arrow_function"
                 | "function_expression"
         ),
-        _ => false,
+        Language::Go => matches!(
+            node_type,
+            "function_declaration" | "method_declaration" | "type_declaration"
+        ),
+        Language::Html | Language::Css => false,
     }
 }
 
@@ -226,7 +230,7 @@ fn is_context_node(node_type: &str, language: Language) -> bool {
 fn extract_scope_info(node: Node, source: &str) -> Option<ScopeInfo> {
     let kind = match node.kind() {
         "function_item" | "function_definition" | "function_declaration" => "function",
-        "method_definition" => "method",
+        "method_definition" | "method_declaration" => "method",
         "class_definition" | "class_declaration" => "class",
         "impl_item" => "impl",
         "trait_item" => "trait",
@@ -234,6 +238,7 @@ fn extract_scope_info(node: Node, source: &str) -> Option<ScopeInfo> {
         "enum_item" => "enum",
         "mod_item" | "module" => "module",
         "arrow_function" | "function_expression" => "function",
+        "type_declaration" => "type",
         _ => "unknown",
     };
 

@@ -20,6 +20,7 @@ Tree-sitter MCP Server exposes powerful code analysis tools through the MCP prot
 - **TypeScript** (.ts, .tsx)
 - **HTML** (.html, .htm)
 - **CSS** (.css)
+- **Go** (.go)
 
 ## Installation
 

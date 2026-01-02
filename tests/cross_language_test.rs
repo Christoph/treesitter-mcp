@@ -38,6 +38,21 @@ fn test_parse_file_extracts_functions_from_all_languages() {
             "TypeScript",
             vec!["add", "subtract", "multiply", "divide"],
         ),
+        (
+            "go",
+            "calculator.go",
+            "Go",
+            vec![
+                "Add",
+                "Subtract",
+                "Multiply",
+                "Divide",
+                "NewCalculator",
+                "AddToHistory",
+                "GetHistory",
+                "PrintHistory",
+            ],
+        ),
     ];
 
     for (lang, file, expected_lang, expected_funcs) in test_cases {
@@ -73,6 +88,7 @@ fn test_parse_file_extracts_classes_from_all_languages() {
         ("python", "calculator.py", vec!["Calculator"]),
         ("javascript", "calculator.js", vec!["Calculator"]),
         ("typescript", "calculator.ts", vec!["Calculator"]),
+        ("go", "calculator.go", vec!["Calculator"]),
     ];
 
     for (lang, file, expected_classes) in test_cases {
@@ -108,6 +124,7 @@ fn test_parse_file_includes_code_for_all_languages() {
         ("python", "calculator.py"),
         ("javascript", "calculator.js"),
         ("typescript", "calculator.ts"),
+        ("go", "calculator.go"),
     ];
 
     for (lang, file) in test_cases {
@@ -157,6 +174,7 @@ fn test_find_usages_locates_function_calls_in_all_languages() {
         ("python", "calculator.py", "add"),
         ("javascript", "calculator.js", "add"),
         ("typescript", "calculator.ts", "add"),
+        ("go", "calculator.go", "Add"),
     ];
 
     for (lang, file, symbol) in test_cases {
@@ -210,6 +228,7 @@ fn test_find_usages_returns_multiple_usages_for_all_languages() {
         ("python", "calculator.py", "add"),
         ("javascript", "calculator.js", "add"),
         ("typescript", "calculator.ts", "add"),
+        ("go", "calculator.go", "Add"),
     ];
 
     for (lang, file, symbol) in test_cases {
@@ -259,6 +278,7 @@ fn test_get_context_returns_enclosing_scope_for_all_languages() {
         ("python", "calculator.py", 79, 8),   // Inside Calculator.add method
         ("javascript", "calculator.js", 14, 5), // Inside add function body
         ("typescript", "calculator.ts", 14, 5), // Inside add function body
+        ("go", "calculator.go", 7, 5),        // Inside Add function body
     ];
 
     for (lang, file, line, column) in test_cases {
@@ -319,6 +339,7 @@ fn test_get_context_outermost_is_source_file_for_all_languages() {
         ("python", "calculator.py", 79, 5),     // Inside Calculator.add method
         ("javascript", "calculator.js", 14, 5), // Inside add function
         ("typescript", "calculator.ts", 14, 5), // Inside add function
+        ("go", "calculator.go", 7, 5),          // Inside Add function
     ];
 
     for (lang, file, line, column) in test_cases {
@@ -364,6 +385,7 @@ fn test_code_map_provides_overview_for_all_languages() {
         ("python", "."),
         ("javascript", "."),
         ("typescript", "."),
+        ("go", "."),
     ];
 
     for (lang, subdir) in test_cases {
