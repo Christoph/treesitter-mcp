@@ -3,14 +3,16 @@
 //! Unified file viewer with flexible detail levels and automatic type inclusion.
 //! Merges functionality from parse_file, read_focused_code, and file_shape.
 
+use crate::analysis::askama::TemplateStructInfo;
 use crate::analysis::dependencies::resolve_dependencies;
+use crate::analysis::file_shape::find_templates_dir;
 use crate::analysis::path_utils;
 use crate::analysis::shape::{
     extract_enhanced_shape, EnhancedClassInfo, EnhancedFileShape, EnhancedStructInfo,
     ImplBlockInfo, InterfaceInfo, TraitInfo,
 };
 use crate::mcp_types::{CallToolResult, CallToolResultExt};
-use crate::parser::{detect_language, parse_code};
+use crate::parser::{detect_language, parse_code, Language};
 use serde_json::Value;
 use std::collections::HashSet;
 use std::fs;
@@ -55,6 +57,11 @@ pub struct ViewCodeOutput {
     /// ALWAYS included to prevent hallucinations
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub project_types: Vec<TypeDefinitions>,
+
+    /// Askama template struct context (only for HTML files in templates/ directory)
+    /// Provides struct definitions that the template has access to
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub template_structs: Option<Vec<TemplateStructInfo>>,
 }
 
 /// Execute the view_code tool
@@ -178,9 +185,17 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
         main_shape.path = Some(path_utils::to_relative_path(path));
     }
 
+    // Check if this is an HTML template file and find associated Askama structs
+    let template_structs = if language == Language::Html {
+        find_askama_template_structs(Path::new(file_path), &project_root)
+    } else {
+        None
+    };
+
     let output = ViewCodeOutput {
         file: main_shape,
         project_types,
+        template_structs,
     };
 
     let output_json = serde_json::to_string(&output).map_err(|e| {
@@ -309,5 +324,50 @@ fn apply_focus(shape: &mut EnhancedFileShape, focus_symbol: &str) {
 
     if !found {
         log::warn!("Focus symbol '{}' not found in file", focus_symbol);
+    }
+}
+
+/// Find Askama template structs for an HTML template file
+fn find_askama_template_structs(
+    template_path: &Path,
+    project_root: &Path,
+) -> Option<Vec<TemplateStructInfo>> {
+    // Check if file is in a templates directory
+    if let Some(parent) = template_path.parent() {
+        if find_templates_dir(parent).is_some() {
+            // Try to find associated Rust structs
+            match crate::analysis::askama::find_askama_structs_for_template(
+                template_path,
+                project_root,
+            ) {
+                Ok(structs) if !structs.is_empty() => {
+                    log::info!(
+                        "Found {} Askama struct(s) for template {}",
+                        structs.len(),
+                        template_path.display()
+                    );
+                    Some(structs)
+                }
+                Ok(_) => {
+                    log::debug!(
+                        "No Askama structs found for template {}",
+                        template_path.display()
+                    );
+                    None
+                }
+                Err(e) => {
+                    log::warn!(
+                        "Failed to find Askama structs for {}: {}",
+                        template_path.display(),
+                        e
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        }
+    } else {
+        None
     }
 }

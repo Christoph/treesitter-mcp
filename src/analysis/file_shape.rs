@@ -80,10 +80,25 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
             merge_template(path, &templates_dir, &mut visited, &mut recursion_stack)?;
         let dependencies = find_template_dependencies(&source, &templates_dir)?;
 
+        // Find associated Rust structs for Askama templates
+        let template_structs = crate::analysis::askama::find_askama_structs_for_template(
+            &path,
+            &std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+        )
+        .ok()
+        .and_then(|structs| {
+            if structs.is_empty() {
+                None
+            } else {
+                Some(structs)
+            }
+        });
+
         let merged_shape = MergedTemplateShape {
             path: path.to_string_lossy().to_string(),
             merged_content,
             dependencies,
+            template_structs,
         };
 
         let shape_json = serde_json::to_string(&merged_shape).map_err(|e| {
@@ -877,6 +892,8 @@ pub struct MergedTemplateShape {
     pub path: String,
     pub merged_content: String,
     pub dependencies: Vec<TemplateDependency>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub template_structs: Option<Vec<crate::analysis::askama::TemplateStructInfo>>,
 }
 
 /// Find templates directory by walking up from file path

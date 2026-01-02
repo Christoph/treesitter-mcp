@@ -4,7 +4,7 @@
 //! using the rust-mcp-sdk macros and conventions.
 
 use rust_mcp_sdk::macros::{mcp_tool, JsonSchema};
-use rust_mcp_sdk::schema::{schema_utils::CallToolError, CallToolResult};
+use rust_mcp_sdk::schema::{schema_utils::CallToolError, CallToolResult, ToolResponseContent};
 use rust_mcp_sdk::tool_box;
 
 use crate::analysis::{code_map, diff, find_usages, query_pattern, symbol_at_line, view_code};
@@ -232,6 +232,41 @@ impl QueryPattern {
     }
 }
 
+/// Find Rust structs that provide context for an Askama template
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[mcp_tool(
+    name = "template_context",
+    description = "Find Rust structs associated with an Askama template file. Returns struct names, fields, and types (resolved up to 3 levels deep) that are available as variables in the template. Use this when editing templates to know what variables can be used and their types."
+)]
+pub struct TemplateContext {
+    /// Path to the template file (relative or absolute)
+    pub template_path: String,
+}
+
+impl TemplateContext {
+    pub fn call_tool(&self) -> Result<CallToolResult, CallToolError> {
+        let args = serde_json::json!({
+            "template_path": self.template_path
+        });
+
+        let template_path = std::path::Path::new(&self.template_path);
+        let project_root = std::env::current_dir()
+            .map_err(|e| CallToolError::new(format!("Failed to get current directory: {}", e)))?;
+
+        let structs =
+            crate::analysis::askama::find_askama_structs_for_template(template_path, &project_root)
+                .map_err(|e| {
+                    CallToolError::new(format!("Failed to find template structs: {}", e))
+                })?;
+
+        let output = serde_json::json!({ "structs": structs });
+        let json_string = serde_json::to_string_pretty(&output)
+            .map_err(|e| CallToolError::new(format!("Failed to serialize output: {}", e)))?;
+
+        Ok(CallToolResult::from(json_string))
+    }
+}
+
 // Generate an enum with all tools
 tool_box!(
     TreesitterTools,
@@ -242,6 +277,7 @@ tool_box!(
         SymbolAtLine,
         ParseDiff,
         AffectedByDiff,
-        QueryPattern
+        QueryPattern,
+        TemplateContext
     ]
 );

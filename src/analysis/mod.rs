@@ -6,7 +6,9 @@
 //! - Symbol usage finding
 //! - Context extraction at specific positions
 //! - Custom query pattern execution
+//! - Askama template struct context resolution
 
+pub mod askama;
 pub mod code_map;
 pub mod dependencies;
 pub mod diff;
