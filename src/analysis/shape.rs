@@ -178,19 +178,25 @@ pub fn extract_enhanced_shape(
         Language::CSharp => extract_csharp_enhanced(tree, source, include_code)?,
         Language::Java => extract_java_enhanced(tree, source, include_code)?,
         Language::Html | Language::Css => {
-            // HTML and CSS don't fit the EnhancedFileShape model yet
-            // Return empty shape - they should use file_shape tool instead
+            // HTML and CSS are markup/styling languages and are not suitable for
+            // structural shape analysis. They lack the function/class/module structure
+            // that other programming languages have. Tools like view_code, code_map,
+            // and find_usages are designed for languages with well-defined symbols
+            // and scopes (functions, classes, methods, etc.).
+            //
+            // For HTML/CSS analysis, consider using language-specific tools or parsers
+            // designed for markup and styling languages.
             EnhancedFileShape {
                 path: None,
                 language: None,
                 functions: vec![],
                 structs: vec![],
                 classes: vec![],
-                imports: vec![],
-                impl_blocks: vec![],
                 traits: vec![],
                 interfaces: vec![],
                 properties: vec![],
+                imports: vec![],
+                impl_blocks: vec![],
                 dependencies: vec![],
             }
         }

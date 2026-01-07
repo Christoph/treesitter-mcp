@@ -53,8 +53,11 @@ fn test_file_shape_not_found_error_is_actionable() {
     let err = result.unwrap_err().to_string();
     let err_lower = err.to_lowercase();
     assert!(
-        err_lower.contains("not found") || err_lower.contains("no such file"),
-        "Error should indicate file not found"
+        err_lower.contains("not found")
+            || err_lower.contains("no such file")
+            || err_lower.contains("does not exist"),
+        "Error should indicate file not found, got: {}",
+        err
     );
 }
 

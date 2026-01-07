@@ -1,6 +1,8 @@
 use serde_json::json;
 use std::path::PathBuf;
 
+mod common;
+
 #[test]
 fn debug_java_ast_structure() {
     let file_path = PathBuf::from("tests/fixtures/java_project/models/Shape.java");
@@ -11,16 +13,7 @@ fn debug_java_ast_structure() {
     let result = treesitter_mcp::analysis::view_code::execute(&arguments)
         .expect("parse_file should succeed");
 
-    let text = if let Some(content) = result.content.first() {
-        match content {
-            rust_mcp_schema::generated_schema::__int_2025_06_18::ContentBlock::Text { text } => {
-                text.clone()
-            }
-            _ => panic!("Expected text content"),
-        }
-    } else {
-        panic!("No content");
-    };
+    let text = common::get_result_text(&result);
 
     let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
 

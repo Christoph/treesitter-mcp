@@ -12,6 +12,10 @@ pub mod askama;
 pub mod code_map;
 pub mod dependencies;
 pub mod diff;
+#[deprecated(
+    since = "0.2.0",
+    note = "Use view_code module instead. file_shape only supports Rust/Swift/Python, while view_code supports all 9 languages."
+)]
 pub mod file_shape;
 pub mod find_usages;
 pub mod path_utils;

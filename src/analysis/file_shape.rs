@@ -2,6 +2,11 @@
 //!
 //! Extracts the high-level structure of a source file (functions, classes, imports)
 //! without the implementation details.
+//!
+//! **DEPRECATED**: This module is deprecated. Use `view_code` module instead.
+//! `file_shape` only supports Rust/Swift/Python, while `view_code` supports all 9 languages.
+
+#![allow(deprecated)]
 
 use crate::mcp_types::{CallToolResult, CallToolResultExt};
 use crate::parser::{detect_language, parse_code, Language};
@@ -49,6 +54,10 @@ pub struct FileShape {
 }
 
 /// Execute the file_shape tool with JSON arguments
+#[deprecated(
+    since = "0.2.0",
+    note = "Use view_code::execute instead. file_shape only supports Rust/Swift/Python, while view_code supports all 9 languages."
+)]
 pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
     let file_path = arguments["file_path"].as_str().ok_or_else(|| {
         io::Error::new(
@@ -84,18 +93,182 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
     Ok(CallToolResult::success(shape_json))
 }
 
+#[deprecated(
+    since = "0.2.0",
+    note = "Use shape::extract_enhanced_shape instead. extract_shape only supports Rust/Swift/Python, while extract_enhanced_shape supports all 9 languages."
+)]
 pub fn extract_shape(
     tree: &Tree,
     source: &str,
     language: Language,
 ) -> Result<FileShape, io::Error> {
     match language {
+        Language::Rust => extract_rust_shape(tree, source),
         Language::Swift => extract_swift_shape(tree, source),
+        Language::Python => extract_python_shape(tree, source),
         _ => Err(io::Error::new(
             io::ErrorKind::Unsupported,
             format!("extract_shape not implemented for {}", language.name()),
         )),
     }
+}
+
+fn extract_python_shape(tree: &Tree, source: &str) -> Result<FileShape, io::Error> {
+    let mut functions = Vec::new();
+    let mut classes = Vec::new();
+    let mut imports = Vec::new();
+
+    let query = Query::new(
+        &tree_sitter_python::LANGUAGE.into(),
+        r#"
+        (function_definition name: (identifier) @func.name) @func
+        (class_definition name: (identifier) @class.name) @class
+        (import_statement) @import
+        (import_from_statement) @import
+        "#,
+    )
+    .map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Failed to create tree-sitter query: {e}"),
+        )
+    })?;
+
+    let mut cursor = QueryCursor::new();
+    let matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
+
+    for match_ in matches {
+        for capture in match_.captures {
+            let node = capture.node;
+            let name = capture.index;
+
+            match query.capture_names()[name as usize] {
+                "func.name" => {
+                    let text = node.utf8_text(source.as_bytes()).map_err(|e| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("Invalid UTF-8 in function name: {e}"),
+                        )
+                    })?;
+                    functions.push(FunctionInfo {
+                        name: text.to_string(),
+                        line: node.start_position().row + 1,
+                    });
+                }
+                "class.name" => {
+                    let text = node.utf8_text(source.as_bytes()).map_err(|e| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("Invalid UTF-8 in class name: {e}"),
+                        )
+                    })?;
+                    classes.push(ClassInfo {
+                        name: text.to_string(),
+                        line: node.start_position().row + 1,
+                    });
+                }
+                "import" => {
+                    let text = node.utf8_text(source.as_bytes()).map_err(|e| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("Invalid UTF-8 in import statement: {e}"),
+                        )
+                    })?;
+                    imports.push(text.to_string());
+                }
+                _ => {}
+            }
+        }
+    }
+
+    Ok(FileShape {
+        path: None,
+        functions,
+        structs: vec![],
+        classes,
+        imports,
+        dependencies: vec![],
+    })
+}
+
+fn extract_rust_shape(tree: &Tree, source: &str) -> Result<FileShape, io::Error> {
+    let mut functions = Vec::new();
+    let mut structs = Vec::new();
+    let mut imports = Vec::new();
+
+    let query = Query::new(
+        &tree_sitter_rust::LANGUAGE.into(),
+        r#"
+        (function_item name: (identifier) @func.name) @func
+        (struct_item name: (type_identifier) @struct.name) @struct
+        (enum_item name: (type_identifier) @enum.name) @enum
+        (trait_item name: (type_identifier) @trait.name) @trait
+        (impl_item trait: (type_identifier)? @impl.trait type: (type_identifier) @impl.type) @impl
+        (use_declaration) @use
+        "#,
+    )
+    .map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Failed to create tree-sitter query: {e}"),
+        )
+    })?;
+
+    let mut cursor = QueryCursor::new();
+    let matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
+
+    for match_ in matches {
+        for capture in match_.captures {
+            let node = capture.node;
+            let name = capture.index;
+
+            match query.capture_names()[name as usize] {
+                "func.name" => {
+                    let text = node.utf8_text(source.as_bytes()).map_err(|e| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("Invalid UTF-8 in function name: {e}"),
+                        )
+                    })?;
+                    functions.push(FunctionInfo {
+                        name: text.to_string(),
+                        line: node.start_position().row + 1,
+                    });
+                }
+                "struct.name" | "enum.name" | "trait.name" => {
+                    let text = node.utf8_text(source.as_bytes()).map_err(|e| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("Invalid UTF-8 in struct/enum/trait name: {e}"),
+                        )
+                    })?;
+                    structs.push(StructInfo {
+                        name: text.to_string(),
+                        line: node.start_position().row + 1,
+                    });
+                }
+                "use" => {
+                    let text = node.utf8_text(source.as_bytes()).map_err(|e| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("Invalid UTF-8 in use statement: {e}"),
+                        )
+                    })?;
+                    imports.push(text.to_string());
+                }
+                _ => {}
+            }
+        }
+    }
+
+    Ok(FileShape {
+        path: None,
+        functions,
+        structs,
+        classes: vec![],
+        imports,
+        dependencies: vec![],
+    })
 }
 
 #[allow(dead_code)]
@@ -108,10 +281,9 @@ fn extract_swift_shape(tree: &Tree, source: &str) -> Result<FileShape, io::Error
     let query = Query::new(
         &tree_sitter_swift::LANGUAGE.into(),
         r#"
-        (function_declaration name: (simple_identifier) @func.name) @func
-        (struct_declaration name: (type_identifier) @struct.name) @struct
-        (class_declaration name: (type_identifier) @class.name) @class
-        (protocol_declaration name: (type_identifier) @protocol.name) @protocol
+        (function_declaration (simple_identifier) @func.name) @func
+        (class_declaration (type_identifier) @class.name) @class
+        (protocol_declaration (type_identifier) @protocol.name) @protocol
         (import_declaration) @import
         "#,
     )
@@ -143,18 +315,7 @@ fn extract_swift_shape(tree: &Tree, source: &str) -> Result<FileShape, io::Error
                         line: node.start_position().row + 1,
                     });
                 }
-                "struct.name" => {
-                    let text = node.utf8_text(source.as_bytes()).map_err(|e| {
-                        io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            format!("Invalid UTF-8 in struct name: {e}"),
-                        )
-                    })?;
-                    structs.push(StructInfo {
-                        name: text.to_string(),
-                        line: node.start_position().row + 1,
-                    });
-                }
+
                 "class.name" => {
                     let text = node.utf8_text(source.as_bytes()).map_err(|e| {
                         io::Error::new(
@@ -162,10 +323,39 @@ fn extract_swift_shape(tree: &Tree, source: &str) -> Result<FileShape, io::Error
                             format!("Invalid UTF-8 in class name: {e}"),
                         )
                     })?;
-                    classes.push(ClassInfo {
-                        name: text.to_string(),
-                        line: node.start_position().row + 1,
-                    });
+
+                    // In Swift, both struct and class use class_declaration node type
+                    // Search for "struct" or "class" keyword among the children
+                    let is_struct = if let Some(parent) = node.parent() {
+                        let mut found_struct = false;
+                        for i in 0..parent.child_count() {
+                            if let Some(child) = parent.child(i) {
+                                if let Ok(keyword) = child.utf8_text(source.as_bytes()) {
+                                    if keyword == "struct" {
+                                        found_struct = true;
+                                        break;
+                                    } else if keyword == "class" {
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        found_struct
+                    } else {
+                        false
+                    };
+
+                    if is_struct {
+                        structs.push(StructInfo {
+                            name: text.to_string(),
+                            line: node.start_position().row + 1,
+                        });
+                    } else {
+                        classes.push(ClassInfo {
+                            name: text.to_string(),
+                            line: node.start_position().row + 1,
+                        });
+                    }
                 }
                 "protocol.name" => {
                     let text = node.utf8_text(source.as_bytes()).map_err(|e| {
@@ -205,6 +395,10 @@ fn extract_swift_shape(tree: &Tree, source: &str) -> Result<FileShape, io::Error
 }
 
 #[allow(dead_code)]
+#[deprecated(
+    since = "0.2.0",
+    note = "Internal function - use view_code module instead for multi-language support"
+)]
 fn build_shape_tree(
     path: &Path,
     project_root: &Path,
@@ -234,7 +428,9 @@ fn build_shape_tree(
             )
         })?;
         let mut shape = extract_shape(&tree, &source, language)?;
-        shape.path = Some(path.to_string_lossy().to_string());
+        shape.path = Some(crate::analysis::path_utils::to_relative_path(
+            &path.to_string_lossy(),
+        ));
         return Ok(shape);
     }
     visited.insert(canonical);
@@ -260,7 +456,9 @@ fn build_shape_tree(
     })?;
 
     let mut shape = extract_shape(&tree, &source, language)?;
-    shape.path = Some(path.to_string_lossy().to_string());
+    shape.path = Some(crate::analysis::path_utils::to_relative_path(
+        &path.to_string_lossy(),
+    ));
 
     if include_deps {
         let mut deps = Vec::new();
@@ -327,6 +525,10 @@ fn find_project_root(start: &Path) -> Option<PathBuf> {
 /// Uses tree-sitter to parse `mod foo;` or `pub mod foo;` declarations (not inline modules)
 /// and resolves them to `foo.rs` or `foo/mod.rs` under the same directory, constrained to
 /// `project_root` so that only project files are included.
+#[deprecated(
+    since = "0.2.0",
+    note = "Use dependencies::find_rust_dependencies instead. This function will be moved to the dependencies module."
+)]
 pub fn find_rust_dependencies(source: &str, file_path: &Path, project_root: &Path) -> Vec<PathBuf> {
     let mut deps = Vec::new();
 
@@ -395,6 +597,10 @@ pub fn find_rust_dependencies(source: &str, file_path: &Path, project_root: &Pat
 ///
 /// Parses `import foo` and `from foo import bar` statements and resolves them to
 /// `foo.py` or `foo/__init__.py` under the project root.
+#[deprecated(
+    since = "0.2.0",
+    note = "Use dependencies::find_python_dependencies instead. This function will be moved to the dependencies module."
+)]
 pub fn find_python_dependencies(
     source: &str,
     file_path: &Path,
@@ -470,6 +676,10 @@ fn push_python_module(deps: &mut Vec<PathBuf>, module: &str, dir: &Path, project
 /// For JavaScript/TypeScript files, find import dependencies that live in this project.
 ///
 /// Parses `import ... from './foo'` statements and resolves relative imports to actual files.
+#[deprecated(
+    since = "0.2.0",
+    note = "Use dependencies::find_js_ts_dependencies instead. This function will be moved to the dependencies module."
+)]
 pub fn find_js_ts_dependencies(
     source: &str,
     file_path: &Path,
@@ -592,6 +802,10 @@ pub struct MergedTemplateShape {
 ///
 /// Searches up to MAX_DEPTH parent directories to avoid performance issues
 /// in deeply nested projects.
+#[deprecated(
+    since = "0.2.0",
+    note = "This function is specific to Askama templates and will be moved to the askama module."
+)]
 pub fn find_templates_dir(file_path: &Path) -> Option<PathBuf> {
     let mut current = file_path.parent()?;
     let mut depth = 0;
