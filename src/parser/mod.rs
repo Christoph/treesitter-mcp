@@ -22,6 +22,10 @@ pub enum Language {
     Css,
     /// Swift programming language (.swift)
     Swift,
+    /// C# programming language (.cs)
+    CSharp,
+    /// Java programming language (.java)
+    Java,
 }
 
 impl Language {
@@ -35,6 +39,8 @@ impl Language {
             Language::Html => "HTML",
             Language::Css => "CSS",
             Language::Swift => "Swift",
+            Language::CSharp => "C#",
+            Language::Java => "Java",
         }
     }
 
@@ -48,6 +54,8 @@ impl Language {
             Language::Html => tree_sitter_html::LANGUAGE.into(),
             Language::Css => tree_sitter_css::LANGUAGE.into(),
             Language::Swift => tree_sitter_swift::LANGUAGE.into(),
+            Language::CSharp => tree_sitter_c_sharp::LANGUAGE.into(),
+            Language::Java => tree_sitter_java::LANGUAGE.into(),
         }
     }
 }
@@ -65,6 +73,8 @@ impl Language {
 /// - `.html`, `.htm` → HTML
 /// - `.css` → CSS
 /// - `.swift` → Swift
+/// - `.cs` → C#
+/// - `.java` → Java
 ///
 /// # Arguments
 /// * `path` - File path (can be absolute, relative, or just a filename)
@@ -108,6 +118,8 @@ pub fn detect_language(path: impl AsRef<Path>) -> Result<Language> {
         Some("html") | Some("htm") => Ok(Language::Html),
         Some("css") => Ok(Language::Css),
         Some("swift") => Ok(Language::Swift),
+        Some("cs") => Ok(Language::CSharp),
+        Some("java") => Ok(Language::Java),
         Some(ext) => {
             bail!("Unsupported file extension: .{}", ext)
         }
