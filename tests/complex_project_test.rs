@@ -188,7 +188,7 @@ fn test_dependency_resolution_across_layers() {
     });
 
     // When: Parsing file with dependencies
-    let result = treesitter_mcp::analysis::file_shape::execute(&arguments);
+    let result = treesitter_mcp::analysis::view_code::execute(&arguments);
 
     // Then: Should resolve dependencies from domain and infrastructure layers
     assert!(result.is_ok());
@@ -272,7 +272,7 @@ fn test_file_shape_shows_trait_methods() {
     });
 
     // When: Getting file shape
-    let result = treesitter_mcp::analysis::file_shape::execute(&arguments);
+    let result = treesitter_mcp::analysis::view_code::execute(&arguments);
 
     // Then: Should show trait definitions with method signatures
     assert!(result.is_ok());
@@ -499,7 +499,7 @@ fn test_layer_dependency_direction() {
         "include_deps": true
     });
 
-    let result = treesitter_mcp::analysis::file_shape::execute(&arguments);
+    let result = treesitter_mcp::analysis::view_code::execute(&arguments);
     assert!(result.is_ok());
 
     let call_result = result.unwrap();

@@ -46,7 +46,7 @@ fn test_file_shape_not_found_error_is_actionable() {
         "merge_templates": false
     });
 
-    let result = treesitter_mcp::analysis::file_shape::execute(&arguments);
+    let result = treesitter_mcp::analysis::view_code::execute(&arguments);
 
     // Then: Should error clearly
     assert!(result.is_err());

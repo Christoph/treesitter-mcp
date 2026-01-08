@@ -5,7 +5,6 @@ use std::io;
 use std::path::{Path, PathBuf};
 use tree_sitter::Node;
 
-use crate::analysis::file_shape::find_templates_dir;
 use crate::mcp_types::{CallToolResult, CallToolResultExt};
 use crate::parser::{parse_code, Language};
 
@@ -368,6 +367,38 @@ fn resolve_type_definition(
     } else {
         None
     }
+}
+
+/// Find the templates directory by walking up the file system
+///
+/// Searches for a directory named "templates" starting from the given path,
+/// walking up the directory tree. Returns the path to the templates directory.
+pub fn find_templates_dir(file_path: &Path) -> Option<PathBuf> {
+    let mut current = file_path.parent()?;
+    let mut depth = 0;
+    const MAX_DEPTH: usize = 10;
+
+    while depth < MAX_DEPTH {
+        // Check if current dir is named "templates"
+        if current
+            .file_name()
+            .map(|n| n == "templates")
+            .unwrap_or(false)
+        {
+            return Some(current.to_path_buf());
+        }
+
+        // Check if "templates" subdir exists
+        let templates_subdir = current.join("templates");
+        if templates_subdir.is_dir() {
+            return Some(templates_subdir);
+        }
+
+        current = current.parent()?;
+        depth += 1;
+    }
+
+    None
 }
 
 /// Extract base type name from complex types

@@ -1,7 +1,8 @@
 //! Tests for Askama template merging
 
 use std::path::PathBuf;
-use treesitter_mcp::analysis::file_shape::{find_template_dependencies, find_templates_dir};
+use treesitter_mcp::analysis::askama::find_templates_dir;
+use treesitter_mcp::analysis::file_shape::find_template_dependencies;
 
 #[test]
 fn test_find_templates_dir() {
