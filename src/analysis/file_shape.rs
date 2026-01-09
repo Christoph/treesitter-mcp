@@ -11,9 +11,7 @@
 use crate::analysis::dependencies::{
     find_js_ts_dependencies, find_python_dependencies, find_rust_dependencies,
 };
-use crate::mcp_types::{CallToolResult, CallToolResultExt};
 use crate::parser::{detect_language, parse_code, Language};
-use serde_json::Value;
 use std::collections::HashSet;
 use std::fs;
 use std::io;
