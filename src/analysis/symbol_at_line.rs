@@ -218,6 +218,24 @@ fn is_context_node(node_type: &str, language: Language) -> bool {
                 | "arrow_function"
                 | "function_expression"
         ),
+        Language::CSharp => matches!(
+            node_type,
+            "method_declaration"
+                | "constructor_declaration"
+                | "property_declaration"
+                | "class_declaration"
+                | "interface_declaration"
+                | "struct_declaration"
+                | "namespace_declaration"
+        ),
+        Language::Java => matches!(
+            node_type,
+            "method_declaration"
+                | "constructor_declaration"
+                | "class_declaration"
+                | "interface_declaration"
+                | "enum_declaration"
+        ),
         _ => false,
     }
 }
@@ -226,14 +244,18 @@ fn is_context_node(node_type: &str, language: Language) -> bool {
 fn extract_scope_info(node: Node, source: &str) -> Option<ScopeInfo> {
     let kind = match node.kind() {
         "function_item" | "function_definition" | "function_declaration" => "function",
-        "method_definition" => "method",
+        "method_definition" | "method_declaration" => "method",
         "class_definition" | "class_declaration" => "class",
         "impl_item" => "impl",
         "trait_item" => "trait",
-        "struct_item" => "struct",
-        "enum_item" => "enum",
+        "struct_item" | "struct_declaration" => "struct",
+        "enum_item" | "enum_declaration" => "enum",
         "mod_item" | "module" => "module",
         "arrow_function" | "function_expression" => "function",
+        "constructor_declaration" => "constructor",
+        "property_declaration" => "property",
+        "interface_declaration" => "interface",
+        "namespace_declaration" => "namespace",
         _ => "unknown",
     };
 
@@ -273,8 +295,12 @@ fn extract_name(node: Node, source: &str) -> Option<String> {
 
 /// Extract signature from a node
 fn extract_signature(node: Node, source: &str) -> Option<String> {
-    // For functions, try to get the full signature
-    if node.kind().contains("function") || node.kind() == "method_definition" {
+    // For functions, methods, and constructors, try to get the full signature
+    if node.kind().contains("function")
+        || node.kind() == "method_definition"
+        || node.kind() == "method_declaration"
+        || node.kind() == "constructor_declaration"
+    {
         // Try to get parameters
         if let Some(params_node) = node.child_by_field_name("parameters") {
             if let Ok(params_text) = params_node.utf8_text(source.as_bytes()) {
@@ -284,6 +310,13 @@ fn extract_signature(node: Node, source: &str) -> Option<String> {
                 if let Some(return_node) = node.child_by_field_name("return_type") {
                     if let Ok(return_text) = return_node.utf8_text(source.as_bytes()) {
                         return Some(format!("{}{} {}", name, params_text, return_text));
+                    }
+                }
+
+                // For C#/Java, try "type" field instead
+                if let Some(type_node) = node.child_by_field_name("type") {
+                    if let Ok(type_text) = type_node.utf8_text(source.as_bytes()) {
+                        return Some(format!("{} {}{}", type_text, name, params_text));
                     }
                 }
 

@@ -3,9 +3,9 @@
 //! Unified file viewer with flexible detail levels and automatic type inclusion.
 //! Merges functionality from parse_file, read_focused_code, and file_shape.
 
+use crate::analysis::askama::find_templates_dir;
 use crate::analysis::askama::TemplateStructInfo;
 use crate::analysis::dependencies::resolve_dependencies;
-use crate::analysis::file_shape::find_templates_dir;
 use crate::analysis::path_utils;
 use crate::analysis::shape::{
     extract_enhanced_shape, EnhancedClassInfo, EnhancedFileShape, EnhancedStructInfo,

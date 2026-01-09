@@ -20,6 +20,9 @@ Tree-sitter MCP Server exposes powerful code analysis tools through the MCP prot
 - **TypeScript** (.ts, .tsx)
 - **HTML** (.html, .htm)
 - **CSS** (.css)
+- **Swift** (.swift)
+- **C#** (.cs)
+- **Java** (.java)
 
 ## Installation
 
@@ -30,33 +33,63 @@ Tree-sitter MCP Server exposes powerful code analysis tools through the MCP prot
 
 ### Build from Source
 
-```bash
-# Clone the repository
-git clone <repository-url>
-cd treesitter-mcp
+1. Clone the repository:
+   ```bash
+   git clone <repository-url>
+   cd treesitter-mcp
+   ```
 
-# Build release version
-cargo build --release
-```
+2. Build the release binary:
+   ```bash
+   cargo build --release
+   ```
+
+   The compiled binary will be located at `target/release/treesitter-mcp`.
 
 ## Configuration
 
-### Adding to Claude Code CLI
+### Claude Desktop
 
-```bash
-claude mcp add --transport stdio treesitter-mcp -- /absolute/path/to/treesitter-mcp
+To configure the server for Claude Desktop, edit your configuration file:
+
+- **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
+
+Add the `treesitter-mcp` entry to `mcpServers`:
+
+```json
+{
+  "mcpServers": {
+    "treesitter-mcp": {
+      "command": "/ABSOLUTE/PATH/TO/treesitter-mcp/target/release/treesitter-mcp",
+      "args": []
+    }
+  }
+}
 ```
 
-### Adding to Gemini CLI
+*Note: Replace `/ABSOLUTE/PATH/TO/` with the full absolute path to your cloned repository.*
+
+### Other MCP Clients
+
+For any other MCP client, configure it to run the binary directly:
 
 ```bash
-gemini --scope user  mcp add treesitter-mcp /absolute/path/to/treesitter-mcp
+/path/to/treesitter-mcp/target/release/treesitter-mcp
 ```
 
-### Adding to Codex CLI
+Alternatively, you can run it via Cargo (slower startup):
 
 ```bash
-codex mcp add treesitter-mcp -- /absolute/path/to/treesitter-mcp
+cargo run --release --manifest-path /path/to/treesitter-mcp/Cargo.toml
+```
+
+## Running Manually
+
+The server communicates via `stdio` (standard input/output). You can run it manually to verify it starts (it will wait for JSON-RPC messages):
+
+```bash
+./target/release/treesitter-mcp
 ```
 
 ## Available Tools

@@ -1,109 +1,42 @@
-    Updating crates.io index
-     Locking 1 package to latest compatible version
-      Adding async-trait v0.1.89
-   0.278634458s  INFO prepare_target{force=false package_id=complex-service v0.1.0 (/Users/christophmaier/Projects/treesitter-mcp/tests/fixtures/complex_rust_service) target="complex_service"}: cargo::core::compiler::fingerprint: fingerprint error for complex-service v0.1.0 (/Users/christophmaier/Projects/treesitter-mcp/tests/fixtures/complex_rust_service)/Check { test: false }/TargetInner { name_inferred: true, ..: lib_target("complex_service", ["lib"], "/Users/christophmaier/Projects/treesitter-mcp/tests/fixtures/complex_rust_service/src/lib.rs", Edition2021) }
-   0.278650458s  INFO prepare_target{force=false package_id=complex-service v0.1.0 (/Users/christophmaier/Projects/treesitter-mcp/tests/fixtures/complex_rust_service) target="complex_service"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/christophmaier/Projects/treesitter-mcp/tests/fixtures/complex_rust_service/target/debug/.fingerprint/complex-service-1d12cafe298b1be7/lib-complex_service`
-
-Caused by:
-    No such file or directory (os error 2)
-
-Stack backtrace:
-   0: std::backtrace::Backtrace::create
-   1: std::backtrace::Backtrace::capture
-   2: cargo_util::paths::read_bytes
-   3: cargo_util::paths::read
-   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
-   5: cargo::core::compiler::fingerprint::prepare_target
-   6: cargo::core::compiler::compile
-   7: <cargo::core::compiler::build_runner::BuildRunner>::compile
-   8: cargo::ops::cargo_compile::compile_ws
-   9: cargo::ops::cargo_compile::compile_with_exec
-  10: cargo::ops::cargo_compile::compile
-  11: cargo::commands::check::exec
-  12: <cargo::cli::Exec>::exec
-  13: cargo::main
-  14: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
-  15: std::rt::lang_start::<()>::{closure#0}
-  16: std::rt::lang_start_internal
-  17: _main
-   0.281475000s  INFO prepare_target{force=false package_id=serde v1.0.228 target="serde"}: cargo::core::compiler::fingerprint: fingerprint error for serde v1.0.228/Check { test: false }/TargetInner { ..: lib_target("serde", ["lib"], "/Users/christophmaier/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs", Edition2021) }
-   0.281479208s  INFO prepare_target{force=false package_id=serde v1.0.228 target="serde"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/christophmaier/Projects/treesitter-mcp/tests/fixtures/complex_rust_service/target/debug/.fingerprint/serde-605c5e5967c45003/lib-serde`
-
-Caused by:
-    No such file or directory (os error 2)
-
-Stack backtrace:
-   0: std::backtrace::Backtrace::create
-   1: std::backtrace::Backtrace::capture
-   2: cargo_util::paths::read_bytes
-   3: cargo_util::paths::read
-   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
-   5: cargo::core::compiler::fingerprint::prepare_target
-   6: cargo::core::compiler::compile
-   7: cargo::core::compiler::compile
-   8: <cargo::core::compiler::build_runner::BuildRunner>::compile
-   9: cargo::ops::cargo_compile::compile_ws
-  10: cargo::ops::cargo_compile::compile_with_exec
-  11: cargo::ops::cargo_compile::compile
-  12: cargo::commands::check::exec
-  13: <cargo::cli::Exec>::exec
-  14: cargo::main
-  15: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
-  16: std::rt::lang_start::<()>::{closure#0}
-  17: std::rt::lang_start_internal
-  18: _main
-   0.282259792s  INFO prepare_target{force=false package_id=tokio v1.48.0 target="tokio"}: cargo::core::compiler::fingerprint: fingerprint error for tokio v1.48.0/Check { test: false }/TargetInner { ..: lib_target("tokio", ["lib"], "/Users/christophmaier/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.48.0/src/lib.rs", Edition2021) }
-   0.282263125s  INFO prepare_target{force=false package_id=tokio v1.48.0 target="tokio"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/christophmaier/Projects/treesitter-mcp/tests/fixtures/complex_rust_service/target/debug/.fingerprint/tokio-f98ddfe3eaf86310/lib-tokio`
-
-Caused by:
-    No such file or directory (os error 2)
-
-Stack backtrace:
-   0: std::backtrace::Backtrace::create
-   1: std::backtrace::Backtrace::capture
-   2: cargo_util::paths::read_bytes
-   3: cargo_util::paths::read
-   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
-   5: cargo::core::compiler::fingerprint::prepare_target
-   6: cargo::core::compiler::compile
-   7: cargo::core::compiler::compile
-   8: <cargo::core::compiler::build_runner::BuildRunner>::compile
-   9: cargo::ops::cargo_compile::compile_ws
-  10: cargo::ops::cargo_compile::compile_with_exec
-  11: cargo::ops::cargo_compile::compile
-  12: cargo::commands::check::exec
-  13: <cargo::cli::Exec>::exec
-  14: cargo::main
-  15: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
-  16: std::rt::lang_start::<()>::{closure#0}
-  17: std::rt::lang_start_internal
-  18: _main
-   0.283256042s  INFO prepare_target{force=false package_id=complex-service v0.1.0 (/Users/christophmaier/Projects/treesitter-mcp/tests/fixtures/complex_rust_service) target="complex_service"}: cargo::core::compiler::fingerprint: fingerprint error for complex-service v0.1.0 (/Users/christophmaier/Projects/treesitter-mcp/tests/fixtures/complex_rust_service)/Check { test: true }/TargetInner { name_inferred: true, ..: lib_target("complex_service", ["lib"], "/Users/christophmaier/Projects/treesitter-mcp/tests/fixtures/complex_rust_service/src/lib.rs", Edition2021) }
-   0.283260375s  INFO prepare_target{force=false package_id=complex-service v0.1.0 (/Users/christophmaier/Projects/treesitter-mcp/tests/fixtures/complex_rust_service) target="complex_service"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/christophmaier/Projects/treesitter-mcp/tests/fixtures/complex_rust_service/target/debug/.fingerprint/complex-service-9b11fc5b143a3dda/test-lib-complex_service`
-
-Caused by:
-    No such file or directory (os error 2)
-
-Stack backtrace:
-   0: std::backtrace::Backtrace::create
-   1: std::backtrace::Backtrace::capture
-   2: cargo_util::paths::read_bytes
-   3: cargo_util::paths::read
-   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
-   5: cargo::core::compiler::fingerprint::prepare_target
-   6: cargo::core::compiler::compile
-   7: <cargo::core::compiler::build_runner::BuildRunner>::compile
-   8: cargo::ops::cargo_compile::compile_ws
-   9: cargo::ops::cargo_compile::compile_with_exec
-  10: cargo::ops::cargo_compile::compile
-  11: cargo::commands::check::exec
-  12: <cargo::cli::Exec>::exec
-  13: cargo::main
-  14: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
-  15: std::rt::lang_start::<()>::{closure#0}
-  16: std::rt::lang_start_internal
-  17: _main
+   0.012710583s  INFO prepare_target{force=false package_id=complex-service v0.1.0 (/Users/christophmaier/Projects/treesitter-mcp/tests/fixtures/complex_rust_service) target="complex_service"}: cargo::core::compiler::fingerprint: stale: changed "/Users/christophmaier/Projects/treesitter-mcp/tests/fixtures/complex_rust_service/target/debug/build/serde_core-b69eb7896a73356b/out/private.rs"
+   0.012723000s  INFO prepare_target{force=false package_id=complex-service v0.1.0 (/Users/christophmaier/Projects/treesitter-mcp/tests/fixtures/complex_rust_service) target="complex_service"}: cargo::core::compiler::fingerprint:           (vs) "/Users/christophmaier/Projects/treesitter-mcp/tests/fixtures/complex_rust_service/target/debug/.fingerprint/serde_core-32eb346ac01e167b/dep-lib-serde_core"
+   0.012726291s  INFO prepare_target{force=false package_id=complex-service v0.1.0 (/Users/christophmaier/Projects/treesitter-mcp/tests/fixtures/complex_rust_service) target="complex_service"}: cargo::core::compiler::fingerprint:                FileTime { seconds: 1767384279, nanos: 471074926 } < FileTime { seconds: 1767384279, nanos: 488736680 }
+   0.012791541s  INFO prepare_target{force=false package_id=complex-service v0.1.0 (/Users/christophmaier/Projects/treesitter-mcp/tests/fixtures/complex_rust_service) target="complex_service"}: cargo::core::compiler::fingerprint: dependency on `serde_derive` is newer than we are 1767979072.390406363s > 1767384279.516922803s "/Users/christophmaier/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228"
+   0.013521500s  INFO prepare_target{force=false package_id=complex-service v0.1.0 (/Users/christophmaier/Projects/treesitter-mcp/tests/fixtures/complex_rust_service) target="complex_service"}: cargo::core::compiler::fingerprint: dependency on `zmij` is newer than we are 1767384279.597867270s > 1767384279.533910469s "/Users/christophmaier/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde_json-1.0.148"
+   0.014153333s  INFO prepare_target{force=false package_id=complex-service v0.1.0 (/Users/christophmaier/Projects/treesitter-mcp/tests/fixtures/complex_rust_service) target="complex_service"}: cargo::core::compiler::fingerprint: dependency on `scopeguard` is newer than we are 1767384279.516124756s > 1767384279.505119800s "/Users/christophmaier/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lock_api-0.4.14"
+   0.014552541s  INFO prepare_target{force=false package_id=complex-service v0.1.0 (/Users/christophmaier/Projects/treesitter-mcp/tests/fixtures/complex_rust_service) target="complex_service"}: cargo::core::compiler::fingerprint: dependency on `smallvec` is newer than we are 1767384279.534408181s > 1767384279.510355380s "/Users/christophmaier/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/parking_lot_core-0.9.12"
+   0.014695458s  INFO prepare_target{force=false package_id=complex-service v0.1.0 (/Users/christophmaier/Projects/treesitter-mcp/tests/fixtures/complex_rust_service) target="complex_service"}: cargo::core::compiler::fingerprint: dependency on `libc` is newer than we are 1767384279.504602671s > 1767384279.501889901s "/Users/christophmaier/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/errno-0.3.14"
+   0.014903708s  INFO prepare_target{force=false package_id=complex-service v0.1.0 (/Users/christophmaier/Projects/treesitter-mcp/tests/fixtures/complex_rust_service) target="complex_service"}: cargo::core::compiler::fingerprint: dependency on `tokio_macros` is newer than we are 1767979071.869585222s > 1767384279.588625160s "/Users/christophmaier/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.48.0"
+   0.015134916s  INFO prepare_target{force=false package_id=complex-service v0.1.0 (/Users/christophmaier/Projects/treesitter-mcp/tests/fixtures/complex_rust_service) target="complex_service"}: cargo::core::compiler::fingerprint: fingerprint dirty for complex-service v0.1.0 (/Users/christophmaier/Projects/treesitter-mcp/tests/fixtures/complex_rust_service)/Check { test: false }/TargetInner { name_inferred: true, ..: lib_target("complex_service", ["lib"], "/Users/christophmaier/Projects/treesitter-mcp/tests/fixtures/complex_rust_service/src/lib.rs", Edition2021) }
+   0.015143958s  INFO prepare_target{force=false package_id=complex-service v0.1.0 (/Users/christophmaier/Projects/treesitter-mcp/tests/fixtures/complex_rust_service) target="complex_service"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(StaleDepFingerprint { name: "tokio" })
+   0.016311666s  INFO prepare_target{force=false package_id=serde v1.0.228 target="serde"}: cargo::core::compiler::fingerprint: fingerprint dirty for serde v1.0.228/Check { test: false }/TargetInner { ..: lib_target("serde", ["lib"], "/Users/christophmaier/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs", Edition2021) }
+   0.016319000s  INFO prepare_target{force=false package_id=serde v1.0.228 target="serde"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(StaleDependency { name: "serde_derive", dep_mtime: FileTime { seconds: 1767979072, nanos: 390406363 }, max_mtime: FileTime { seconds: 1767384279, nanos: 516922803 } })
+   0.017249541s  INFO prepare_target{force=false package_id=serde_core v1.0.228 target="serde_core"}: cargo::core::compiler::fingerprint: fingerprint dirty for serde_core v1.0.228/Check { test: false }/TargetInner { ..: lib_target("serde_core", ["lib"], "/Users/christophmaier/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde_core-1.0.228/src/lib.rs", Edition2021) }
+   0.017253541s  INFO prepare_target{force=false package_id=serde_core v1.0.228 target="serde_core"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(StaleItem(ChangedFile { reference: "/Users/christophmaier/Projects/treesitter-mcp/tests/fixtures/complex_rust_service/target/debug/.fingerprint/serde_core-32eb346ac01e167b/dep-lib-serde_core", reference_mtime: FileTime { seconds: 1767384279, nanos: 471074926 }, stale: "/Users/christophmaier/Projects/treesitter-mcp/tests/fixtures/complex_rust_service/target/debug/build/serde_core-b69eb7896a73356b/out/private.rs", stale_mtime: FileTime { seconds: 1767384279, nanos: 488736680 } }))
+   0.018065000s  INFO prepare_target{force=false package_id=serde_json v1.0.148 target="serde_json"}: cargo::core::compiler::fingerprint: fingerprint dirty for serde_json v1.0.148/Check { test: false }/TargetInner { ..: lib_target("serde_json", ["lib"], "/Users/christophmaier/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde_json-1.0.148/src/lib.rs", Edition2021) }
+   0.018069291s  INFO prepare_target{force=false package_id=serde_json v1.0.148 target="serde_json"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(StaleDependency { name: "zmij", dep_mtime: FileTime { seconds: 1767384279, nanos: 597867270 }, max_mtime: FileTime { seconds: 1767384279, nanos: 533910469 } })
+   0.019202708s  INFO prepare_target{force=false package_id=tokio v1.48.0 target="tokio"}: cargo::core::compiler::fingerprint: fingerprint dirty for tokio v1.48.0/Check { test: false }/TargetInner { ..: lib_target("tokio", ["lib"], "/Users/christophmaier/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.48.0/src/lib.rs", Edition2021) }
+   0.019208625s  INFO prepare_target{force=false package_id=tokio v1.48.0 target="tokio"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(StaleDependency { name: "tokio_macros", dep_mtime: FileTime { seconds: 1767979071, nanos: 869585222 }, max_mtime: FileTime { seconds: 1767384279, nanos: 588625160 } })
+   0.020748416s  INFO prepare_target{force=false package_id=parking_lot v0.12.5 target="parking_lot"}: cargo::core::compiler::fingerprint: fingerprint dirty for parking_lot v0.12.5/Check { test: false }/TargetInner { ..: lib_target("parking_lot", ["lib"], "/Users/christophmaier/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/parking_lot-0.12.5/src/lib.rs", Edition2021) }
+   0.020753916s  INFO prepare_target{force=false package_id=parking_lot v0.12.5 target="parking_lot"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(StaleDepFingerprint { name: "lock_api" })
+   0.021096791s  INFO prepare_target{force=false package_id=lock_api v0.4.14 target="lock_api"}: cargo::core::compiler::fingerprint: fingerprint dirty for lock_api v0.4.14/Check { test: false }/TargetInner { ..: lib_target("lock_api", ["lib"], "/Users/christophmaier/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lock_api-0.4.14/src/lib.rs", Edition2021) }
+   0.021100708s  INFO prepare_target{force=false package_id=lock_api v0.4.14 target="lock_api"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(StaleDependency { name: "scopeguard", dep_mtime: FileTime { seconds: 1767384279, nanos: 516124756 }, max_mtime: FileTime { seconds: 1767384279, nanos: 505119800 } })
+   0.021552375s  INFO prepare_target{force=false package_id=parking_lot_core v0.9.12 target="parking_lot_core"}: cargo::core::compiler::fingerprint: fingerprint dirty for parking_lot_core v0.9.12/Check { test: false }/TargetInner { ..: lib_target("parking_lot_core", ["lib"], "/Users/christophmaier/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/parking_lot_core-0.9.12/src/lib.rs", Edition2021) }
+   0.021558000s  INFO prepare_target{force=false package_id=parking_lot_core v0.9.12 target="parking_lot_core"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(StaleDependency { name: "smallvec", dep_mtime: FileTime { seconds: 1767384279, nanos: 534408181 }, max_mtime: FileTime { seconds: 1767384279, nanos: 510355380 } })
+   0.022455250s  INFO prepare_target{force=false package_id=signal-hook-registry v1.4.8 target="signal_hook_registry"}: cargo::core::compiler::fingerprint: fingerprint dirty for signal-hook-registry v1.4.8/Check { test: false }/TargetInner { ..: lib_target("signal_hook_registry", ["lib"], "/Users/christophmaier/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/signal-hook-registry-1.4.8/src/lib.rs", Edition2015) }
+   0.022459875s  INFO prepare_target{force=false package_id=signal-hook-registry v1.4.8 target="signal_hook_registry"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(StaleDepFingerprint { name: "errno" })
+   0.023036416s  INFO prepare_target{force=false package_id=errno v0.3.14 target="errno"}: cargo::core::compiler::fingerprint: fingerprint dirty for errno v0.3.14/Check { test: false }/TargetInner { ..: lib_target("errno", ["lib"], "/Users/christophmaier/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/errno-0.3.14/src/lib.rs", Edition2018) }
+   0.023039791s  INFO prepare_target{force=false package_id=errno v0.3.14 target="errno"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(StaleDependency { name: "libc", dep_mtime: FileTime { seconds: 1767384279, nanos: 504602671 }, max_mtime: FileTime { seconds: 1767384279, nanos: 501889901 } })
+   0.024047875s  INFO prepare_target{force=false package_id=complex-service v0.1.0 (/Users/christophmaier/Projects/treesitter-mcp/tests/fixtures/complex_rust_service) target="complex_service"}: cargo::core::compiler::fingerprint: fingerprint dirty for complex-service v0.1.0 (/Users/christophmaier/Projects/treesitter-mcp/tests/fixtures/complex_rust_service)/Check { test: true }/TargetInner { name_inferred: true, ..: lib_target("complex_service", ["lib"], "/Users/christophmaier/Projects/treesitter-mcp/tests/fixtures/complex_rust_service/src/lib.rs", Edition2021) }
+   0.024053125s  INFO prepare_target{force=false package_id=complex-service v0.1.0 (/Users/christophmaier/Projects/treesitter-mcp/tests/fixtures/complex_rust_service) target="complex_service"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(StaleDepFingerprint { name: "tokio" })
+    Checking lock_api v0.4.14
+    Checking serde_core v1.0.228
+    Checking parking_lot_core v0.9.12
+    Checking errno v0.3.14
+    Checking signal-hook-registry v1.4.8
+    Checking parking_lot v0.12.5
     Checking tokio v1.48.0
+    Checking serde_json v1.0.148
     Checking serde v1.0.228
     Checking complex-service v0.1.0 (/Users/christophmaier/Projects/treesitter-mcp/tests/fixtures/complex_rust_service)
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.71s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.37s

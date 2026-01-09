@@ -236,6 +236,7 @@ fn classify_usage_type(node: &Node, _source: &str) -> String {
         if parent_kind == "function_item"
             || parent_kind == "function_declaration"
             || parent_kind == "method_definition"
+            || parent_kind == "method_declaration" // C# methods
             || parent_kind == "struct_item"
             || parent_kind == "class_definition"
             || parent_kind == "class_declaration"

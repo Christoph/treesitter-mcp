@@ -1,5 +1,5 @@
 # Rust
-/target/
+**/target/
 **/*.rs.bk
 *.pdb
 Cargo.lock
@@ -28,3 +28,5 @@ CODEX.md
 GEMINI.md
 coverage/
 mutants.out/
+
+.opencode/

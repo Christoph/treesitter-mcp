@@ -2,11 +2,11 @@
 //!
 //! This module tests the `detect_language` function which identifies programming
 //! languages based on file extensions. Tests cover:
-//! - Detection of all supported languages (Rust, Python, JavaScript, TypeScript, HTML, CSS)
+//! - Detection of all supported languages (Rust, Python, JavaScript, TypeScript, HTML, CSS, Swift, C#, Java)
 //! - Case-insensitive extension matching
 //! - Error handling for unsupported and missing extensions
 
-use treesitter_mcp::parser::{detect_language, Language};
+use treesitter_mcp::parser::{detect_language, parse_code, Language};
 
 /// Test that Rust files (.rs) are correctly detected
 ///
@@ -110,4 +110,120 @@ fn test_no_extension() {
 fn test_case_insensitive_extension() {
     let lang = detect_language("Test.RS").unwrap();
     assert_eq!(lang, Language::Rust);
+}
+
+/// Test that C# files (.cs) are correctly detected
+///
+/// Verifies that the `detect_language` function properly identifies C# source files
+/// by their .cs extension, which is the standard extension for C# programs.
+#[test]
+fn test_detect_language_from_csharp_file() {
+    let lang = detect_language("Program.cs").unwrap();
+    assert_eq!(lang, Language::CSharp);
+}
+
+/// Test that Java files (.java) are correctly detected
+///
+/// Verifies that the `detect_language` function properly identifies Java source files
+/// by their .java extension, which is the standard extension for Java programs.
+#[test]
+fn test_detect_language_from_java_file() {
+    let lang = detect_language("Main.java").unwrap();
+    assert_eq!(lang, Language::Java);
+}
+
+/// Test that C# files with uppercase extension are correctly detected
+///
+/// Verifies that the `detect_language` function correctly identifies C# files regardless
+/// of the case used in the file extension, ensuring robustness across different naming conventions.
+#[test]
+fn test_detect_language_from_csharp_file_case_insensitive() {
+    let lang = detect_language("Controller.CS").unwrap();
+    assert_eq!(lang, Language::CSharp);
+}
+
+/// Test that tree_sitter_language() returns a valid grammar for C#
+///
+/// Verifies that the `tree_sitter_language` method returns a valid tree-sitter
+/// language grammar for C# that can be used to parse C# source code. This test
+/// ensures the grammar can parse a simple C# class declaration without errors.
+#[test]
+fn test_tree_sitter_language_csharp_returns_valid_grammar() {
+    let lang = Language::CSharp;
+    let _ts_lang = lang.tree_sitter_language();
+
+    // Verify we can parse a simple C# program with the grammar
+    let source = r#"
+        class Program {
+            static void Main(string[] args) {
+                System.Console.WriteLine("Hello");
+            }
+        }
+    "#;
+
+    let tree = parse_code(source, lang).unwrap();
+    assert!(!tree.root_node().has_error());
+}
+
+/// Test that tree_sitter_language() returns a valid grammar for Java
+///
+/// Verifies that the `tree_sitter_language` method returns a valid tree-sitter
+/// language grammar for Java that can be used to parse Java source code. This test
+/// ensures the grammar can parse a simple Java class declaration without errors.
+#[test]
+fn test_tree_sitter_language_java_returns_valid_grammar() {
+    let lang = Language::Java;
+    let _ts_lang = lang.tree_sitter_language();
+
+    // Verify we can parse a simple Java program with the grammar
+    let source = r#"
+        public class Main {
+            public static void main(String[] args) {
+                System.out.println("Hello");
+            }
+        }
+    "#;
+
+    let tree = parse_code(source, lang).unwrap();
+    assert!(!tree.root_node().has_error());
+}
+
+/// Test that tree_sitter_language() for C# can parse classes
+///
+/// Verifies that the C# grammar returned by `tree_sitter_language` can parse
+/// class declarations. This ensures the grammar recognizes fundamental C# syntax.
+#[test]
+fn test_tree_sitter_language_csharp_parses_classes() {
+    let lang = Language::CSharp;
+    let source = "public class MyClass { }";
+
+    let tree = parse_code(source, lang).unwrap();
+    let root = tree.root_node();
+
+    // Verify the tree has a class declaration node
+    assert!(!root.has_error());
+    assert!(root.to_sexp().contains("class"));
+}
+
+/// Test that tree_sitter_language() for Java can parse methods
+///
+/// Verifies that the Java grammar returned by `tree_sitter_language` can parse
+/// method declarations. This ensures the grammar recognizes fundamental Java syntax.
+#[test]
+fn test_tree_sitter_language_java_parses_methods() {
+    let lang = Language::Java;
+    let source = r#"
+        public class Test {
+            public void testMethod() {
+                int x = 42;
+            }
+        }
+    "#;
+
+    let tree = parse_code(source, lang).unwrap();
+    let root = tree.root_node();
+
+    // Verify the tree has a method declaration
+    assert!(!root.has_error());
+    assert!(root.to_sexp().contains("method"));
 }

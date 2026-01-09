@@ -1,7 +1,8 @@
 //! Cross-language tests to reduce duplication
 //!
 //! These tests verify that core functionality works consistently across
-//! all supported languages (Rust, Python, JavaScript, TypeScript).
+//! all supported languages (Rust, Python, JavaScript, TypeScript, Swift, C#, Java).
+//! Note: HTML and CSS are not suitable for structural shape analysis and are excluded.
 
 mod common;
 
@@ -36,6 +37,18 @@ fn test_parse_file_extracts_functions_from_all_languages() {
             "typescript",
             "calculator.ts",
             "TypeScript",
+            vec!["add", "subtract", "multiply", "divide"],
+        ),
+        (
+            "csharp",
+            "Calculator.cs",
+            "C#",
+            vec!["Add", "Subtract", "Multiply", "Divide"],
+        ),
+        (
+            "java",
+            "Calculator.java",
+            "Java",
             vec!["add", "subtract", "multiply", "divide"],
         ),
     ];
@@ -73,6 +86,8 @@ fn test_parse_file_extracts_classes_from_all_languages() {
         ("python", "calculator.py", vec!["Calculator"]),
         ("javascript", "calculator.js", vec!["Calculator"]),
         ("typescript", "calculator.ts", vec!["Calculator"]),
+        ("csharp", "Models/Point.cs", vec!["Point"]), // C# has Point class in Models
+        ("java", "Calculator.java", vec!["Calculator"]),
     ];
 
     for (lang, file, expected_classes) in test_cases {
@@ -108,6 +123,8 @@ fn test_parse_file_includes_code_for_all_languages() {
         ("python", "calculator.py"),
         ("javascript", "calculator.js"),
         ("typescript", "calculator.ts"),
+        ("csharp", "Calculator.cs"),
+        ("java", "Calculator.java"),
     ];
 
     for (lang, file) in test_cases {
@@ -157,6 +174,8 @@ fn test_find_usages_locates_function_calls_in_all_languages() {
         ("python", "calculator.py", "add"),
         ("javascript", "calculator.js", "add"),
         ("typescript", "calculator.ts", "add"),
+        ("csharp", "Calculator.cs", "Add"),
+        ("java", "Calculator.java", "add"),
     ];
 
     for (lang, file, symbol) in test_cases {
@@ -210,6 +229,8 @@ fn test_find_usages_returns_multiple_usages_for_all_languages() {
         ("python", "calculator.py", "add"),
         ("javascript", "calculator.js", "add"),
         ("typescript", "calculator.ts", "add"),
+        ("csharp", "Calculator.cs", "Add"),
+        ("java", "Calculator.java", "add"),
     ];
 
     for (lang, file, symbol) in test_cases {
@@ -259,6 +280,8 @@ fn test_get_context_returns_enclosing_scope_for_all_languages() {
         ("python", "calculator.py", 79, 8),   // Inside Calculator.add method
         ("javascript", "calculator.js", 14, 5), // Inside add function body
         ("typescript", "calculator.ts", 14, 5), // Inside add function body
+        ("csharp", "Calculator.cs", 20, 24),  // On Add method name in signature
+        ("java", "Calculator.java", 18, 24),  // On add method name in signature
     ];
 
     for (lang, file, line, column) in test_cases {
@@ -319,6 +342,8 @@ fn test_get_context_outermost_is_source_file_for_all_languages() {
         ("python", "calculator.py", 79, 5),     // Inside Calculator.add method
         ("javascript", "calculator.js", 14, 5), // Inside add function
         ("typescript", "calculator.ts", 14, 5), // Inside add function
+        ("csharp", "Calculator.cs", 20, 24),    // On Add method name in signature
+        ("java", "Calculator.java", 18, 24),    // On add method name in signature
     ];
 
     for (lang, file, line, column) in test_cases {
@@ -364,6 +389,8 @@ fn test_code_map_provides_overview_for_all_languages() {
         ("python", "."),
         ("javascript", "."),
         ("typescript", "."),
+        ("csharp", "."),
+        ("java", "."),
     ];
 
     for (lang, subdir) in test_cases {

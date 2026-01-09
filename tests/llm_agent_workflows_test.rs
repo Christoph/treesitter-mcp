@@ -128,11 +128,11 @@ impl Calculator {
     let calc_path = dir.path().join("calculator.rs");
     let file_shape_args = json!({
         "file_path": calc_path.to_str().unwrap(),
+        "detail": "signatures",
         "include_deps": false,
         "merge_templates": false
     });
-    let file_shape_result =
-        treesitter_mcp::analysis::file_shape::execute(&file_shape_args).unwrap();
+    let file_shape_result = treesitter_mcp::analysis::view_code::execute(&file_shape_args).unwrap();
     let file_shape_text = common::get_result_text(&file_shape_result);
     let file_shape_json: serde_json::Value = serde_json::from_str(&file_shape_text).unwrap();
 
@@ -401,7 +401,7 @@ fn test_workflow_add_method_following_existing_pattern() {
         "include_deps": false,
         "merge_templates": false
     });
-    let shape_result = treesitter_mcp::analysis::file_shape::execute(&shape_args).unwrap();
+    let shape_result = treesitter_mcp::analysis::view_code::execute(&shape_args).unwrap();
     let shape_text = common::get_result_text(&shape_result);
     let shape_json: serde_json::Value = serde_json::from_str(&shape_text).unwrap();
 
@@ -475,10 +475,11 @@ fn test_workflow_navigate_large_file_efficiently() {
     // Step 1: file_shape (NOT parse_file) for overview
     let shape_args = json!({
         "file_path": file_path.to_str().unwrap(),
+        "detail": "signatures",
         "include_deps": false,
         "merge_templates": false
     });
-    let shape_result = treesitter_mcp::analysis::file_shape::execute(&shape_args).unwrap();
+    let shape_result = treesitter_mcp::analysis::view_code::execute(&shape_args).unwrap();
     let shape_text = common::get_result_text(&shape_result);
     let shape_tokens = common::helpers::approx_tokens(&shape_text);
 

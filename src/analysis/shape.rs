@@ -1,7 +1,7 @@
 //! Enhanced Shape Extraction Module
 //!
 //! Extracts detailed file structure with signatures, doc comments, and full code blocks.
-//! Supports Rust, Python, JavaScript, and TypeScript.
+//! Supports Rust, Python, JavaScript, TypeScript, Swift, C#, and Java.
 
 use crate::parser::Language;
 use std::io;
@@ -18,6 +18,8 @@ pub struct EnhancedFunctionInfo {
     pub doc: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub code: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub annotations: Vec<String>,
 }
 
 /// Enhanced struct information with documentation
@@ -43,9 +45,13 @@ pub struct EnhancedClassInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub code: Option<String>,
 
-    // NEW: Methods nested in class (Python, JavaScript, TypeScript)
+    // NEW: Methods nested in class (Python, JavaScript, TypeScript, C#)
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub methods: Vec<EnhancedFunctionInfo>,
+
+    // NEW: Interfaces this class implements (C#, TypeScript, Java)
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub implements: Vec<String>,
 }
 
 /// Import information with text and line number
@@ -90,7 +96,7 @@ pub struct TraitInfo {
     pub methods: Vec<MethodInfo>,
 }
 
-/// Interface information (TypeScript)
+/// Interface information (TypeScript, C#)
 #[derive(Debug, serde::Serialize, Clone)]
 pub struct InterfaceInfo {
     pub name: String,
@@ -98,7 +104,22 @@ pub struct InterfaceInfo {
     pub end_line: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub doc: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub methods: Vec<EnhancedFunctionInfo>,
+}
+
+/// Property information (C#, TypeScript, etc.)
+#[derive(Debug, serde::Serialize, Clone)]
+pub struct PropertyInfo {
+    pub name: String,
+    pub line: usize,
+    pub end_line: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub property_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub doc: Option<String>,
 }
 
 /// Enhanced file shape with detailed information
@@ -123,9 +144,13 @@ pub struct EnhancedFileShape {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub traits: Vec<TraitInfo>,
 
-    // NEW: Interfaces for TypeScript
+    // NEW: Interfaces for TypeScript, C#
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub interfaces: Vec<InterfaceInfo>,
+
+    // NEW: Properties for C#, TypeScript
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub properties: Vec<PropertyInfo>,
 
     // NEW: Dependencies (will populate in later phase)
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -149,19 +174,29 @@ pub fn extract_enhanced_shape(
         Language::TypeScript => {
             extract_js_enhanced(tree, source, Language::TypeScript, include_code)?
         }
+        Language::Swift => extract_swift_enhanced(tree, source, include_code)?,
+        Language::CSharp => extract_csharp_enhanced(tree, source, include_code)?,
+        Language::Java => extract_java_enhanced(tree, source, include_code)?,
         Language::Html | Language::Css => {
-            // HTML and CSS don't fit the EnhancedFileShape model
-            // Return empty shape - they should use file_shape tool instead
+            // HTML and CSS are markup/styling languages and are not suitable for
+            // structural shape analysis. They lack the function/class/module structure
+            // that other programming languages have. Tools like view_code, code_map,
+            // and find_usages are designed for languages with well-defined symbols
+            // and scopes (functions, classes, methods, etc.).
+            //
+            // For HTML/CSS analysis, consider using language-specific tools or parsers
+            // designed for markup and styling languages.
             EnhancedFileShape {
                 path: None,
                 language: None,
                 functions: vec![],
                 structs: vec![],
                 classes: vec![],
-                imports: vec![],
-                impl_blocks: vec![],
                 traits: vec![],
                 interfaces: vec![],
+                properties: vec![],
+                imports: vec![],
+                impl_blocks: vec![],
                 dependencies: vec![],
             }
         }
@@ -233,6 +268,7 @@ fn extract_rust_enhanced(
                                 end_line,
                                 doc,
                                 code,
+                                annotations: vec![],
                             });
                         }
                     }
@@ -294,6 +330,7 @@ fn extract_rust_enhanced(
         impl_blocks,
         traits,
         interfaces: vec![],
+        properties: vec![],
         dependencies: vec![],
     })
 }
@@ -359,6 +396,7 @@ fn extract_python_enhanced(
                                 end_line,
                                 doc,
                                 code,
+                                annotations: vec![],
                             });
                         }
                     }
@@ -395,6 +433,7 @@ fn extract_python_enhanced(
                                 doc,
                                 code,
                                 methods,
+                                implements: vec![],
                             });
                         }
                     }
@@ -422,6 +461,7 @@ fn extract_python_enhanced(
         impl_blocks: vec![],
         traits: vec![],
         interfaces: vec![],
+        properties: vec![],
         dependencies: vec![],
     })
 }
@@ -509,6 +549,7 @@ fn extract_js_enhanced(
                                     end_line,
                                     doc,
                                     code,
+                                    annotations: vec![],
                                 });
                             }
                         }
@@ -540,6 +581,7 @@ fn extract_js_enhanced(
                                         end_line,
                                         doc,
                                         code,
+                                        annotations: vec![],
                                     });
                                 }
                             }
@@ -578,6 +620,7 @@ fn extract_js_enhanced(
                                     doc,
                                     code,
                                     methods,
+                                    implements: vec![],
                                 });
                             }
                         }
@@ -615,6 +658,7 @@ fn extract_js_enhanced(
                                         doc,
                                         code,
                                         methods,
+                                        implements: vec![],
                                     });
                                 }
                             }
@@ -653,8 +697,812 @@ fn extract_js_enhanced(
         impl_blocks: vec![],
         traits: vec![],
         interfaces,
+        properties: vec![],
         dependencies: vec![],
     })
+}
+
+/// Extract enhanced shape from Swift source code
+fn extract_swift_enhanced(
+    tree: &Tree,
+    source: &str,
+    include_code: bool,
+) -> Result<EnhancedFileShape, io::Error> {
+    let mut functions = Vec::new();
+    let mut structs = Vec::new();
+    let mut classes = Vec::new();
+    let mut imports = Vec::new();
+    let mut traits = Vec::new();
+
+    // Use tree-sitter query API for efficient extraction (Swift grammar)
+    let query = Query::new(
+        &tree_sitter_swift::LANGUAGE.into(),
+        r#"
+        (function_declaration name: (simple_identifier) @func.name) @func
+        (class_declaration name: (type_identifier) @class.name) @class
+        (protocol_declaration name: (type_identifier) @protocol.name) @protocol
+        (import_declaration) @import
+        "#,
+    )
+    .map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Failed to create tree-sitter query: {e}"),
+        )
+    })?;
+
+    let mut cursor = QueryCursor::new();
+    let matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
+
+    for match_ in matches {
+        for capture in match_.captures {
+            let node = capture.node;
+            let name_idx = capture.index;
+            let capture_name = query.capture_names()[name_idx as usize];
+
+            match capture_name {
+                "func.name" => {
+                    if let Ok(func_node) = find_parent_by_type(node, "function_declaration") {
+                        // Skip functions inside classes/structs
+                        if is_inside_class(func_node) {
+                            continue;
+                        }
+
+                        if let Ok(name) = node.utf8_text(source.as_bytes()) {
+                            let line = func_node.start_position().row + 1;
+                            let end_line = func_node.end_position().row + 1;
+                            let signature = extract_signature(func_node, source)?;
+                            let doc = extract_doc_comment(func_node, source, Language::Swift)?;
+                            let code = if include_code {
+                                extract_code(func_node, source)?
+                            } else {
+                                None
+                            };
+
+                            functions.push(EnhancedFunctionInfo {
+                                name: name.to_string(),
+                                signature,
+                                line,
+                                end_line,
+                                doc,
+                                code,
+                                annotations: vec![],
+                            });
+                        }
+                    }
+                }
+                "class.name" => {
+                    if let Ok(class_node) = find_parent_by_type(node, "class_declaration") {
+                        // Skip nested classes
+                        if is_inside_class(class_node) {
+                            continue;
+                        }
+
+                        if let Ok(name) = node.utf8_text(source.as_bytes()) {
+                            let line = class_node.start_position().row + 1;
+                            let end_line = class_node.end_position().row + 1;
+                            let doc = extract_doc_comment(class_node, source, Language::Swift)?;
+                            let code = if include_code {
+                                extract_code(class_node, source)?
+                            } else {
+                                None
+                            };
+
+                            // Check if this is actually a struct (both use class_declaration in Swift grammar)
+                            let is_struct = class_node
+                                .child(0)
+                                .and_then(|first_child| {
+                                    first_child.utf8_text(source.as_bytes()).ok()
+                                })
+                                .map(|text| text.trim_start().starts_with("struct"))
+                                .unwrap_or(false);
+
+                            if is_struct {
+                                structs.push(EnhancedStructInfo {
+                                    name: name.to_string(),
+                                    line,
+                                    end_line,
+                                    doc,
+                                    code,
+                                });
+                            } else {
+                                // Extract methods from class body
+                                let methods = extract_class_methods(
+                                    class_node,
+                                    source,
+                                    Language::Swift,
+                                    include_code,
+                                )?;
+
+                                classes.push(EnhancedClassInfo {
+                                    name: name.to_string(),
+                                    line,
+                                    end_line,
+                                    doc,
+                                    code,
+                                    methods,
+                                    implements: vec![],
+                                });
+                            }
+                        }
+                    }
+                }
+                "protocol.name" => {
+                    if let Ok(protocol_node) = find_parent_by_type(node, "protocol_declaration") {
+                        // Skip nested protocols
+                        if is_inside_class(protocol_node) {
+                            continue;
+                        }
+
+                        if let Ok(name) = node.utf8_text(source.as_bytes()) {
+                            let line = protocol_node.start_position().row + 1;
+                            let end_line = protocol_node.end_position().row + 1;
+                            let doc = extract_doc_comment(protocol_node, source, Language::Swift)?;
+
+                            // Extract methods from protocol body and convert to MethodInfo
+                            let enhanced_methods = extract_class_methods(
+                                protocol_node,
+                                source,
+                                Language::Swift,
+                                include_code,
+                            )?;
+                            let methods = enhanced_methods
+                                .into_iter()
+                                .map(|m| MethodInfo {
+                                    name: m.name,
+                                    signature: m.signature,
+                                    line: m.line,
+                                    end_line: m.end_line,
+                                    doc: m.doc,
+                                    code: m.code,
+                                })
+                                .collect();
+
+                            traits.push(TraitInfo {
+                                name: name.to_string(),
+                                line,
+                                end_line,
+                                doc,
+                                methods,
+                            });
+                        }
+                    }
+                }
+                "import" => {
+                    if let Ok(text) = node.utf8_text(source.as_bytes()) {
+                        imports.push(ImportInfo {
+                            text: text.to_string(),
+                            line: node.start_position().row + 1,
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    Ok(EnhancedFileShape {
+        path: None,
+        language: None,
+        functions,
+        structs,
+        classes,
+        imports,
+        impl_blocks: vec![],
+        traits,
+        interfaces: vec![],
+        properties: vec![],
+        dependencies: vec![],
+    })
+}
+
+/// Extract enhanced shape from C# source code
+fn extract_csharp_enhanced(
+    tree: &Tree,
+    source: &str,
+    include_code: bool,
+) -> Result<EnhancedFileShape, io::Error> {
+    let mut functions = Vec::new();
+    let mut classes = Vec::new();
+    let mut imports = Vec::new();
+    let mut interfaces = Vec::new();
+    let mut properties = Vec::new();
+
+    let ts_language = tree_sitter_c_sharp::LANGUAGE.into();
+
+    let query_str = r#"
+        (method_declaration) @method
+        (class_declaration) @class
+        (interface_declaration) @interface
+        (property_declaration) @property
+        (using_directive) @import
+    "#;
+
+    let query = Query::new(&ts_language, query_str).map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Failed to create tree-sitter query: {e}"),
+        )
+    })?;
+
+    let mut cursor = QueryCursor::new();
+    let matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
+
+    let mut processed_method_nodes = std::collections::HashSet::new();
+    let mut processed_class_nodes = std::collections::HashSet::new();
+    let mut processed_property_nodes = std::collections::HashSet::new();
+
+    for match_ in matches {
+        for capture in match_.captures {
+            let node = capture.node;
+            let name_idx = capture.index;
+            let capture_name = query.capture_names()[name_idx as usize];
+
+            match capture_name {
+                "method" => {
+                    // In C#, all methods are inside classes, so we extract them all as functions
+                    // (unlike JS/TS where we skip class methods)
+
+                    let node_id = node.id();
+                    if !processed_method_nodes.contains(&node_id) {
+                        processed_method_nodes.insert(node_id);
+
+                        if let Some(name_node) = node.child_by_field_name("name") {
+                            if let Ok(name) = name_node.utf8_text(source.as_bytes()) {
+                                let line = node.start_position().row + 1;
+                                let end_line = node.end_position().row + 1;
+                                let signature = extract_signature(node, source)?;
+                                let doc = extract_doc_comment(node, source, Language::CSharp)?;
+                                let code = if include_code {
+                                    extract_code(node, source)?
+                                } else {
+                                    None
+                                };
+
+                                functions.push(EnhancedFunctionInfo {
+                                    name: name.to_string(),
+                                    signature,
+                                    line,
+                                    end_line,
+                                    doc,
+                                    code,
+                                    annotations: vec![],
+                                });
+                            }
+                        }
+                    }
+                }
+                "class" => {
+                    if node.kind() == "class_declaration" {
+                        let node_id = node.id();
+                        if !processed_class_nodes.contains(&node_id) {
+                            processed_class_nodes.insert(node_id);
+
+                            if let Some(name_node) = node.child_by_field_name("name") {
+                                if let Ok(name) = name_node.utf8_text(source.as_bytes()) {
+                                    let line = node.start_position().row + 1;
+                                    let end_line = node.end_position().row + 1;
+                                    let doc = extract_doc_comment(node, source, Language::CSharp)?;
+                                    let code = if include_code {
+                                        extract_code(node, source)?
+                                    } else {
+                                        None
+                                    };
+
+                                    // Extract implements interfaces from base_list
+                                    let implements =
+                                        extract_csharp_implemented_interfaces(node, source);
+
+                                    // Extract methods from class
+                                    let methods =
+                                        extract_csharp_class_methods(node, source, include_code)?;
+
+                                    classes.push(EnhancedClassInfo {
+                                        name: name.to_string(),
+                                        line,
+                                        end_line,
+                                        doc,
+                                        code,
+                                        methods,
+                                        implements,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+                "interface" => {
+                    if node.kind() == "interface_declaration" {
+                        if let Some(name_node) = node.child_by_field_name("name") {
+                            if let Ok(name) = name_node.utf8_text(source.as_bytes()) {
+                                let line = node.start_position().row + 1;
+                                let end_line = node.end_position().row + 1;
+                                let doc = extract_doc_comment(node, source, Language::CSharp)?;
+                                let code = if include_code {
+                                    extract_code(node, source)?
+                                } else {
+                                    None
+                                };
+
+                                // Extract methods from interface
+                                let methods =
+                                    extract_csharp_interface_methods(node, source, include_code)?;
+
+                                interfaces.push(InterfaceInfo {
+                                    name: name.to_string(),
+                                    line,
+                                    end_line,
+                                    doc,
+                                    code,
+                                    methods,
+                                });
+                            }
+                        }
+                    }
+                }
+                "property" => {
+                    let node_id = node.id();
+                    if !processed_property_nodes.contains(&node_id) {
+                        processed_property_nodes.insert(node_id);
+
+                        if let Some(name_node) = node.child_by_field_name("name") {
+                            if let Ok(name) = name_node.utf8_text(source.as_bytes()) {
+                                let line = node.start_position().row + 1;
+                                let end_line = node.end_position().row + 1;
+                                let doc = extract_doc_comment(node, source, Language::CSharp)?;
+
+                                // Extract property type
+                                let property_type = node
+                                    .child_by_field_name("type")
+                                    .and_then(|n| n.utf8_text(source.as_bytes()).ok())
+                                    .map(|s| s.to_string());
+
+                                properties.push(PropertyInfo {
+                                    name: name.to_string(),
+                                    line,
+                                    end_line,
+                                    property_type,
+                                    doc,
+                                });
+                            }
+                        }
+                    }
+                }
+                "import" => {
+                    if let Ok(text) = node.utf8_text(source.as_bytes()) {
+                        imports.push(ImportInfo {
+                            text: text.to_string(),
+                            line: node.start_position().row + 1,
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    Ok(EnhancedFileShape {
+        path: None,
+        language: None,
+        functions,
+        structs: vec![],
+        classes,
+        imports,
+        impl_blocks: vec![],
+        traits: vec![],
+        interfaces,
+        properties,
+        dependencies: vec![],
+    })
+}
+
+/// Helper function to extract methods from a C# class
+fn extract_csharp_class_methods(
+    class_node: Node,
+    source: &str,
+    include_code: bool,
+) -> Result<Vec<EnhancedFunctionInfo>, io::Error> {
+    let mut methods = Vec::new();
+
+    if let Some(body) = class_node.child_by_field_name("body") {
+        let mut cursor = body.walk();
+        for child in body.children(&mut cursor) {
+            if child.kind() == "method_declaration" {
+                if let Some(method_info) = extract_csharp_method_info(child, source, include_code)?
+                {
+                    methods.push(method_info);
+                }
+            }
+        }
+    }
+
+    Ok(methods)
+}
+
+/// Extract method information from a C# method declaration node
+fn extract_csharp_method_info(
+    method_node: Node,
+    source: &str,
+    include_code: bool,
+) -> Result<Option<EnhancedFunctionInfo>, io::Error> {
+    if let Some(name_node) = method_node.child_by_field_name("name") {
+        if let Ok(name) = name_node.utf8_text(source.as_bytes()) {
+            let line = method_node.start_position().row + 1;
+            let end_line = method_node.end_position().row + 1;
+            let signature = extract_signature(method_node, source)?;
+            let doc = extract_doc_comment(method_node, source, Language::CSharp)?;
+            let code = if include_code {
+                extract_code(method_node, source)?
+            } else {
+                None
+            };
+
+            return Ok(Some(EnhancedFunctionInfo {
+                name: name.to_string(),
+                signature,
+                line,
+                end_line,
+                doc,
+                code,
+                annotations: vec![],
+            }));
+        }
+    }
+    Ok(None)
+}
+
+/// Extract methods from a C# interface body
+fn extract_csharp_interface_methods(
+    interface_node: Node,
+    source: &str,
+    include_code: bool,
+) -> Result<Vec<EnhancedFunctionInfo>, io::Error> {
+    let mut methods = Vec::new();
+
+    if let Some(body) = interface_node.child_by_field_name("body") {
+        let mut cursor = body.walk();
+        for child in body.children(&mut cursor) {
+            if child.kind() == "method_declaration" {
+                if let Some(method_info) = extract_csharp_method_info(child, source, include_code)?
+                {
+                    methods.push(method_info);
+                }
+            }
+        }
+    }
+
+    Ok(methods)
+}
+
+/// Extract implemented interface names from a C# class node
+fn extract_csharp_implemented_interfaces(class_node: Node, source: &str) -> Vec<String> {
+    let mut implements = Vec::new();
+
+    let mut cursor = class_node.walk();
+    for child in class_node.children(&mut cursor) {
+        if child.kind() == "base_list" {
+            let mut bases_cursor = child.walk();
+            for base_child in child.children(&mut bases_cursor) {
+                // Look for identifier or generic_name nodes
+                if base_child.kind() == "identifier" || base_child.kind() == "generic_name" {
+                    if let Ok(interface_name) = base_child.utf8_text(source.as_bytes()) {
+                        implements.push(interface_name.to_string());
+                    }
+                }
+            }
+            break; // base_list is unique, no need to continue
+        }
+    }
+
+    implements
+}
+
+/// Extract enhanced shape from Java source code
+fn extract_java_enhanced(
+    tree: &Tree,
+    source: &str,
+    include_code: bool,
+) -> Result<EnhancedFileShape, io::Error> {
+    let mut functions = Vec::new();
+    let mut classes = Vec::new();
+    let mut imports = Vec::new();
+    let mut interfaces = Vec::new();
+
+    let ts_language = tree_sitter_java::LANGUAGE.into();
+
+    let query_str = r#"
+        (method_declaration) @method
+        (class_declaration) @class
+        (interface_declaration) @interface
+        (import_declaration) @import
+    "#;
+
+    let query = Query::new(&ts_language, query_str).map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Failed to create tree-sitter query: {e}"),
+        )
+    })?;
+
+    let mut cursor = QueryCursor::new();
+    let matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
+
+    let mut processed_method_nodes = std::collections::HashSet::new();
+    let mut processed_class_nodes = std::collections::HashSet::new();
+
+    for match_ in matches {
+        for capture in match_.captures {
+            let node = capture.node;
+            let name_idx = capture.index;
+            let capture_name = query.capture_names()[name_idx as usize];
+
+            match capture_name {
+                "method" => {
+                    let node_id = node.id();
+                    if !processed_method_nodes.contains(&node_id) {
+                        processed_method_nodes.insert(node_id);
+
+                        if let Some(name_node) = node.child_by_field_name("name") {
+                            if let Ok(name) = name_node.utf8_text(source.as_bytes()) {
+                                let line = node.start_position().row + 1;
+                                let end_line = node.end_position().row + 1;
+                                let signature = extract_signature(node, source)?;
+                                let doc = extract_doc_comment(node, source, Language::Java)?;
+                                let code = if include_code {
+                                    extract_code(node, source)?
+                                } else {
+                                    None
+                                };
+
+                                // Extract annotations
+                                let annotations = extract_java_annotations(node, source);
+
+                                functions.push(EnhancedFunctionInfo {
+                                    name: name.to_string(),
+                                    signature,
+                                    line,
+                                    end_line,
+                                    doc,
+                                    code,
+                                    annotations,
+                                });
+                            }
+                        }
+                    }
+                }
+                "class" => {
+                    if node.kind() == "class_declaration" {
+                        let node_id = node.id();
+                        if !processed_class_nodes.contains(&node_id) {
+                            processed_class_nodes.insert(node_id);
+
+                            if let Some(name_node) = node.child_by_field_name("name") {
+                                if let Ok(name) = name_node.utf8_text(source.as_bytes()) {
+                                    let line = node.start_position().row + 1;
+                                    let end_line = node.end_position().row + 1;
+                                    let doc = extract_doc_comment(node, source, Language::Java)?;
+                                    let code = if include_code {
+                                        extract_code(node, source)?
+                                    } else {
+                                        None
+                                    };
+
+                                    // Extract implements interfaces
+                                    let implements =
+                                        extract_java_implemented_interfaces(node, source);
+
+                                    // Extract methods from class
+                                    let methods =
+                                        extract_java_class_methods(node, source, include_code)?;
+
+                                    classes.push(EnhancedClassInfo {
+                                        name: name.to_string(),
+                                        line,
+                                        end_line,
+                                        doc,
+                                        code,
+                                        methods,
+                                        implements,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+                "interface" => {
+                    if node.kind() == "interface_declaration" {
+                        if let Some(name_node) = node.child_by_field_name("name") {
+                            if let Ok(name) = name_node.utf8_text(source.as_bytes()) {
+                                let line = node.start_position().row + 1;
+                                let end_line = node.end_position().row + 1;
+                                let doc = extract_doc_comment(node, source, Language::Java)?;
+                                let code = if include_code {
+                                    extract_code(node, source)?
+                                } else {
+                                    None
+                                };
+
+                                // Extract methods from interface
+                                let methods =
+                                    extract_java_interface_methods(node, source, include_code)?;
+
+                                interfaces.push(InterfaceInfo {
+                                    name: name.to_string(),
+                                    line,
+                                    end_line,
+                                    doc,
+                                    code,
+                                    methods,
+                                });
+                            }
+                        }
+                    }
+                }
+                "import" => {
+                    if let Ok(text) = node.utf8_text(source.as_bytes()) {
+                        imports.push(ImportInfo {
+                            text: text.to_string(),
+                            line: node.start_position().row + 1,
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    Ok(EnhancedFileShape {
+        path: None,
+        language: None,
+        functions,
+        structs: vec![],
+        classes,
+        imports,
+        impl_blocks: vec![],
+        traits: vec![],
+        interfaces,
+        properties: vec![],
+        dependencies: vec![],
+    })
+}
+
+/// Helper function to extract methods from a Java class
+fn extract_java_class_methods(
+    class_node: Node,
+    source: &str,
+    include_code: bool,
+) -> Result<Vec<EnhancedFunctionInfo>, io::Error> {
+    let mut methods = Vec::new();
+
+    if let Some(body) = class_node.child_by_field_name("body") {
+        let mut cursor = body.walk();
+        for child in body.children(&mut cursor) {
+            if child.kind() == "method_declaration" {
+                if let Some(method_info) = extract_java_method_info(child, source, include_code)? {
+                    methods.push(method_info);
+                }
+            }
+        }
+    }
+
+    Ok(methods)
+}
+
+/// Extract method information from a Java method declaration node
+fn extract_java_method_info(
+    method_node: Node,
+    source: &str,
+    include_code: bool,
+) -> Result<Option<EnhancedFunctionInfo>, io::Error> {
+    if let Some(name_node) = method_node.child_by_field_name("name") {
+        if let Ok(name) = name_node.utf8_text(source.as_bytes()) {
+            let line = method_node.start_position().row + 1;
+            let end_line = method_node.end_position().row + 1;
+            let signature = extract_signature(method_node, source)?;
+            let doc = extract_doc_comment(method_node, source, Language::Java)?;
+            let code = if include_code {
+                extract_code(method_node, source)?
+            } else {
+                None
+            };
+
+            // Extract annotations
+            let annotations = extract_java_annotations(method_node, source);
+
+            return Ok(Some(EnhancedFunctionInfo {
+                name: name.to_string(),
+                signature,
+                line,
+                end_line,
+                doc,
+                code,
+                annotations,
+            }));
+        }
+    }
+    Ok(None)
+}
+
+/// Extract methods from a Java interface body
+fn extract_java_interface_methods(
+    interface_node: Node,
+    source: &str,
+    include_code: bool,
+) -> Result<Vec<EnhancedFunctionInfo>, io::Error> {
+    let mut methods = Vec::new();
+
+    if let Some(body) = interface_node.child_by_field_name("body") {
+        let mut cursor = body.walk();
+        for child in body.children(&mut cursor) {
+            if child.kind() == "method_declaration" {
+                if let Some(method_info) = extract_java_method_info(child, source, include_code)? {
+                    methods.push(method_info);
+                }
+            }
+        }
+    }
+
+    Ok(methods)
+}
+
+/// Extract implemented interface names from a Java class node
+fn extract_java_implemented_interfaces(class_node: Node, source: &str) -> Vec<String> {
+    let mut implements = Vec::new();
+
+    // Look for the super_interfaces field (kind: "interfaces")
+    if let Some(super_interfaces) = class_node.child_by_field_name("interfaces") {
+        // The super_interfaces node contains a type_list with type_identifier children
+        let mut cursor = super_interfaces.walk();
+        for child in super_interfaces.children(&mut cursor) {
+            if child.kind() == "type_list" {
+                // type_list contains the actual type_identifier nodes
+                let mut type_cursor = child.walk();
+                for type_child in child.children(&mut type_cursor) {
+                    if type_child.kind() == "type_identifier" {
+                        if let Ok(interface_name) = type_child.utf8_text(source.as_bytes()) {
+                            implements.push(interface_name.to_string());
+                        }
+                    }
+                }
+            } else if child.kind() == "type_identifier" {
+                // Fallback: sometimes type_identifier is direct child
+                if let Ok(interface_name) = child.utf8_text(source.as_bytes()) {
+                    implements.push(interface_name.to_string());
+                }
+            }
+        }
+    }
+
+    implements
+}
+
+/// Extract annotations from a Java node (method or class)
+fn extract_java_annotations(node: Node, source: &str) -> Vec<String> {
+    let mut annotations = Vec::new();
+
+    // In Java tree-sitter grammar, modifiers node exists but has no field name (empty string)
+    // We need to look for 'modifiers' node kind among children
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() == "modifiers" {
+            // Found the modifiers node, now look for annotations inside it
+            let mut mod_cursor = child.walk();
+            for mod_child in child.children(&mut mod_cursor) {
+                if mod_child.kind() == "marker_annotation" || mod_child.kind() == "annotation" {
+                    // For marker_annotation: @Override has child with field 'name' that is an identifier
+                    // For annotation: @SuppressWarnings(...) has a 'name' field
+                    if let Some(name_node) = mod_child.child_by_field_name("name") {
+                        if let Ok(annotation_name) = name_node.utf8_text(source.as_bytes()) {
+                            annotations.push(annotation_name.to_string());
+                        }
+                    }
+                }
+            }
+            break;
+        }
+    }
+
+    annotations
 }
 
 /// Extract impl block information from a Rust impl_item node
@@ -770,7 +1618,10 @@ fn extract_trait(node: Node, source: &str, include_code: bool) -> Result<TraitIn
 fn is_inside_class(node: Node) -> bool {
     let mut current = node.parent();
     while let Some(parent) = current {
-        if parent.kind() == "class_definition" || parent.kind() == "class_declaration" {
+        if parent.kind() == "class_definition"
+            || parent.kind() == "class_declaration"
+            || parent.kind() == "struct_declaration"
+        {
             return true;
         }
         current = parent.parent();
@@ -822,6 +1673,7 @@ fn extract_interface(
                             end_line: method_end_line,
                             doc: method_doc,
                             code,
+                            annotations: vec![],
                         });
                     }
                 }
@@ -829,11 +1681,18 @@ fn extract_interface(
         }
     }
 
+    let code = if include_code {
+        extract_code(node, source)?
+    } else {
+        None
+    };
+
     Ok(InterfaceInfo {
         name,
         line,
         end_line,
         doc,
+        code,
         methods,
     })
 }
@@ -851,6 +1710,7 @@ fn extract_class_methods(
     let body = match language {
         Language::Python => class_node.child_by_field_name("body"),
         Language::JavaScript | Language::TypeScript => class_node.child_by_field_name("body"),
+        Language::Swift => class_node.child_by_field_name("body"),
         _ => None,
     };
 
@@ -858,7 +1718,10 @@ fn extract_class_methods(
         let mut cursor = body_node.walk();
         for child in body_node.children(&mut cursor) {
             // Skip nested classes
-            if child.kind() == "class_definition" || child.kind() == "class_declaration" {
+            if child.kind() == "class_definition"
+                || child.kind() == "class_declaration"
+                || child.kind() == "struct_declaration"
+            {
                 continue;
             }
 
@@ -867,6 +1730,7 @@ fn extract_class_methods(
                 Language::JavaScript | Language::TypeScript => {
                     child.kind() == "method_definition" || child.kind() == "function_declaration"
                 }
+                Language::Swift => child.kind() == "function_declaration",
                 _ => false,
             };
 
@@ -891,6 +1755,7 @@ fn extract_class_methods(
                             end_line,
                             doc,
                             code,
+                            annotations: vec![],
                         });
                     }
                 }
@@ -1044,9 +1909,12 @@ fn extract_doc_comment(
 fn is_comment_node(node: &Node, language: Language) -> bool {
     let kind = node.kind();
     match language {
-        Language::Rust | Language::JavaScript | Language::TypeScript => {
-            kind == "line_comment" || kind == "block_comment"
-        }
+        Language::Rust
+        | Language::JavaScript
+        | Language::TypeScript
+        | Language::Swift
+        | Language::CSharp
+        | Language::Java => kind == "line_comment" || kind == "block_comment" || kind == "comment",
         Language::Python => kind == "comment",
         _ => false,
     }
@@ -1057,7 +1925,7 @@ fn extract_doc_from_comment(comment_text: &str, language: Language) -> String {
     let trimmed = comment_text.trim();
 
     match language {
-        Language::Rust => {
+        Language::Rust | Language::Swift | Language::CSharp => {
             // Handle /// doc comments
             if trimmed.starts_with("///") {
                 trimmed.strip_prefix("///").unwrap_or("").trim().to_string()
@@ -1075,7 +1943,7 @@ fn extract_doc_from_comment(comment_text: &str, language: Language) -> String {
                 String::new()
             }
         }
-        Language::JavaScript | Language::TypeScript => {
+        Language::JavaScript | Language::TypeScript | Language::Java => {
             // Handle /** */ and // comments
             if trimmed.starts_with("/**") && trimmed.ends_with("*/") {
                 trimmed

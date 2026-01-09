@@ -126,7 +126,7 @@ fn test_file_shape_returns_relative_path() {
     });
 
     // When: file_shape is called
-    let result = treesitter_mcp::analysis::file_shape::execute(&arguments);
+    let result = treesitter_mcp::analysis::view_code::execute(&arguments);
 
     // Then: Returns relative path
     assert!(result.is_ok(), "file_shape should succeed");
@@ -405,7 +405,7 @@ fn test_relative_path_multiple_tools_consistent() {
         "file_path": file_path.to_str().unwrap(),
         "include_deps": false
     });
-    let file_shape_result = treesitter_mcp::analysis::file_shape::execute(&file_shape_args);
+    let file_shape_result = treesitter_mcp::analysis::view_code::execute(&file_shape_args);
     assert!(file_shape_result.is_ok());
 
     let file_shape_text = common::get_result_text(&file_shape_result.unwrap());
