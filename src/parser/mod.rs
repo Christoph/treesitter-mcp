@@ -26,6 +26,8 @@ pub enum Language {
     CSharp,
     /// Java programming language (.java)
     Java,
+    /// Go programming language (.go)
+    Go,
 }
 
 impl Language {
@@ -41,6 +43,7 @@ impl Language {
             Language::Swift => "Swift",
             Language::CSharp => "C#",
             Language::Java => "Java",
+            Language::Go => "Go",
         }
     }
 
@@ -56,6 +59,7 @@ impl Language {
             Language::Swift => tree_sitter_swift::LANGUAGE.into(),
             Language::CSharp => tree_sitter_c_sharp::LANGUAGE.into(),
             Language::Java => tree_sitter_java::LANGUAGE.into(),
+            Language::Go => tree_sitter_go::LANGUAGE.into(),
         }
     }
 }
@@ -75,6 +79,7 @@ impl Language {
 /// - `.swift` → Swift
 /// - `.cs` → C#
 /// - `.java` → Java
+/// - `.go` → Go
 ///
 /// # Arguments
 /// * `path` - File path (can be absolute, relative, or just a filename)
@@ -120,6 +125,7 @@ pub fn detect_language(path: impl AsRef<Path>) -> Result<Language> {
         Some("swift") => Ok(Language::Swift),
         Some("cs") => Ok(Language::CSharp),
         Some("java") => Ok(Language::Java),
+        Some("go") => Ok(Language::Go),
         Some(ext) => {
             bail!("Unsupported file extension: .{}", ext)
         }

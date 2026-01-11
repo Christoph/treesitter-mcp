@@ -1,6 +1,7 @@
 mod common;
 
 use serde_json::json;
+use std::path::PathBuf;
 
 // ============================================================================
 // Detail Level Tests
@@ -381,4 +382,165 @@ fn test_code_map_signatures_mode_no_code() {
 
     // Should NOT have full code in signatures mode
     assert!(add_fn["code"].is_null() || !add_fn.get("code").is_some());
+}
+
+// ============================================================================
+// Sorting and Token-Aware Truncation Tests
+// ============================================================================
+
+#[test]
+fn test_code_map_sorts_results_by_importance() {
+    // Given: Complex project with multiple files of varying complexity
+    let dir_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("complex_rust_service");
+    let src_path = dir_path.join("src");
+    let arguments = json!({
+        "path": src_path.to_str().unwrap(),
+        "detail": "signatures"
+    });
+
+    // When: code_map is called
+    let result = treesitter_mcp::analysis::code_map::execute(&arguments);
+
+    // Then: Files are sorted by importance (e.g., files with more symbols first)
+    if let Err(e) = &result {
+        eprintln!("Error calling code_map: {:?}", e);
+    }
+    assert!(
+        result.is_ok(),
+        "code_map should succeed for path: {:?}",
+        src_path
+    );
+    let call_result = result.unwrap();
+    let text = common::get_result_text(&call_result);
+    let map: serde_json::Value = serde_json::from_str(&text).unwrap();
+
+    let files = map["files"].as_array().unwrap();
+    assert!(files.len() > 0);
+
+    // Files should be sorted by descending symbol count (most important first)
+    let mut prev_count = usize::MAX;
+    for file in files {
+        let functions = file["functions"].as_array().map(|f| f.len()).unwrap_or(0);
+        let structs = file["structs"].as_array().map(|s| s.len()).unwrap_or(0);
+        let classes = file["classes"].as_array().map(|c| c.len()).unwrap_or(0);
+        let total_symbols = functions + structs + classes;
+
+        assert!(
+            total_symbols <= prev_count,
+            "Files should be sorted by symbol count in descending order"
+        );
+        prev_count = total_symbols;
+    }
+}
+
+#[test]
+fn test_code_map_truncates_intelligently_with_token_budget() {
+    // Given: Large project with many files
+    let dir_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("complex_rust_service");
+    let arguments = json!({
+        "path": dir_path.join("src").to_str().unwrap(),
+        "max_tokens": 50,
+        "detail": "full"
+    });
+
+    // When: code_map with strict token budget
+    let result = treesitter_mcp::analysis::code_map::execute(&arguments);
+
+    // Then: Output is within token budget and includes most important files first
+    assert!(result.is_ok());
+    let call_result = result.unwrap();
+    let text = common::get_result_text(&call_result);
+
+    // Check that output respects token budget (approximate)
+    // Using 4 chars/token as a more generous estimate for tokenization
+    let approx_tokens = text.len() / 4;
+    assert!(
+        approx_tokens <= 75,
+        "Output should be approximately within token budget (got ~{} tokens)",
+        approx_tokens
+    );
+
+    let map: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let files = map["files"].as_array().unwrap();
+
+    // If truncated, should have truncated flag
+    if approx_tokens >= 40 {
+        assert_eq!(
+            map["truncated"], true,
+            "Should set truncated=true when near budget"
+        );
+    }
+
+    // Most important files should be included first (sorted)
+    if files.len() > 1 {
+        let first_file_symbols = count_symbols(&files[0]);
+        let last_file_symbols = count_symbols(&files[files.len() - 1]);
+
+        assert!(
+            first_file_symbols >= last_file_symbols,
+            "More important files (with more symbols) should appear first (first: {}, last: {})",
+            first_file_symbols,
+            last_file_symbols
+        );
+    }
+}
+
+#[test]
+fn test_code_map_sorts_and_truncates_combined() {
+    // Given: Project that exceeds token budget
+    let dir_path = common::fixture_dir("rust");
+    let arguments = json!({
+        "path": dir_path.to_str().unwrap(),
+        "max_tokens": 500,
+        "detail": "signatures"
+    });
+
+    // When: code_map with tight token budget
+    let result = treesitter_mcp::analysis::code_map::execute(&arguments);
+
+    // Then: Results are sorted and truncated intelligently
+    assert!(result.is_ok());
+    let call_result = result.unwrap();
+    let text = common::get_result_text(&call_result);
+    let map: serde_json::Value = serde_json::from_str(&text).unwrap();
+
+    let files = map["files"].as_array().unwrap();
+
+    // Files should be sorted by importance
+    let mut prev_count = usize::MAX;
+    for file in files {
+        let total_symbols = count_symbols(file);
+        assert!(
+            total_symbols <= prev_count,
+            "Files should be sorted by descending symbol count"
+        );
+        prev_count = total_symbols;
+    }
+
+    // Should respect token budget
+    let approx_tokens = text.len() / 4;
+    assert!(
+        approx_tokens <= 700,
+        "Output should respect token budget (got ~{} tokens)",
+        approx_tokens
+    );
+
+    // Should indicate truncation if budget was limiting
+    if files.len() > 0 {
+        // At least some files should be included
+        assert!(map["truncated"].is_null() || map["truncated"].as_bool() == Some(true));
+    }
+}
+
+fn count_symbols(file: &serde_json::Value) -> usize {
+    let functions = file["functions"].as_array().map(|f| f.len()).unwrap_or(0);
+    let structs = file["structs"].as_array().map(|s| s.len()).unwrap_or(0);
+    let classes = file["classes"].as_array().map(|c| c.len()).unwrap_or(0);
+    functions + structs + classes
 }

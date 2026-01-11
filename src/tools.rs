@@ -78,6 +78,10 @@ pub struct FindUsages {
     /// When set, limits the total number of context lines returned
     #[serde(default)]
     pub max_context_lines: Option<u32>,
+    /// Maximum tokens for output (tiktoken counted). When set, output is
+    /// truncated by dropping code/context and/or truncating usages.
+    #[serde(default)]
+    pub max_tokens: Option<u32>,
 }
 
 /// Get symbol information at a specific line with signature and scope chain
@@ -178,7 +182,8 @@ impl FindUsages {
             "symbol": self.symbol,
             "path": self.path,
             "context_lines": self.context_lines,
-            "max_context_lines": self.max_context_lines
+            "max_context_lines": self.max_context_lines,
+            "max_tokens": self.max_tokens
         });
 
         find_usages::execute(&args).map_err(CallToolError::new)
@@ -270,6 +275,36 @@ impl TemplateContext {
     }
 }
 
+/// Generate a usage-sorted map of all project types. Returns structs, classes, enums, interfaces, traits, protocols, and type aliases prioritized by usage frequency.
+#[mcp_tool(
+    name = "type_map",
+    description = "Generate a usage-sorted map of all project types. Returns structs, classes, enums, interfaces, traits, protocols, and type aliases prioritized by usage frequency across the codebase. Provides LLM agents with accurate type context to prevent hallucinations. USE WHEN: ✅ Starting an LLM coding session (context priming) ✅ Need accurate type definitions across entire project ✅ Want to understand which types are most important. DON'T USE: ❌ Need function/method implementations → use view_code ❌ Need call hierarchy or control flow → use code_map ❌ Analyzing a single file → use view_code. TOKEN COST: MEDIUM (2000-3000 tokens typical)."
+)]
+#[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
+pub struct TypeMap {
+    /// Directory path to scan for types
+    pub path: String,
+    /// Maximum tokens in output (counted via tiktoken, default: 2000)
+    #[serde(default)]
+    pub max_tokens: Option<u32>,
+    /// Optional glob pattern to filter files (e.g., '*.rs', 'src/**/*.ts')
+    #[serde(default)]
+    pub pattern: Option<String>,
+}
+
+impl TypeMap {
+    pub fn call_tool(&self) -> Result<CallToolResult, CallToolError> {
+        let args = serde_json::json!({
+            "path": self.path,
+            "max_tokens": self.max_tokens.unwrap_or(2000),
+            "pattern": self.pattern
+        });
+
+        crate::analysis::type_map::execute(&args)
+            .map_err(|e| CallToolError::new(std::io::Error::other(e.to_string())))
+    }
+}
+
 // Generate an enum with all tools
 tool_box!(
     TreesitterTools,
@@ -281,6 +316,7 @@ tool_box!(
         ParseDiff,
         AffectedByDiff,
         QueryPattern,
-        TemplateContext
+        TemplateContext,
+        TypeMap
     ]
 );

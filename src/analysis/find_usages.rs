@@ -11,6 +11,7 @@ use serde_json::Value;
 use std::fs;
 use std::io;
 use std::path::Path;
+use tiktoken_rs::cl100k_base;
 use tree_sitter::{Node, Tree};
 
 #[derive(Debug, serde::Serialize)]
@@ -19,7 +20,7 @@ struct FindUsagesResult {
     usages: Vec<Usage>,
 }
 
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, serde::Serialize, Clone)]
 struct Usage {
     file: String,
     line: usize,
@@ -53,6 +54,7 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
         .unwrap_or(3);
 
     let max_context_lines = arguments["max_context_lines"].as_u64().map(|v| v as u32);
+    let max_tokens = arguments["max_tokens"].as_u64().map(|v| v as usize);
 
     log::info!("Finding usages of '{symbol}' in: {path_str}");
 
@@ -83,10 +85,14 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
         usage.file = path_utils::to_relative_path(&usage.file);
     }
 
-    let result = FindUsagesResult {
+    let mut result = FindUsagesResult {
         symbol: symbol.to_string(),
         usages,
     };
+
+    if let Some(max_tokens) = max_tokens {
+        apply_token_budget(&mut result, max_tokens)?;
+    }
 
     let result_json = serde_json::to_string(&result).map_err(|e| {
         io::Error::new(
@@ -95,6 +101,87 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
         )
     })?;
     Ok(CallToolResult::success(result_json))
+}
+
+fn apply_token_budget(result: &mut FindUsagesResult, max_tokens: usize) -> Result<(), io::Error> {
+    let bpe = cl100k_base()
+        .map_err(|e| io::Error::other(format!("Failed to initialize tiktoken tokenizer: {e}")))?;
+
+    let mut json = serde_json::to_string(result).map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Failed to serialize result to JSON: {e}"),
+        )
+    })?;
+
+    if bpe.encode_with_special_tokens(&json).len() <= max_tokens {
+        return Ok(());
+    }
+
+    // 1) Drop code snippets first
+    for usage in result.usages.iter_mut() {
+        usage.code = None;
+    }
+
+    json = serde_json::to_string(result).map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Failed to serialize result to JSON: {e}"),
+        )
+    })?;
+
+    if bpe.encode_with_special_tokens(&json).len() <= max_tokens {
+        return Ok(());
+    }
+
+    // 2) Drop usage_type + node_type
+    for usage in result.usages.iter_mut() {
+        usage.usage_type = None;
+        usage.node_type = None;
+    }
+
+    json = serde_json::to_string(result).map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Failed to serialize result to JSON: {e}"),
+        )
+    })?;
+
+    if bpe.encode_with_special_tokens(&json).len() <= max_tokens {
+        return Ok(());
+    }
+
+    // 3) Truncate usages list (keep prefix)
+    let original = result.usages.len();
+    let mut low = 0usize;
+    let mut high = original;
+
+    while low < high {
+        let mid = (low + high) / 2;
+        let candidate = FindUsagesResult {
+            symbol: result.symbol.clone(),
+            usages: result.usages[..mid].to_vec(),
+        };
+
+        let candidate_json = serde_json::to_string(&candidate).map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Failed to serialize result to JSON: {e}"),
+            )
+        })?;
+
+        if bpe.encode_with_special_tokens(&candidate_json).len() <= max_tokens {
+            low = mid + 1;
+        } else {
+            high = mid;
+        }
+    }
+
+    // `low` is first failing size
+    let keep = low.saturating_sub(1);
+    result.usages.truncate(keep);
+
+    Ok(())
 }
 
 /// Recursively search directory for symbol usages

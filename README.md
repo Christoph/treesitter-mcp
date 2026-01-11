@@ -100,6 +100,7 @@ Choose the right tool for your task:
 
 #### "I need to understand code"
 - **Don't know which file?** → `code_map` (directory overview)
+- **Starting a new session?** → `type_map` (usage-ranked type context)
 - **Know the file, need overview?** → `view_code` with `detail="signatures"` (signatures only)
 - **Know the file, need full details?** → `view_code` with `detail="full"` (complete code)
 - **Know the specific function?** → `view_code` with `focus_symbol` (focused view, optimized tokens)
@@ -119,6 +120,7 @@ Choose the right tool for your task:
 
 | Tool | Scope | Token Cost | Speed | Best For |
 |------|-------|------------|-------|----------|
+| `type_map` | Directory | **Medium** | Fast | LLM context priming, finding key types |
 | `code_map` | Directory | Medium | Fast | First-time exploration |
 | `view_code` (signatures) | Single file | **Low** | Fast | Quick overview, API understanding |
 | `view_code` (full) | Single file | **High** | Fast | Deep understanding, multiple functions |
@@ -132,7 +134,14 @@ Choose the right tool for your task:
 
 ### Common Workflow Patterns
 
-#### Pattern 1: Exploring New Codebase
+#### Pattern 1: LLM Session Initialization
+```
+1. type_map (path="src", max_tokens=3000)      → Get usage-ranked types
+2. code_map (path="src", detail="minimal")      → Get file structure
+3. Begin coding tasks with full type awareness
+```
+
+#### Pattern 2: Exploring New Codebase
 ```
 1. code_map (path="src", detail="minimal")      → Get lay of the land
 2. view_code (detail="signatures")              → Understand interfaces
@@ -177,7 +186,41 @@ Choose the right tool for your task:
 
 ---
 
-### 1. view_code
+### 1. type_map
+
+Generate a usage-sorted map of all project types. Returns structs, classes, enums, interfaces, traits, protocols, and type aliases prioritized by usage frequency.
+
+**Primary Use Case:** Provide LLM agents with comprehensive type context at session start to prevent hallucinations about type names, fields, and signatures.
+
+**Use When:**
+- ✅ Starting an LLM coding session (context priming)
+- ✅ Need accurate type definitions across entire project
+- ✅ Want to understand which types are most important
+
+**Don't Use When:**
+- ❌ Need function/method implementations → use `view_code`
+- ❌ Need call hierarchy or control flow → use `code_map`
+- ❌ Analyzing a single file → use `view_code`
+
+**Token Cost:** MEDIUM (2000-3000 tokens typical for medium projects)
+
+**Parameters:**
+- `path` (string, required): Directory to scan
+- `max_tokens` (integer, optional, default: 2000): Token budget (tiktoken counted)
+- `pattern` (string, optional): Glob filter (e.g., `"*.rs"`, `"src/**/*.ts"`)
+
+**Returns:** JSON with types sorted by usage count (descending), then name (ascending).
+- `name`: Type identifier
+- `kind`: `"struct"`, `"class"`, `"enum"`, `"trait"`, `"interface"`, `"protocol"`, `"type_alias"`, `"record"`, `"typed_dict"`, `"named_tuple"`
+- `signature`: Full declaration with visibility and generics
+- `usage_count`: Number of references across project
+- `fields`: For structs/classes (data members only)
+- `variants`: For enums
+- `members`: For traits/interfaces/protocols (methods + associated types)
+
+---
+
+### 2. view_code
 
 View a source file with flexible detail levels and automatic type inclusion from project dependencies.
 
@@ -267,7 +310,7 @@ Focused editing (optimized):
 
 ---
 
-### 2. code_map
+### 3. code_map
 
 Generate hierarchical map of a DIRECTORY (not single file). Returns structure overview of multiple files.
 
@@ -324,7 +367,7 @@ Generate hierarchical map of a DIRECTORY (not single file). Returns structure ov
 
 ---
 
-### 3. find_usages
+### 4. find_usages
 
 Find ALL usages of a symbol (function, variable, class, type) across files. Semantic search, not text search.
 
@@ -385,7 +428,7 @@ Find ALL usages of a symbol (function, variable, class, type) across files. Sema
 
 ---
 
-### 4. symbol_at_line
+### 5. symbol_at_line
 
 Get symbol (function/class/method) at specific line with signature and scope chain.
 
@@ -436,7 +479,7 @@ Get symbol (function/class/method) at specific line with signature and scope cha
 
 ---
 
-### 5. parse_diff
+### 6. parse_diff
 
 Analyze structural changes vs git revision. Returns symbol-level diff (functions/classes added/removed/modified), not line-level.
 
@@ -520,7 +563,7 @@ Analyze structural changes vs git revision. Returns symbol-level diff (functions
 
 ---
 
-### 6. affected_by_diff
+### 7. affected_by_diff
 
 Find usages AFFECTED by your changes. Combines `parse_diff` + `find_usages` to show blast radius with risk levels.
 
@@ -603,7 +646,7 @@ Find usages AFFECTED by your changes. Combines `parse_diff` + `find_usages` to s
 
 ---
 
-### 7. query_pattern
+### 8. query_pattern
 
 Execute custom tree-sitter S-expression query for advanced AST pattern matching. Returns matches with code context for complex structural patterns.
 
@@ -684,7 +727,7 @@ Execute custom tree-sitter S-expression query for advanced AST pattern matching.
 
 ---
 
-### 8. template_context
+### 9. template_context
 
 Find Rust structs associated with an Askama template file. Returns struct names, fields, and types (resolved up to 3 levels deep) that are available as variables in the template.
 

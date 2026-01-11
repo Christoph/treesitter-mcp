@@ -322,3 +322,65 @@ fn test_code_map_respects_max_tokens_parameter() {
         max_tokens
     );
 }
+
+// ============================================================================
+// Token-aware truncation using tiktoken-rs
+// ============================================================================
+
+#[test]
+fn test_code_map_uses_tiktoken_for_token_counting() {
+    // Given: A file with code
+    let file_path = common::fixture_path("rust", "src/calculator.rs");
+
+    // When: code_map with strict max_tokens limit using tiktoken
+    let max_tokens = 100;
+    let arguments = json!({
+        "path": file_path.to_str().unwrap(),
+        "detail": "full",
+        "max_tokens": max_tokens
+    });
+    let result = treesitter_mcp::analysis::code_map::execute(&arguments).unwrap();
+    let text = common::get_result_text(&result);
+
+    // Then: Actual tiktoken count should respect the limit
+    let bpe = tiktoken_rs::cl100k_base().unwrap();
+    let actual_tokens = bpe.encode_with_special_tokens(&text).len();
+
+    assert!(
+        actual_tokens <= max_tokens,
+        "code_map should respect tiktoken token budget: {} > {} tokens. Output was: {}",
+        actual_tokens,
+        max_tokens,
+        text
+    );
+}
+
+#[test]
+fn test_find_usages_uses_tiktoken_for_token_counting() {
+    // Given: A directory with multiple usages of a symbol
+    let fixture_path = common::fixture_dir("rust");
+
+    // When: find_usages with strict max_tokens limit
+    let max_tokens = 50;
+    let arguments = json!({
+        "symbol": "Calculator",
+        "path": fixture_path.join("src").to_str().unwrap(),
+        "context_lines": 3,
+        "max_context_lines": 100,
+        "max_tokens": max_tokens
+    });
+    let result = treesitter_mcp::analysis::find_usages::execute(&arguments).unwrap();
+    let text = common::get_result_text(&result);
+
+    // Then: Actual tiktoken count should respect the limit
+    let bpe = tiktoken_rs::cl100k_base().unwrap();
+    let actual_tokens = bpe.encode_with_special_tokens(&text).len();
+
+    assert!(
+        actual_tokens <= max_tokens,
+        "find_usages should respect tiktoken token budget: {} > {} tokens. Output was: {}",
+        actual_tokens,
+        max_tokens,
+        text
+    );
+}

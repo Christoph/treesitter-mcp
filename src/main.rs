@@ -1,4 +1,5 @@
 mod analysis;
+mod extraction;
 mod handler;
 mod mcp_types;
 mod parser;
