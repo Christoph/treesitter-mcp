@@ -62,6 +62,7 @@ impl ServerHandler for TreesitterServerHandler {
             TreesitterTools::AffectedByDiff(t) => t.call_tool(),
             TreesitterTools::QueryPattern(t) => t.call_tool(),
             TreesitterTools::TemplateContext(t) => t.call_tool(),
+            TreesitterTools::TypeMap(t) => t.call_tool(),
         }
     }
 }

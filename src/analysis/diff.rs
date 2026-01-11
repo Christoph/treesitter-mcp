@@ -271,9 +271,14 @@ fn extract_symbols(
         Language::Python => extract_python_symbols(tree, source, &mut symbols)?,
         Language::JavaScript => extract_js_symbols(tree, source, &mut symbols)?,
         Language::TypeScript => extract_ts_symbols(tree, source, &mut symbols)?,
-        Language::Html | Language::Css | Language::Swift | Language::CSharp | Language::Java => {
-            // HTML, CSS, Swift, C#, and Java don't have traditional symbols like functions/classes yet
-            // Return empty - structural diff not applicable
+        Language::Html
+        | Language::Css
+        | Language::Swift
+        | Language::CSharp
+        | Language::Java
+        | Language::Go => {
+            // These languages don't have structural-diff extraction implemented yet.
+            // Return empty - structural diff not applicable.
             log::debug!("Structural diff not applicable for {:?}", language);
         }
     }
