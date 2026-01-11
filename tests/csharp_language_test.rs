@@ -10,7 +10,10 @@ use serde_json::json;
 fn test_parse_csharp_extracts_static_methods() {
     let file_path = common::fixture_path("csharp", "Calculator.cs");
     let arguments = json!({
-        "file_path": file_path.to_str().unwrap()
+        "file_path": file_path.to_str().unwrap(),
+        "detail": "signatures",
+        "include_deps": false,
+        "max_tokens": 10_000
     });
 
     let result = treesitter_mcp::analysis::view_code::execute(&arguments)
@@ -19,9 +22,6 @@ fn test_parse_csharp_extracts_static_methods() {
     let text = common::get_result_text(&result);
     let shape: serde_json::Value =
         serde_json::from_str(&text).expect("Result should be valid JSON");
-
-    // Verify language detection
-    assert_eq!(shape["language"], "C#", "Should detect C# language");
 
     // Verify static methods from Calculator class
     let expected_methods = vec!["Add", "Subtract", "Multiply", "Divide", "ApplyOperation"];
@@ -34,7 +34,10 @@ fn test_parse_csharp_extracts_static_methods() {
 fn test_parse_csharp_extracts_classes() {
     let file_path = common::fixture_path("csharp", "Calculator.cs");
     let arguments = json!({
-        "file_path": file_path.to_str().unwrap()
+        "file_path": file_path.to_str().unwrap(),
+        "detail": "signatures",
+        "include_deps": false,
+        "max_tokens": 10_000
     });
 
     let result = treesitter_mcp::analysis::view_code::execute(&arguments)
@@ -44,12 +47,14 @@ fn test_parse_csharp_extracts_classes() {
     let shape: serde_json::Value =
         serde_json::from_str(&text).expect("Result should be valid JSON");
 
-    // Verify classes are extracted
-    let classes = shape["classes"]
-        .as_array()
-        .expect("Should have classes array");
+    // Verify classes are extracted (compact `c` rows)
+    let rows_str = shape.get("c").and_then(|v| v.as_str()).unwrap_or("");
+    let rows = common::helpers::parse_compact_rows(rows_str);
 
-    let class_names: Vec<&str> = classes.iter().filter_map(|c| c["name"].as_str()).collect();
+    let class_names: Vec<&str> = rows
+        .iter()
+        .filter_map(|r| r.first().map(|s| s.as_str()))
+        .collect();
 
     assert!(
         class_names.contains(&"Calculator"),
@@ -68,7 +73,10 @@ fn test_parse_csharp_extracts_classes() {
 fn test_parse_csharp_extracts_class_methods() {
     let file_path = common::fixture_path("csharp", "Calculator.cs");
     let arguments = json!({
-        "file_path": file_path.to_str().unwrap()
+        "file_path": file_path.to_str().unwrap(),
+        "detail": "signatures",
+        "include_deps": false,
+        "max_tokens": 10_000
     });
 
     let result = treesitter_mcp::analysis::view_code::execute(&arguments)
@@ -89,7 +97,10 @@ fn test_parse_csharp_extracts_class_methods() {
 fn test_parse_csharp_extracts_properties() {
     let file_path = common::fixture_path("csharp", "Models/Point.cs");
     let arguments = json!({
-        "file_path": file_path.to_str().unwrap()
+        "file_path": file_path.to_str().unwrap(),
+        "detail": "signatures",
+        "include_deps": false,
+        "max_tokens": 10_000
     });
 
     let result = treesitter_mcp::analysis::view_code::execute(&arguments)
@@ -99,14 +110,13 @@ fn test_parse_csharp_extracts_properties() {
     let shape: serde_json::Value =
         serde_json::from_str(&text).expect("Result should be valid JSON");
 
-    // Verify properties are extracted
-    let properties = shape["properties"]
-        .as_array()
-        .expect("Should have properties array");
+    // Verify properties are extracted (compact `pr` rows)
+    let rows_str = shape.get("pr").and_then(|v| v.as_str()).unwrap_or("");
+    let rows = common::helpers::parse_compact_rows(rows_str);
 
-    let property_names: Vec<&str> = properties
+    let property_names: Vec<&str> = rows
         .iter()
-        .filter_map(|p| p["name"].as_str())
+        .filter_map(|r| r.first().map(|s| s.as_str()))
         .collect();
 
     assert!(
@@ -126,7 +136,10 @@ fn test_parse_csharp_extracts_properties() {
 fn test_parse_csharp_extracts_interfaces() {
     let file_path = common::fixture_path("csharp", "Models/Point.cs");
     let arguments = json!({
-        "file_path": file_path.to_str().unwrap()
+        "file_path": file_path.to_str().unwrap(),
+        "detail": "signatures",
+        "include_deps": false,
+        "max_tokens": 10_000
     });
 
     let result = treesitter_mcp::analysis::view_code::execute(&arguments)
@@ -136,14 +149,13 @@ fn test_parse_csharp_extracts_interfaces() {
     let shape: serde_json::Value =
         serde_json::from_str(&text).expect("Result should be valid JSON");
 
-    // Verify interfaces are extracted
-    let interfaces = shape["interfaces"]
-        .as_array()
-        .expect("Should have interfaces array");
+    // Verify interfaces are extracted (compact `i` rows)
+    let rows_str = shape.get("i").and_then(|v| v.as_str()).unwrap_or("");
+    let rows = common::helpers::parse_compact_rows(rows_str);
 
-    let interface_names: Vec<&str> = interfaces
+    let interface_names: Vec<&str> = rows
         .iter()
-        .filter_map(|i| i["name"].as_str())
+        .filter_map(|r| r.first().map(|s| s.as_str()))
         .collect();
 
     assert!(
@@ -157,7 +169,10 @@ fn test_parse_csharp_extracts_interfaces() {
 fn test_parse_csharp_handles_interface_implementation() {
     let file_path = common::fixture_path("csharp", "Models/Point.cs");
     let arguments = json!({
-        "file_path": file_path.to_str().unwrap()
+        "file_path": file_path.to_str().unwrap(),
+        "detail": "signatures",
+        "include_deps": false,
+        "max_tokens": 10_000
     });
 
     let result = treesitter_mcp::analysis::view_code::execute(&arguments)
@@ -167,22 +182,17 @@ fn test_parse_csharp_handles_interface_implementation() {
     let shape: serde_json::Value =
         serde_json::from_str(&text).expect("Result should be valid JSON");
 
-    // Verify Circle class implements IShape interface
-    let classes = shape["classes"]
-        .as_array()
-        .expect("Should have classes array");
+    // Verify Circle class implements IShape interface (compact `ci` rows)
+    let rows_str = shape.get("ci").and_then(|v| v.as_str()).unwrap_or("");
+    let rows = common::helpers::parse_compact_rows(rows_str);
 
-    let circle = classes
-        .iter()
-        .find(|c| c["name"] == "Circle")
-        .expect("Should find Circle class");
+    let circle_implements = rows.iter().any(|r| {
+        r.get(0).map(|s| s.as_str()) == Some("Circle")
+            && r.get(1).map(|s| s.as_str()) == Some("IShape")
+    });
 
-    // Check that Circle implements the interface methods
     assert!(
-        circle["implements"]
-            .as_array()
-            .map(|arr| arr.iter().any(|i| i == "IShape"))
-            .unwrap_or(false),
+        circle_implements,
         "Circle should implement IShape interface"
     );
 }
@@ -202,18 +212,16 @@ fn test_find_usages_locates_csharp_method_calls() {
     let usages: serde_json::Value =
         serde_json::from_str(&text).expect("Result should be valid JSON");
 
-    // Should find at least the definition
-    let usage_list = usages["usages"]
-        .as_array()
-        .expect("Should have usages array");
+    let rows = common::helpers::find_usages_rows(&usages);
 
     assert!(
-        usage_list.len() > 0,
+        !rows.is_empty(),
         "Should find at least one usage of Add method"
     );
 
-    // Verify at least one usage is the definition
-    let has_definition = usage_list.iter().any(|u| u["usage_type"] == "definition");
+    let has_definition = rows
+        .iter()
+        .any(|row| row.get(3).map(|s| s.as_str()) == Some("definition"));
 
     assert!(has_definition, "Should find the definition of Add method");
 }
@@ -232,15 +240,10 @@ fn test_code_map_provides_csharp_overview() {
     let map: serde_json::Value = serde_json::from_str(&text).expect("Result should be valid JSON");
 
     // Verify C# files are included
-    let files = map["files"].as_array().expect("Should have files array");
+    let files = common::helpers::code_map_files(&map);
 
-    let has_calculator = files
-        .iter()
-        .any(|f| f["path"].as_str().unwrap().contains("Calculator.cs"));
-
-    let has_point = files
-        .iter()
-        .any(|f| f["path"].as_str().unwrap().contains("Point.cs"));
+    let has_calculator = files.iter().any(|(p, _)| p.contains("Calculator.cs"));
+    let has_point = files.iter().any(|(p, _)| p.contains("Point.cs"));
 
     assert!(has_calculator, "Should include Calculator.cs in code map");
     assert!(has_point, "Should include Point.cs in code map");

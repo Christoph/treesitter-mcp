@@ -10,7 +10,10 @@ use serde_json::json;
 fn test_parse_java_extracts_static_methods() {
     let file_path = common::fixture_path("java", "Calculator.java");
     let arguments = json!({
-        "file_path": file_path.to_str().unwrap()
+        "file_path": file_path.to_str().unwrap(),
+        "detail": "signatures",
+        "include_deps": false,
+        "max_tokens": 10_000
     });
 
     let result = treesitter_mcp::analysis::view_code::execute(&arguments)
@@ -20,13 +23,17 @@ fn test_parse_java_extracts_static_methods() {
     let shape: serde_json::Value =
         serde_json::from_str(&text).expect("Result should be valid JSON");
 
-    // Verify language detection
-    assert_eq!(shape["language"], "Java", "Should detect Java language");
+    // Verify static methods from Calculator class (compact `cm` rows)
+    let rows_str = shape.get("cm").and_then(|v| v.as_str()).unwrap_or("");
+    let rows = common::helpers::parse_compact_rows(rows_str);
 
-    // Verify static methods from Calculator class
     let expected_methods = vec!["add", "subtract", "multiply", "divide", "applyOperation"];
     for method_name in expected_methods {
-        common::helpers::assert_has_function(&shape, method_name);
+        let found = rows.iter().any(|r| {
+            r.get(0).map(|s| s.as_str()) == Some("Calculator")
+                && r.get(1).map(|s| s.as_str()) == Some(method_name)
+        });
+        assert!(found, "Should find method '{method_name}' on Calculator");
     }
 }
 
@@ -38,7 +45,10 @@ fn test_parse_java_extracts_static_methods() {
 fn test_parse_java_extracts_classes() {
     let file_path = common::fixture_path("java", "Calculator.java");
     let arguments = json!({
-        "file_path": file_path.to_str().unwrap()
+        "file_path": file_path.to_str().unwrap(),
+        "detail": "signatures",
+        "include_deps": false,
+        "max_tokens": 10_000
     });
 
     let result = treesitter_mcp::analysis::view_code::execute(&arguments)
@@ -48,12 +58,14 @@ fn test_parse_java_extracts_classes() {
     let shape: serde_json::Value =
         serde_json::from_str(&text).expect("Result should be valid JSON");
 
-    // Verify classes are extracted
-    let classes = shape["classes"]
-        .as_array()
-        .expect("Should have classes array");
+    // Verify classes are extracted (compact `c` rows)
+    let rows_str = shape.get("c").and_then(|v| v.as_str()).unwrap_or("");
+    let rows = common::helpers::parse_compact_rows(rows_str);
 
-    let class_names: Vec<&str> = classes.iter().filter_map(|c| c["name"].as_str()).collect();
+    let class_names: Vec<&str> = rows
+        .iter()
+        .filter_map(|r| r.first().map(|s| s.as_str()))
+        .collect();
 
     assert!(
         class_names.contains(&"Calculator"),
@@ -76,7 +88,10 @@ fn test_parse_java_extracts_classes() {
 fn test_parse_java_extracts_instance_methods() {
     let file_path = common::fixture_path("java", "Calculator.java");
     let arguments = json!({
-        "file_path": file_path.to_str().unwrap()
+        "file_path": file_path.to_str().unwrap(),
+        "detail": "signatures",
+        "include_deps": false,
+        "max_tokens": 10_000
     });
 
     let result = treesitter_mcp::analysis::view_code::execute(&arguments)
@@ -86,7 +101,10 @@ fn test_parse_java_extracts_instance_methods() {
     let shape: serde_json::Value =
         serde_json::from_str(&text).expect("Result should be valid JSON");
 
-    // Check that CalculatorState class has expected instance methods
+    // Check that CalculatorState class has expected instance methods (compact `cm` rows)
+    let rows_str = shape.get("cm").and_then(|v| v.as_str()).unwrap_or("");
+    let rows = common::helpers::parse_compact_rows(rows_str);
+
     let expected_methods = vec![
         "getValue",
         "setValue",
@@ -96,8 +114,16 @@ fn test_parse_java_extracts_instance_methods() {
         "getHistory",
         "hasHistory",
     ];
+
     for method_name in expected_methods {
-        common::helpers::assert_has_function(&shape, method_name);
+        let found = rows.iter().any(|r| {
+            r.get(0).map(|s| s.as_str()) == Some("CalculatorState")
+                && r.get(1).map(|s| s.as_str()) == Some(method_name)
+        });
+        assert!(
+            found,
+            "Should find method '{method_name}' on CalculatorState"
+        );
     }
 }
 
@@ -109,7 +135,10 @@ fn test_parse_java_extracts_instance_methods() {
 fn test_parse_java_extracts_interfaces() {
     let file_path = common::fixture_path("java", "models/Shape.java");
     let arguments = json!({
-        "file_path": file_path.to_str().unwrap()
+        "file_path": file_path.to_str().unwrap(),
+        "detail": "signatures",
+        "include_deps": false,
+        "max_tokens": 10_000
     });
 
     let result = treesitter_mcp::analysis::view_code::execute(&arguments)
@@ -119,14 +148,13 @@ fn test_parse_java_extracts_interfaces() {
     let shape: serde_json::Value =
         serde_json::from_str(&text).expect("Result should be valid JSON");
 
-    // Verify interfaces are extracted
-    let interfaces = shape["interfaces"]
-        .as_array()
-        .expect("Should have interfaces array");
+    // Verify interfaces are extracted (compact `i` rows)
+    let rows_str = shape.get("i").and_then(|v| v.as_str()).unwrap_or("");
+    let rows = common::helpers::parse_compact_rows(rows_str);
 
-    let interface_names: Vec<&str> = interfaces
+    let interface_names: Vec<&str> = rows
         .iter()
-        .filter_map(|i| i["name"].as_str())
+        .filter_map(|r| r.first().map(|s| s.as_str()))
         .collect();
 
     assert!(
@@ -144,7 +172,10 @@ fn test_parse_java_extracts_interfaces() {
 fn test_parse_java_handles_interface_implementation() {
     let file_path = common::fixture_path("java", "models/Shape.java");
     let arguments = json!({
-        "file_path": file_path.to_str().unwrap()
+        "file_path": file_path.to_str().unwrap(),
+        "detail": "signatures",
+        "include_deps": false,
+        "max_tokens": 10_000
     });
 
     let result = treesitter_mcp::analysis::view_code::execute(&arguments)
@@ -154,24 +185,16 @@ fn test_parse_java_handles_interface_implementation() {
     let shape: serde_json::Value =
         serde_json::from_str(&text).expect("Result should be valid JSON");
 
-    // Verify Circle class implements Shape interface
-    let classes = shape["classes"]
-        .as_array()
-        .expect("Should have classes array");
+    // Verify Circle class implements Shape interface (compact `ci` rows)
+    let rows_str = shape.get("ci").and_then(|v| v.as_str()).unwrap_or("");
+    let rows = common::helpers::parse_compact_rows(rows_str);
 
-    let circle = classes
-        .iter()
-        .find(|c| c["name"] == "Circle")
-        .expect("Should find Circle class");
+    let circle_implements = rows.iter().any(|r| {
+        r.get(0).map(|s| s.as_str()) == Some("Circle")
+            && r.get(1).map(|s| s.as_str()) == Some("Shape")
+    });
 
-    // Check that Circle implements the interface methods
-    assert!(
-        circle["implements"]
-            .as_array()
-            .map(|arr| arr.iter().any(|i| i == "Shape"))
-            .unwrap_or(false),
-        "Circle should implement Shape interface"
-    );
+    assert!(circle_implements, "Circle should implement Shape interface");
 }
 
 /// Test that parse_file extracts annotations from Java methods
@@ -182,7 +205,10 @@ fn test_parse_java_handles_interface_implementation() {
 fn test_parse_java_extracts_annotations() {
     let file_path = common::fixture_path("java", "models/Shape.java");
     let arguments = json!({
-        "file_path": file_path.to_str().unwrap()
+        "file_path": file_path.to_str().unwrap(),
+        "detail": "signatures",
+        "include_deps": false,
+        "max_tokens": 10_000
     });
 
     let result = treesitter_mcp::analysis::view_code::execute(&arguments)
@@ -192,40 +218,13 @@ fn test_parse_java_extracts_annotations() {
     let shape: serde_json::Value =
         serde_json::from_str(&text).expect("Result should be valid JSON");
 
-    // Debug output
-    println!("\n=== Parsed Shape ===");
-    if let Some(classes) = shape["classes"].as_array() {
-        for class in classes {
-            println!("\nClass: {}", class["name"].as_str().unwrap_or("?"));
-            if let Some(methods) = class["methods"].as_array() {
-                for method in methods {
-                    println!(
-                        "  Method: {} - annotations: {:?}",
-                        method["name"].as_str().unwrap_or("?"),
-                        method.get("annotations")
-                    );
-                }
-            }
-        }
-    }
+    // Verify that methods with @Override annotation are detected (compact `cm` rows)
+    let rows_str = shape.get("cm").and_then(|v| v.as_str()).unwrap_or("");
+    let rows = common::helpers::parse_compact_rows(rows_str);
 
-    // Verify that methods with @Override annotation are detected
-    // In Java, @Override annotations are on class methods, not top-level functions
-    let classes = shape["classes"]
-        .as_array()
-        .expect("Should have classes array");
-
-    let has_override_annotation = classes.iter().any(|c| {
-        c["methods"]
-            .as_array()
-            .map(|methods| {
-                methods.iter().any(|m| {
-                    m["annotations"]
-                        .as_array()
-                        .map(|arr| arr.iter().any(|a| a.as_str() == Some("Override")))
-                        .unwrap_or(false)
-                })
-            })
+    let has_override_annotation = rows.iter().any(|r| {
+        r.get(4)
+            .map(|ann| ann.contains("Override"))
             .unwrap_or(false)
     });
 
@@ -254,18 +253,16 @@ fn test_find_usages_locates_java_method_calls() {
     let usages: serde_json::Value =
         serde_json::from_str(&text).expect("Result should be valid JSON");
 
-    // Should find at least the definition
-    let usage_list = usages["usages"]
-        .as_array()
-        .expect("Should have usages array");
+    let rows = common::helpers::find_usages_rows(&usages);
 
     assert!(
-        usage_list.len() > 0,
+        !rows.is_empty(),
         "Should find at least one usage of add method"
     );
 
-    // Verify at least one usage is the definition
-    let has_definition = usage_list.iter().any(|u| u["usage_type"] == "definition");
+    let has_definition = rows
+        .iter()
+        .any(|row| row.get(3).map(|s| s.as_str()) == Some("definition"));
 
     assert!(has_definition, "Should find the definition of add method");
 }
@@ -278,7 +275,10 @@ fn test_find_usages_locates_java_method_calls() {
 fn test_parse_java_extracts_imports() {
     let file_path = common::fixture_path("java", "services/MathService.java");
     let arguments = json!({
-        "file_path": file_path.to_str().unwrap()
+        "file_path": file_path.to_str().unwrap(),
+        "detail": "signatures",
+        "include_deps": false,
+        "max_tokens": 10_000
     });
 
     let result = treesitter_mcp::analysis::view_code::execute(&arguments)
@@ -288,12 +288,14 @@ fn test_parse_java_extracts_imports() {
     let shape: serde_json::Value =
         serde_json::from_str(&text).expect("Result should be valid JSON");
 
-    // Verify imports are extracted
-    let imports = shape["imports"]
-        .as_array()
-        .expect("Should have imports array");
+    // Verify imports are extracted (compact `im` rows)
+    let rows_str = shape.get("im").and_then(|v| v.as_str()).unwrap_or("");
+    let rows = common::helpers::parse_compact_rows(rows_str);
 
-    let import_paths: Vec<&str> = imports.iter().filter_map(|i| i["text"].as_str()).collect();
+    let import_paths: Vec<&str> = rows
+        .iter()
+        .filter_map(|r| r.get(1).map(|s| s.as_str()))
+        .collect();
 
     assert!(
         import_paths.iter().any(|p| p.contains("Point")),
@@ -326,23 +328,12 @@ fn test_code_map_provides_java_overview() {
     let map: serde_json::Value = serde_json::from_str(&text).expect("Result should be valid JSON");
 
     // Verify Java files are included
-    let files = map["files"].as_array().expect("Should have files array");
+    let files = common::helpers::code_map_files(&map);
 
-    let has_calculator = files
-        .iter()
-        .any(|f| f["path"].as_str().unwrap().contains("Calculator.java"));
-
-    let has_point = files
-        .iter()
-        .any(|f| f["path"].as_str().unwrap().contains("Point.java"));
-
-    let has_shape = files
-        .iter()
-        .any(|f| f["path"].as_str().unwrap().contains("Shape.java"));
-
-    let has_math_service = files
-        .iter()
-        .any(|f| f["path"].as_str().unwrap().contains("MathService.java"));
+    let has_calculator = files.iter().any(|(p, _)| p.contains("Calculator.java"));
+    let has_point = files.iter().any(|(p, _)| p.contains("Point.java"));
+    let has_shape = files.iter().any(|(p, _)| p.contains("Shape.java"));
+    let has_math_service = files.iter().any(|(p, _)| p.contains("MathService.java"));
 
     assert!(has_calculator, "Should include Calculator.java in code map");
     assert!(has_point, "Should include Point.java in code map");

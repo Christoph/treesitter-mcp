@@ -112,11 +112,21 @@ fn test_include_code_false_preserves_signatures() {
     let text = common::get_result_text(&result);
     let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-    // Then: Full signatures are present (types, params, return)
-    let functions = shape["functions"].as_array().unwrap();
-    let add_func = functions.iter().find(|f| f["name"] == "add").unwrap();
+    // Then: Full signatures are present (types, params, return) in compact rows
+    assert_eq!(
+        shape.get("h").and_then(|v| v.as_str()),
+        Some("name|line|sig")
+    );
 
-    let signature = add_func["signature"].as_str().unwrap();
+    let rows_str = shape.get("f").and_then(|v| v.as_str()).unwrap_or("");
+    let rows = common::helpers::parse_compact_rows(rows_str);
+
+    let add_row = rows
+        .iter()
+        .find(|r| r.first().map(|s| s.as_str()) == Some("add"))
+        .expect("Should find add row");
+
+    let signature = add_row.get(2).expect("sig column");
     assert!(
         signature.contains("i32"),
         "Signature should include parameter types"
@@ -124,12 +134,6 @@ fn test_include_code_false_preserves_signatures() {
     assert!(
         signature.contains("->"),
         "Signature should include return type indicator"
-    );
-
-    // But should NOT have code body
-    assert!(
-        add_func["code"].is_null(),
-        "Should not have code when include_code=false"
     );
 }
 
@@ -155,7 +159,8 @@ fn test_read_focused_code_is_cheaper_than_full_parse() {
     let focused_args = json!({
         "file_path": file_path.to_str().unwrap(),
         "focus_symbol": "add",
-        "context_radius": 0
+        "context_radius": 0,
+        "include_deps": false
     });
     let focused_result = treesitter_mcp::analysis::view_code::execute(&focused_args).unwrap();
     let focused_text = common::get_result_text(&focused_result);
@@ -181,29 +186,51 @@ fn test_read_focused_code_has_full_impl_for_target() {
     let arguments = json!({
         "file_path": file_path.to_str().unwrap(),
         "focus_symbol": "add",
-        "context_radius": 0
+        "context_radius": 0,
+        "include_deps": false
     });
     let result = treesitter_mcp::analysis::view_code::execute(&arguments).unwrap();
     let text = common::get_result_text(&result);
     let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-    // Then: Target function has full code
-    let functions = shape["functions"].as_array().unwrap();
-    let add_func = functions.iter().find(|f| f["name"] == "add").unwrap();
+    // Then: Target function has full code (compact rows)
+    let header = shape.get("h").and_then(|v| v.as_str()).unwrap_or("");
+    let code_idx = header
+        .split('|')
+        .position(|c| c == "code")
+        .expect("Expected 'code' column in header");
+
+    let rows_str = shape.get("f").and_then(|v| v.as_str()).unwrap_or("");
+    let rows = common::helpers::parse_compact_rows(rows_str);
+
+    let add_row = rows
+        .iter()
+        .find(|r| r.first().map(|s| s.as_str()) == Some("add"))
+        .expect("Should have add row");
+
     assert!(
-        add_func["code"].is_string() && !add_func["code"].as_str().unwrap().is_empty(),
+        add_row
+            .get(code_idx)
+            .map(|c| !c.is_empty())
+            .unwrap_or(false),
         "Focused function should have full code"
     );
 
     // And: Other functions have signatures only
-    let subtract_func = functions.iter().find(|f| f["name"] == "subtract");
-    if let Some(subtract) = subtract_func {
+    let subtract_row = rows
+        .iter()
+        .find(|r| r.first().map(|s| s.as_str()) == Some("subtract"));
+
+    if let Some(subtract_row) = subtract_row {
         assert!(
-            subtract["code"].is_null(),
+            subtract_row
+                .get(code_idx)
+                .map(|c| c.is_empty())
+                .unwrap_or(true),
             "Non-focused functions should not have code"
         );
         assert!(
-            subtract["signature"].is_string(),
+            subtract_row.get(2).map(|s| !s.is_empty()).unwrap_or(false),
             "Non-focused functions should have signatures"
         );
     }
@@ -222,29 +249,26 @@ fn test_include_deps_provides_dependency_signatures() {
     let arguments = json!({
         "file_path": file_path.to_str().unwrap(),
         "detail": "signatures",
-        "include_deps": true
+        "include_deps": true,
+        "max_tokens": 10_000
     });
     let result = treesitter_mcp::analysis::view_code::execute(&arguments).unwrap();
     let text = common::get_result_text(&result);
     let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-    // Then: Dependencies should be included
-    if let Some(deps) = shape["dependencies"].as_array() {
-        assert!(!deps.is_empty(), "Should have at least one dependency");
+    // Then: Dependencies should be included (compact `deps` map)
+    let deps = shape
+        .get("deps")
+        .and_then(|v| v.as_object())
+        .expect("Should have deps object");
 
-        // Dependencies should have structural information
-        let first_dep = &deps[0];
-        assert!(first_dep["path"].is_string(), "Dependency should have path");
+    assert!(!deps.is_empty(), "Should have at least one dependency");
 
-        // Should have at least one of: functions, structs, classes
-        let has_content = first_dep["functions"].is_array()
-            || first_dep["structs"].is_array()
-            || first_dep["classes"].is_array();
-        assert!(
-            has_content,
-            "Dependency should include structural information"
-        );
-    }
+    // Dep values are row strings
+    let first_rows = deps.iter().find_map(|(_path, rows)| rows.as_str()).unwrap();
+
+    let rows = common::helpers::parse_compact_rows(first_rows);
+    assert!(!rows.is_empty(), "Dep should have at least one row");
 }
 
 // ============================================================================
@@ -289,9 +313,9 @@ fn test_max_context_lines_bounds_output_for_common_symbols() {
     let unbounded_json: serde_json::Value = serde_json::from_str(&unbounded_text).unwrap();
     let bounded_json: serde_json::Value = serde_json::from_str(&bounded_text).unwrap();
 
-    // Both should have usages array
-    assert!(unbounded_json["usages"].is_array());
-    assert!(bounded_json["usages"].is_array());
+    // Both should have usages rows string
+    assert!(unbounded_json["u"].is_string());
+    assert!(bounded_json["u"].is_string());
 }
 
 // ============================================================================

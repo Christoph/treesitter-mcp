@@ -4,10 +4,12 @@
 //! and identifying potentially affected code across the codebase.
 
 use crate::analysis::path_utils;
+use crate::common::format;
 use crate::mcp_types::{CallToolResult, CallToolResultExt};
 use crate::parser::{detect_language, parse_code, Language};
 use regex::Regex;
 use serde::Serialize;
+use serde_json::json;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
@@ -90,25 +92,8 @@ pub struct ChangeDetail {
 }
 
 // ============================================================================
-// Affected Usages Result
+// Affected Usages (internal)
 // ============================================================================
-
-/// Result of finding usages affected by a diff
-#[derive(Debug, Serialize)]
-pub struct AffectedUsagesResult {
-    pub file_path: String,
-    pub compare_to: String,
-    pub affected_changes: Vec<AffectedChange>,
-    pub summary: AffectedSummary,
-}
-
-#[derive(Debug, Serialize)]
-pub struct AffectedSummary {
-    pub high_risk: usize,
-    pub medium_risk: usize,
-    pub low_risk: usize,
-    pub total_usages: usize,
-}
 
 #[derive(Debug, Serialize)]
 pub struct AffectedChange {
@@ -780,83 +765,27 @@ pub fn execute_parse_diff(arguments: &Value) -> Result<CallToolResult, io::Error
         .unwrap_or("HEAD")
         .to_string();
 
-    log::info!("Analyzing diff for: {file_path_str} against {compare_to}");
+    let analysis = analyze_diff(file_path_str, compare_to)?;
 
-    let file_path = Path::new(file_path_str);
+    let header = "type|name|line|change";
+    let changes = analysis
+        .structural_changes
+        .iter()
+        .map(|c| {
+            let symbol_type = abbreviate_symbol_type(&c.symbol_type);
+            let line = c.line.to_string();
+            let change = format_change(c);
+            format::format_row(&[symbol_type, &c.name, &line, &change])
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
 
-    if !file_path.exists() {
-        return Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            format!("File does not exist: {file_path_str}"),
-        ));
-    }
-
-    // Detect language
-    let language = detect_language(file_path).map_err(|e| {
-        io::Error::new(
-            io::ErrorKind::Unsupported,
-            format!("Cannot detect language: {e}"),
-        )
-    })?;
-
-    // Get current content
-    let current_content = std::fs::read_to_string(file_path)?;
-
-    // Get old content from git
-    let old_content = get_git_file_content(file_path, &compare_to)?;
-
-    // Parse both versions
-    let old_tree = parse_code(&old_content, language).map_err(|e| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("Failed to parse old version: {e}"),
-        )
-    })?;
-
-    let new_tree = parse_code(&current_content, language).map_err(|e| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("Failed to parse current version: {e}"),
-        )
-    })?;
-
-    // Extract shapes from both versions
-    let old_symbols = extract_symbols(&old_tree, &old_content, language)?;
-    let new_symbols = extract_symbols(&new_tree, &current_content, language)?;
-
-    // Compare and find structural changes
-    let structural_changes =
-        compare_symbols(&old_symbols, &new_symbols, &old_content, &current_content)?;
-
-    let summary = DiffSummary {
-        added: structural_changes
-            .iter()
-            .filter(|c| c.change_type == ChangeType::Added)
-            .count(),
-        removed: structural_changes
-            .iter()
-            .filter(|c| c.change_type == ChangeType::Removed)
-            .count(),
-        modified: structural_changes
-            .iter()
-            .filter(|c| {
-                c.change_type == ChangeType::SignatureChanged
-                    || c.change_type == ChangeType::BodyChanged
-            })
-            .count(),
-    };
-
-    // Optionally resolve compare_to to full SHA for reference
-    let compare_to_sha = resolve_git_sha(&compare_to, file_path).ok();
-
-    let result = DiffAnalysis {
-        file_path: path_utils::to_relative_path(file_path_str),
-        compare_to,
-        compare_to_sha,
-        no_structural_change: structural_changes.is_empty(),
-        structural_changes,
-        summary,
-    };
+    let result = json!({
+        "p": analysis.file_path,
+        "cmp": analysis.compare_to,
+        "h": header,
+        "changes": changes,
+    });
 
     let result_json = serde_json::to_string(&result).map_err(|e| {
         io::Error::new(
@@ -891,34 +820,15 @@ pub fn execute_affected_by_diff(arguments: &Value) -> Result<CallToolResult, io:
 
     let file_path = Path::new(file_path_str);
 
-    // First, get the structural changes
-    let diff_args = serde_json::json!({
-        "file_path": file_path_str,
-        "compare_to": compare_to
-    });
-
-    let diff_result = execute_parse_diff(&diff_args)?;
-    let diff_text = get_result_text(&diff_result);
-    let diff_analysis: DiffAnalysis = serde_json::from_str(&diff_text).map_err(|e| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("Failed to parse diff result: {e}"),
-        )
-    })?;
+    // Get the structural changes (internal representation)
+    let diff_analysis = analyze_diff(file_path_str, compare_to)?;
 
     if diff_analysis.no_structural_change {
-        // No structural changes, return early
-        let result = AffectedUsagesResult {
-            file_path: path_utils::to_relative_path(file_path_str),
-            compare_to,
-            affected_changes: vec![],
-            summary: AffectedSummary {
-                high_risk: 0,
-                medium_risk: 0,
-                low_risk: 0,
-                total_usages: 0,
-            },
-        };
+        let result = json!({
+            "p": diff_analysis.file_path,
+            "h": "symbol|change|file|line|risk",
+            "affected": "",
+        });
 
         let result_json = serde_json::to_string(&result).map_err(|e| {
             io::Error::new(
@@ -939,10 +849,6 @@ pub fn execute_affected_by_diff(arguments: &Value) -> Result<CallToolResult, io:
     };
 
     let mut affected_changes = Vec::new();
-    let mut total_high = 0;
-    let mut total_medium = 0;
-    let mut total_low = 0;
-    let mut total_usages = 0;
 
     // For each changed symbol, find usages
     for change in &diff_analysis.structural_changes {
@@ -967,16 +873,29 @@ pub fn execute_affected_by_diff(arguments: &Value) -> Result<CallToolResult, io:
             )
         })?;
 
-        let empty_vec = vec![];
-        let usage_list = usages["usages"].as_array().unwrap_or(&empty_vec);
+        let rel_changed_file = path_utils::to_relative_path(file_path_str);
+        let usage_rows = usages
+            .get("u")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("");
 
         // Filter out the definition itself and classify risk
         let mut potentially_affected = Vec::new();
 
-        for usage in usage_list {
-            let usage_file = usage["file"].as_str().unwrap_or("");
-            let usage_line = usage["line"].as_u64().unwrap_or(0) as usize;
-            let usage_type = usage["usage_type"].as_str().unwrap_or("reference");
+        for row in usage_rows.lines() {
+            let fields = parse_compact_row(row);
+
+            let usage_file = fields.first().map(String::as_str).unwrap_or("");
+            let usage_line = fields
+                .get(1)
+                .and_then(|s| s.parse::<usize>().ok())
+                .unwrap_or(0);
+            let usage_column = fields
+                .get(2)
+                .and_then(|s| s.parse::<usize>().ok())
+                .unwrap_or(0);
+            let usage_type = fields.get(3).map(String::as_str).unwrap_or("reference");
+            let context = fields.get(4).map(String::as_str).unwrap_or("");
 
             // Skip the definition itself
             if usage_type == "definition" {
@@ -984,25 +903,18 @@ pub fn execute_affected_by_diff(arguments: &Value) -> Result<CallToolResult, io:
             }
 
             // Skip usages in the same file at the same location
-            if usage_file == file_path_str && usage_line == change.line {
+            if usage_file == rel_changed_file && usage_line == change.line {
                 continue;
             }
 
             let (risk, reason) = assess_risk(change, usage_type);
 
-            match risk {
-                RiskLevel::High => total_high += 1,
-                RiskLevel::Medium => total_medium += 1,
-                RiskLevel::Low => total_low += 1,
-            }
-            total_usages += 1;
-
             potentially_affected.push(AffectedUsage {
                 file: usage_file.to_string(),
                 line: usage_line,
-                column: usage["column"].as_u64().unwrap_or(0) as usize,
+                column: usage_column,
                 usage_type: usage_type.to_string(),
-                code: usage["code"].as_str().unwrap_or("").to_string(),
+                code: context.to_string(),
                 risk,
                 reason,
             });
@@ -1028,17 +940,24 @@ pub fn execute_affected_by_diff(arguments: &Value) -> Result<CallToolResult, io:
         }
     }
 
-    let result = AffectedUsagesResult {
-        file_path: path_utils::to_relative_path(file_path_str),
-        compare_to,
-        affected_changes,
-        summary: AffectedSummary {
-            high_risk: total_high,
-            medium_risk: total_medium,
-            low_risk: total_low,
-            total_usages,
-        },
-    };
+    let affected_rows = affected_changes
+        .iter()
+        .flat_map(|chg| {
+            let change_key = change_key(&chg.change_type);
+            chg.potentially_affected.iter().map(move |u| {
+                let line = u.line.to_string();
+                let risk = risk_key(&u.risk);
+                format::format_row(&[&chg.symbol, change_key, &u.file, &line, risk])
+            })
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let result = json!({
+        "p": diff_analysis.file_path,
+        "h": "symbol|change|file|line|risk",
+        "affected": affected_rows,
+    });
 
     let result_json = serde_json::to_string(&result).map_err(|e| {
         io::Error::new(
@@ -1048,6 +967,162 @@ pub fn execute_affected_by_diff(arguments: &Value) -> Result<CallToolResult, io:
     })?;
 
     Ok(CallToolResult::success(result_json))
+}
+
+fn analyze_diff(file_path_str: &str, compare_to: String) -> Result<DiffAnalysis, io::Error> {
+    log::info!("Analyzing diff for: {file_path_str} against {compare_to}");
+
+    let file_path = Path::new(file_path_str);
+
+    if !file_path.exists() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("File does not exist: {file_path_str}"),
+        ));
+    }
+
+    let language = detect_language(file_path).map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!("Cannot detect language: {e}"),
+        )
+    })?;
+
+    let current_content = std::fs::read_to_string(file_path)?;
+    let old_content = get_git_file_content(file_path, &compare_to)?;
+
+    let old_tree = parse_code(&old_content, language).map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Failed to parse old version: {e}"),
+        )
+    })?;
+
+    let new_tree = parse_code(&current_content, language).map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Failed to parse current version: {e}"),
+        )
+    })?;
+
+    let old_symbols = extract_symbols(&old_tree, &old_content, language)?;
+    let new_symbols = extract_symbols(&new_tree, &current_content, language)?;
+
+    let structural_changes =
+        compare_symbols(&old_symbols, &new_symbols, &old_content, &current_content)?;
+
+    let summary = DiffSummary {
+        added: structural_changes
+            .iter()
+            .filter(|c| c.change_type == ChangeType::Added)
+            .count(),
+        removed: structural_changes
+            .iter()
+            .filter(|c| c.change_type == ChangeType::Removed)
+            .count(),
+        modified: structural_changes
+            .iter()
+            .filter(|c| {
+                c.change_type == ChangeType::SignatureChanged
+                    || c.change_type == ChangeType::BodyChanged
+            })
+            .count(),
+    };
+
+    let compare_to_sha = resolve_git_sha(&compare_to, file_path).ok();
+
+    Ok(DiffAnalysis {
+        file_path: path_utils::to_relative_path(file_path_str),
+        compare_to,
+        compare_to_sha,
+        no_structural_change: structural_changes.is_empty(),
+        structural_changes,
+        summary,
+    })
+}
+
+fn abbreviate_symbol_type(symbol_type: &SymbolType) -> &'static str {
+    match symbol_type {
+        SymbolType::Function => "fn",
+        SymbolType::Struct => "s",
+        SymbolType::Class => "c",
+        SymbolType::Enum => "e",
+        SymbolType::Interface => "iface",
+        SymbolType::Import => "imp",
+        SymbolType::Constant => "const",
+        SymbolType::Static => "static",
+    }
+}
+
+fn change_key(change_type: &ChangeType) -> &'static str {
+    match change_type {
+        ChangeType::Added => "added",
+        ChangeType::Removed => "removed",
+        ChangeType::SignatureChanged => "sig_changed",
+        ChangeType::BodyChanged => "body_changed",
+    }
+}
+
+fn risk_key(risk: &RiskLevel) -> &'static str {
+    match risk {
+        RiskLevel::High => "high",
+        RiskLevel::Medium => "medium",
+        RiskLevel::Low => "low",
+    }
+}
+
+fn format_change(change: &StructuralChange) -> String {
+    match change.change_type {
+        ChangeType::Added => "added".to_string(),
+        ChangeType::Removed => "removed".to_string(),
+        ChangeType::BodyChanged => "body_changed".to_string(),
+        ChangeType::SignatureChanged => match &change.after {
+            Some(after) if !after.is_empty() => format!("sig_changed: {after}"),
+            _ => "sig_changed".to_string(),
+        },
+    }
+}
+
+fn parse_compact_row(row: &str) -> Vec<String> {
+    let mut fields: Vec<String> = Vec::new();
+    let mut current = String::new();
+    let mut escaped = false;
+
+    for ch in row.chars() {
+        if escaped {
+            match ch {
+                'n' => current.push('\n'),
+                'r' => current.push('\r'),
+                '|' => current.push('|'),
+                '\\' => current.push('\\'),
+                other => {
+                    current.push('\\');
+                    current.push(other);
+                }
+            }
+            escaped = false;
+            continue;
+        }
+
+        if ch == '\\' {
+            escaped = true;
+            continue;
+        }
+
+        if ch == '|' {
+            fields.push(std::mem::take(&mut current));
+            continue;
+        }
+
+        current.push(ch);
+    }
+
+    if escaped {
+        current.push('\\');
+    }
+
+    fields.push(current);
+    fields
 }
 
 /// Assess the risk level of a usage based on the change type

@@ -5,29 +5,100 @@ use std::io;
 use std::path::{Path, PathBuf};
 use tree_sitter::Node;
 
+use crate::analysis::path_utils;
+use crate::common::format;
 use crate::mcp_types::{CallToolResult, CallToolResultExt};
 use crate::parser::{parse_code, Language};
 
 const MAX_NESTED_DEPTH: u8 = 3;
 
 /// MCP tool execute function for template_context
+///
+/// Compact output schema:
+/// - `tpl`: template path (relative)
+/// - `h`: header for `ctx` rows
+/// - `ctx`: newline-delimited rows (pipe-delimited fields)
+/// - `sh`: header for `s` rows
+/// - `s`: struct definition locations (struct|file|line)
 pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
     let template_path_str = arguments["template_path"]
         .as_str()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "template_path is required"))?;
 
-    let template_path = Path::new(template_path_str);
-    let project_root = std::env::current_dir()
-        .map_err(|e| io::Error::other(format!("Failed to get current directory: {}", e)))?;
+    let cwd = std::env::current_dir()
+        .map_err(|e| io::Error::other(format!("Failed to get current directory: {e}")))?;
 
-    let structs = find_askama_structs_for_template(template_path, &project_root)
-        .map_err(|e| io::Error::other(format!("Failed to find template structs: {}", e)))?;
+    let mut template_path = PathBuf::from(template_path_str);
+    if template_path.is_relative() {
+        template_path = cwd.join(template_path);
+    }
 
-    let output = serde_json::json!({ "structs": structs });
-    let json_string = serde_json::to_string_pretty(&output)
-        .map_err(|e| io::Error::other(format!("Failed to serialize output: {}", e)))?;
+    // Askama templates typically live under `<project>/templates/...`.
+    // Our fixture projects don't have a Cargo.toml, so infer the project root
+    // from the templates directory when possible.
+    let project_root = find_templates_dir(template_path.parent().unwrap())
+        .and_then(|templates_dir| templates_dir.parent().map(|p| p.to_path_buf()))
+        .or_else(|| path_utils::find_project_root(&template_path))
+        .or_else(|| template_path.parent().map(|p| p.to_path_buf()))
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Cannot determine project root"))?;
+
+    let structs = find_askama_structs_for_template(&template_path, &project_root)
+        .map_err(|e| io::Error::other(format!("Failed to find template structs: {e}")))?;
+
+    let tpl_rel = path_utils::to_relative_path(template_path.to_string_lossy().as_ref());
+
+    let ctx_header = "struct|field|type";
+    let ctx_rows = template_structs_to_rows(&structs);
+
+    let struct_header = "struct|file|line";
+    let struct_rows = template_struct_locations_to_rows(&structs);
+
+    let output = serde_json::json!({
+        "tpl": tpl_rel,
+        "h": ctx_header,
+        "ctx": ctx_rows,
+        "sh": struct_header,
+        "s": struct_rows
+    });
+
+    let json_string = serde_json::to_string(&output)
+        .map_err(|e| io::Error::other(format!("Failed to serialize output: {e}")))?;
 
     Ok(CallToolResult::success(json_string))
+}
+
+fn template_structs_to_rows(structs: &[TemplateStructInfo]) -> String {
+    let mut rows = Vec::new();
+
+    for s in structs {
+        append_field_rows(&mut rows, &s.struct_name, &s.fields);
+    }
+
+    rows.join("\n")
+}
+
+fn append_field_rows(rows: &mut Vec<String>, struct_name: &str, fields: &[TemplateField]) {
+    for field in fields {
+        let row =
+            format::format_row(&[struct_name, field.name.as_str(), field.field_type.as_str()]);
+        rows.push(row);
+
+        if let Some(nested) = &field.nested_definition {
+            append_field_rows(rows, nested.type_name.as_str(), &nested.fields);
+        }
+    }
+}
+
+fn template_struct_locations_to_rows(structs: &[TemplateStructInfo]) -> String {
+    structs
+        .iter()
+        .map(|s| {
+            let file = path_utils::to_relative_path(s.file_path.to_string_lossy().as_ref());
+            let line = s.line.to_string();
+            format::format_row(&[s.struct_name.as_str(), file.as_str(), line.as_str()])
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Information about a struct that serves as a template context

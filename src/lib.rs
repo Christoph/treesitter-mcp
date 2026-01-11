@@ -1,4 +1,5 @@
 pub mod analysis;
+pub mod common;
 pub mod extraction;
 pub mod handler;
 pub mod mcp_types;

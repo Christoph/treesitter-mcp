@@ -83,8 +83,8 @@ fn test_get_context_line_out_of_range_handles_gracefully() {
     if let Ok(call_result) = result {
         let text = common::get_result_text(&call_result);
         let context: serde_json::Value = serde_json::from_str(&text).unwrap();
-        // Empty or minimal context is acceptable
-        assert!(context["contexts"].is_array());
+        // Compact schema is acceptable if it parses
+        assert!(context.is_object());
     } else {
         // If it errors, that's also acceptable behavior
         assert!(result.is_err());
@@ -139,14 +139,14 @@ fn test_find_usages_nonexistent_symbol_returns_empty() {
     let text = common::get_result_text(&result.unwrap());
     let usages: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-    assert!(usages["usages"].is_array(), "Should have usages array");
+    let rows = common::helpers::find_usages_rows(&usages);
     assert_eq!(
-        usages["usages"].as_array().unwrap().len(),
+        rows.len(),
         0,
-        "Should return empty array for nonexistent symbol"
+        "Should return empty rows for nonexistent symbol"
     );
     assert_eq!(
-        usages["symbol"], "nonexistent_symbol_xyz_12345",
+        usages["sym"], "nonexistent_symbol_xyz_12345",
         "Should echo back the searched symbol"
     );
 }
@@ -171,11 +171,7 @@ fn test_code_map_empty_directory_returns_empty_files() {
     let text = common::get_result_text(&result.unwrap());
     let map: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-    assert!(map["files"].is_array(), "Should have files array");
-    assert!(
-        map["files"].as_array().unwrap().is_empty(),
-        "Should return empty files array for empty directory"
-    );
+    assert!(common::helpers::code_map_files(&map).is_empty());
 }
 
 #[test]
@@ -202,8 +198,12 @@ fn test_read_focused_code_nonexistent_symbol_returns_file_shape() {
     let text = common::get_result_text(&result.unwrap());
     let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-    // Should have functions but none with full code for the nonexistent symbol
-    assert!(shape["functions"].is_array() || shape["structs"].is_array());
+    // Compact schema: should at least include a symbol table.
+    assert!(shape.get("h").and_then(|v| v.as_str()).is_some());
+    assert!(
+        shape.get("f").is_some() || shape.get("s").is_some() || shape.get("c").is_some(),
+        "Expected at least one of f/s/c in view_code output"
+    );
 }
 
 // ============================================================================
@@ -313,7 +313,7 @@ fn test_query_pattern_empty_query_returns_empty_matches() {
         let text = common::get_result_text(&result.unwrap());
         let matches: serde_json::Value = serde_json::from_str(&text).unwrap();
         // Empty query likely returns no matches
-        assert!(matches["matches"].is_array());
+        assert!(matches["m"].is_string());
     }
 }
 

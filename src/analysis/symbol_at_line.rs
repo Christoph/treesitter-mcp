@@ -5,37 +5,17 @@
 
 use crate::mcp_types::{CallToolResult, CallToolResultExt};
 use crate::parser::{detect_language, parse_code, Language};
+use serde_json::json;
 use serde_json::Value;
 use std::fs;
 use std::io;
 use tree_sitter::Node;
 
-/// Symbol information at a position
-#[derive(Debug, serde::Serialize)]
-pub struct SymbolInfo {
-    pub name: String,
-    pub signature: String,
-    pub kind: String, // "function", "method", "class", etc.
-    pub line_range: (usize, usize),
-}
-
-/// Scope information for context chain
-#[derive(Debug, serde::Serialize)]
-pub struct ScopeInfo {
-    pub name: String,
-    pub signature: String,
-    pub kind: String,
-}
-
-/// Output structure for symbol_at_line
-#[derive(Debug, serde::Serialize)]
-pub struct SymbolAtLineOutput {
-    /// The symbol at the specified position
-    pub symbol: SymbolInfo,
-
-    /// Scope chain from innermost to outermost
-    /// e.g., ["function foo", "class Bar", "module baz"]
-    pub scope_chain: Vec<ScopeInfo>,
+#[derive(Debug)]
+struct ScopeInfo {
+    name: String,
+    signature: String,
+    kind: String,
 }
 
 /// Execute the symbol_at_line tool
@@ -110,19 +90,23 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
         ));
     }
 
-    // Extract symbol info (innermost scope)
+    // Compact output
     let innermost = &scope_chain[0];
-    let symbol_info = SymbolInfo {
-        name: innermost.name.clone(),
-        signature: innermost.signature.clone(),
-        kind: innermost.kind.clone(),
-        line_range: extract_line_range(node),
-    };
 
-    let output = SymbolAtLineOutput {
-        symbol: symbol_info,
-        scope_chain,
-    };
+    let scope = scope_chain
+        .iter()
+        .rev()
+        .map(|s| s.name.as_str())
+        .collect::<Vec<_>>()
+        .join("::");
+
+    let output = json!({
+        "sym": innermost.name,
+        "kind": abbreviate_kind(&innermost.kind),
+        "sig": innermost.signature,
+        "l": line,
+        "scope": scope,
+    });
 
     let output_json = serde_json::to_string(&output).map_err(|e| {
         io::Error::new(
@@ -329,7 +313,20 @@ fn extract_signature(node: Node, source: &str) -> Option<String> {
     extract_name(node, source)
 }
 
-/// Extract line range from a node
-fn extract_line_range(node: Node) -> (usize, usize) {
-    (node.start_position().row + 1, node.end_position().row + 1)
+fn abbreviate_kind(kind: &str) -> &'static str {
+    match kind {
+        "function" => "fn",
+        "method" => "m",
+        "class" => "c",
+        "struct" => "s",
+        "trait" => "t",
+        "impl" => "i",
+        "enum" => "e",
+        "module" => "mod",
+        "namespace" => "ns",
+        "interface" => "iface",
+        "constructor" => "ctor",
+        "property" => "prop",
+        _ => "u",
+    }
 }

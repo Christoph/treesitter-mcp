@@ -121,7 +121,7 @@ impl Calculator {
     let code_map_json: serde_json::Value = serde_json::from_str(&code_map_text).unwrap();
 
     // Then: Should see files in the project
-    let files = code_map_json["files"].as_array().unwrap();
+    let files = common::helpers::code_map_files(&code_map_json);
     assert!(files.len() >= 2, "Should see both files");
 
     // Step 2: file_shape on a specific file (low tokens)
@@ -136,11 +136,11 @@ impl Calculator {
     let file_shape_text = common::get_result_text(&file_shape_result);
     let file_shape_json: serde_json::Value = serde_json::from_str(&file_shape_text).unwrap();
 
-    // Then: Should see struct and impl block methods
+    // Then: Should see struct and impl block methods (compact schema)
     assert!(
-        file_shape_json["structs"].is_array()
-            || file_shape_json["impl_blocks"].is_array()
-            || file_shape_json["functions"].is_array()
+        file_shape_json.get("s").is_some()
+            || file_shape_json.get("bm").is_some()
+            || file_shape_json.get("f").is_some()
     );
 
     // Step 3: read_focused_code on specific impl method
@@ -153,28 +153,30 @@ impl Calculator {
     let focused_text = common::get_result_text(&focused_result);
     let focused_json: serde_json::Value = serde_json::from_str(&focused_text).unwrap();
 
-    // Then: Should have full implementation of add
-    let functions = focused_json["functions"].as_array();
-    let impl_blocks = focused_json["impl_blocks"].as_array();
-    let has_add_impl = functions
-        .and_then(|funcs| funcs.iter().find(|f| f["name"] == "add"))
-        .map(|f| f["code"].is_string())
-        .unwrap_or(false)
-        || impl_blocks
-            .and_then(|impls| {
-                impls.iter().find_map(|impl_block| {
-                    impl_block["methods"]
-                        .as_array()?
-                        .iter()
-                        .find(|m| m["name"] == "add")
-                })
-            })
-            .map(|m| m["code"].is_string())
-            .unwrap_or(false);
+    // Then: Should have full implementation of add (compact `bm` rows)
+    let header = focused_json
+        .get("bh")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let code_idx = header
+        .split('|')
+        .position(|field| field == "code")
+        .unwrap_or_else(|| panic!("Expected 'code' in impl-method header: {header}"));
+
+    let rows_str = focused_json
+        .get("bm")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let rows = common::helpers::parse_compact_rows(rows_str);
+
+    let has_add_impl = rows.iter().any(|r| {
+        r.get(2).map(|s| s.as_str()) == Some("add")
+            && r.get(code_idx).map(|s| !s.is_empty()).unwrap_or(false)
+    });
 
     assert!(
         has_add_impl,
-        "Should have full code for focused function/method"
+        "Should have full code for focused impl method"
     );
 
     // Verify: Progressive detail with reasonable token growth
@@ -209,19 +211,14 @@ fn test_workflow_debug_error_from_line_number() {
     let context_text = common::get_result_text(&context_result);
     let context_json: serde_json::Value = serde_json::from_str(&context_text).unwrap();
 
-    // Then: Should identify the symbol and scope chain
-    assert!(context_json["symbol"].is_object(), "Should have symbol");
-    assert!(
-        context_json["symbol"]["name"].is_string(),
-        "Symbol should have name"
-    );
+    // Then: Should identify the symbol and scope
+    assert!(context_json["sym"].is_string(), "Should have sym");
+    assert!(context_json["sig"].is_string(), "Should have sig");
+    assert!(context_json["kind"].is_string(), "Should have kind");
+    assert!(context_json["scope"].is_string(), "Should have scope");
 
-    let scope_chain = context_json["scope_chain"].as_array().unwrap();
-    assert!(!scope_chain.is_empty(), "Should have at least one scope");
-
-    // Verify scopes have kind information
-    let has_typed_scopes = scope_chain.iter().all(|ctx| ctx["kind"].is_string());
-    assert!(has_typed_scopes, "All scopes should have kind information");
+    let scope = context_json["scope"].as_str().unwrap();
+    assert!(!scope.is_empty(), "Scope should be non-empty");
 
     // Step 2: Use read_focused_code on "add" function
     let focused_args = json!({
@@ -246,7 +243,7 @@ fn test_workflow_debug_error_from_line_number() {
     let usages_json: serde_json::Value = serde_json::from_str(&usages_text).unwrap();
 
     // Then: Should find usages
-    assert!(usages_json["usages"].as_array().unwrap().len() >= 1);
+    assert!(common::helpers::find_usages_rows(&usages_json).len() >= 1);
 }
 
 // ============================================================================
@@ -283,7 +280,7 @@ pub fn calculate() -> i32 {
     let usages_text = common::get_result_text(&usages_result);
     let usages_json: serde_json::Value = serde_json::from_str(&usages_text).unwrap();
 
-    let locations = usages_json["usages"].as_array().unwrap();
+    let locations = common::helpers::find_usages_rows(&usages_json);
     // Should find definition + 2 calls = 3 total
     assert!(
         locations.len() >= 3,
@@ -312,13 +309,14 @@ pub fn calculate() -> i32 {
     let diff_json: serde_json::Value = serde_json::from_str(&diff_text).unwrap();
 
     // Then: Should show add removed and sum added
-    let changes = diff_json["structural_changes"].as_array().unwrap();
-    let has_removed = changes
-        .iter()
-        .any(|c| c["name"] == "add" && c["change_type"] == "removed");
-    let has_added = changes
-        .iter()
-        .any(|c| c["name"] == "sum" && c["change_type"] == "added");
+    let rows = common::helpers::parse_compact_rows(diff_json["changes"].as_str().unwrap_or(""));
+    let has_removed = rows.iter().any(|r| {
+        r.get(1).map(|s| s.as_str()) == Some("add")
+            && r.get(3).map(|c| c.as_str()) == Some("removed")
+    });
+    let has_added = rows.iter().any(|r| {
+        r.get(1).map(|s| s.as_str()) == Some("sum") && r.get(3).map(|c| c.as_str()) == Some("added")
+    });
 
     assert!(has_removed, "Should show 'add' was removed");
     assert!(has_added, "Should show 'sum' was added");
@@ -355,7 +353,7 @@ fn main() {
     let usages_json: serde_json::Value = serde_json::from_str(&usages_text).unwrap();
 
     // Should find usages in both files
-    assert!(usages_json["usages"].as_array().unwrap().len() >= 2);
+    assert!(common::helpers::find_usages_rows(&usages_json).len() >= 2);
 
     // Step 2: Simulate signature change: add parameter
     write_file(
@@ -376,10 +374,13 @@ fn main() {
     let affected_json: serde_json::Value = serde_json::from_str(&affected_text).unwrap();
 
     // Then: Should identify high risk usages
-    let summary = &affected_json["summary"];
+    let affected_rows =
+        common::helpers::parse_compact_rows(affected_json["affected"].as_str().unwrap_or(""));
+
     assert!(
-        summary["high_risk"].as_u64().unwrap_or(0) >= 1
-            || summary["total_usages"].as_u64().unwrap_or(0) >= 1,
+        affected_rows
+            .iter()
+            .any(|row| row.get(4).map(|s| s.as_str()) == Some("high")),
         "Should identify affected call sites"
     );
 }
@@ -405,8 +406,8 @@ fn test_workflow_add_method_following_existing_pattern() {
     let shape_text = common::get_result_text(&shape_result);
     let shape_json: serde_json::Value = serde_json::from_str(&shape_text).unwrap();
 
-    // Then: Should see existing functions
-    let has_functions = shape_json["functions"].is_array() || shape_json["impl_blocks"].is_array();
+    // Then: Should see existing functions (compact schema)
+    let has_functions = shape_json.get("f").is_some() || shape_json.get("bm").is_some();
     assert!(has_functions, "Should see existing code structure");
 
     // Step 2: read_focused_code on existing add() to see pattern
@@ -452,12 +453,12 @@ fn test_workflow_trace_symbol_across_layers() {
         let usages_text = common::get_result_text(&usages_result.as_ref().unwrap());
         let usages_json: serde_json::Value = serde_json::from_str(&usages_text).unwrap();
 
-        let usage_list = usages_json["usages"].as_array().unwrap();
+        let usage_list = common::helpers::find_usages_rows(&usages_json);
         if !usage_list.is_empty() {
             // Collect unique files
             let files: std::collections::HashSet<_> = usage_list
                 .iter()
-                .map(|u| u["file"].as_str().unwrap())
+                .filter_map(|row| row.first().map(|s| s.as_str()))
                 .collect();
 
             // Should span multiple files (domain, application, infrastructure)

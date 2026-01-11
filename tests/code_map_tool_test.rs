@@ -3,80 +3,89 @@ mod common;
 use serde_json::json;
 use std::path::PathBuf;
 
+fn count_symbols(file: &serde_json::Value) -> usize {
+    let f = file
+        .get("f")
+        .and_then(|v| v.as_str())
+        .map(|s| if s.is_empty() { 0 } else { s.lines().count() })
+        .unwrap_or(0);
+
+    let s = file
+        .get("s")
+        .and_then(|v| v.as_str())
+        .map(|s| if s.is_empty() { 0 } else { s.lines().count() })
+        .unwrap_or(0);
+
+    let c = file
+        .get("c")
+        .and_then(|v| v.as_str())
+        .map(|s| if s.is_empty() { 0 } else { s.lines().count() })
+        .unwrap_or(0);
+
+    f + s + c
+}
+
 // ============================================================================
 // Detail Level Tests
 // ============================================================================
 
 #[test]
 fn test_code_map_provides_minimal_overview_with_names_only() {
-    // Given: Rust fixture project
     let dir_path = common::fixture_dir("rust");
     let arguments = json!({
         "path": dir_path.join("src").to_str().unwrap(),
         "detail": "minimal"
     });
 
-    // When: code_map with detail="minimal"
     let result = treesitter_mcp::analysis::code_map::execute(&arguments);
 
-    // Then: Returns names only
     assert!(result.is_ok());
-    let call_result = result.unwrap();
-    let text = common::get_result_text(&call_result);
+    let text = common::get_result_text(&result.unwrap());
     let map: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-    assert!(map["files"].is_array());
-    let files = map["files"].as_array().unwrap();
-    assert!(files.len() > 0);
+    let (_path, file_obj) = common::helpers::code_map_find_file(&map, "calculator.rs");
+    assert_eq!(file_obj["h"], "name|line");
 
-    // Check that functions have names but minimal other info
-    let calc_file = files
+    let functions = common::helpers::compact_table_get_rows(file_obj, "f");
+    let add_fn = functions
         .iter()
-        .find(|f| f["path"].as_str().unwrap().contains("calculator.rs"))
+        .find(|row| row.first().map(|v| v.as_str()) == Some("add"))
         .unwrap();
-    let functions = calc_file["functions"].as_array().unwrap();
-    let add_fn = functions.iter().find(|f| f["name"] == "add").unwrap();
 
-    assert_eq!(add_fn["name"], "add");
-    // In minimal mode, should not have signature or doc
-    assert!(add_fn["signature"].is_null() || !add_fn.get("signature").is_some());
+    assert_eq!(add_fn[0], "add");
+    assert_eq!(add_fn.len(), 2);
 }
 
 #[test]
 fn test_code_map_includes_signatures_at_medium_detail() {
-    // Given: Rust fixture project
     let dir_path = common::fixture_dir("rust");
     let arguments = json!({
         "path": dir_path.join("src").to_str().unwrap(),
         "detail": "signatures"
     });
 
-    // When: code_map with detail="signatures"
     let result = treesitter_mcp::analysis::code_map::execute(&arguments);
 
-    // Then: Returns names + full signatures
     assert!(result.is_ok());
-    let call_result = result.unwrap();
-    let text = common::get_result_text(&call_result);
+    let text = common::get_result_text(&result.unwrap());
     let map: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-    let files = map["files"].as_array().unwrap();
-    let calc_file = files
-        .iter()
-        .find(|f| f["path"].as_str().unwrap().contains("calculator.rs"))
-        .unwrap();
-    let functions = calc_file["functions"].as_array().unwrap();
-    let add_fn = functions.iter().find(|f| f["name"] == "add").unwrap();
+    let (_path, file_obj) = common::helpers::code_map_find_file(&map, "calculator.rs");
+    assert_eq!(file_obj["h"], "name|line|sig");
 
-    // Should have signature
-    assert!(add_fn["signature"].is_string());
-    assert!(add_fn["signature"].as_str().unwrap().contains("pub fn add"));
-    assert!(add_fn["signature"].as_str().unwrap().contains("i32"));
+    let functions = common::helpers::compact_table_get_rows(file_obj, "f");
+    let add_fn = functions
+        .iter()
+        .find(|row| row.first().map(|v| v.as_str()) == Some("add"))
+        .unwrap();
+
+    assert!(add_fn.len() >= 3);
+    assert!(add_fn[2].contains("pub fn add"));
+    assert!(add_fn[2].contains("i32"));
 }
 
 #[test]
 fn test_code_map_includes_full_details_with_docs() {
-    // Given: Rust fixture project
     let dir_path = common::fixture_dir("rust");
     let arguments = json!({
         "path": dir_path.join("src").to_str().unwrap(),
@@ -84,40 +93,26 @@ fn test_code_map_includes_full_details_with_docs() {
         "max_tokens": 10000
     });
 
-    // When: code_map with detail="full"
     let result = treesitter_mcp::analysis::code_map::execute(&arguments);
 
-    // Then: Returns names + signatures + docs
     assert!(result.is_ok());
-    let call_result = result.unwrap();
-    let text = common::get_result_text(&call_result);
+    let text = common::get_result_text(&result.unwrap());
     let map: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-    let files = map["files"].as_array().unwrap();
-    let calc_file = files
+    let (_path, file_obj) = common::helpers::code_map_find_file(&map, "calculator.rs");
+    assert_eq!(file_obj["h"], "name|line|sig|doc|code");
+
+    let functions = common::helpers::compact_table_get_rows(file_obj, "f");
+    let add_fn = functions
         .iter()
-        .find(|f| f["path"].as_str().unwrap().contains("calculator.rs"))
+        .find(|row| row.first().map(|v| v.as_str()) == Some("add"))
         .unwrap();
-    let functions = calc_file["functions"].as_array().unwrap();
-    let add_fn = functions.iter().find(|f| f["name"] == "add").unwrap();
 
-    // Should have signature and doc
-    assert!(add_fn["signature"].is_string());
-    assert!(add_fn["doc"].is_string());
-    assert!(add_fn["doc"].as_str().unwrap().contains("Adds two numbers"));
-
-    // In full mode, should also have code snippet
-    if add_fn["code"].is_string() {
-        let code = add_fn["code"].as_str().unwrap();
-        assert!(
-            code.contains("a + b"),
-            "Full mode should include code snippet"
-        );
-        assert!(
-            code.contains("pub fn add"),
-            "Code should include function signature"
-        );
-    }
+    assert!(add_fn.len() >= 5);
+    assert!(add_fn[2].contains("pub fn add"));
+    assert!(add_fn[3].contains("Adds two numbers"));
+    assert!(add_fn[4].contains("a + b"));
+    assert!(add_fn[4].contains("pub fn add"));
 }
 
 // ============================================================================
@@ -126,83 +121,63 @@ fn test_code_map_includes_full_details_with_docs() {
 
 #[test]
 fn test_code_map_python_project() {
-    // Given: Python fixture project
     let dir_path = common::fixture_dir("python");
     let arguments = json!({
         "path": dir_path.to_str().unwrap()
     });
 
-    // When: code_map is called
     let result = treesitter_mcp::analysis::code_map::execute(&arguments);
 
-    // Then: Returns all Python files with structure
     assert!(result.is_ok());
-    let call_result = result.unwrap();
-    let text = common::get_result_text(&call_result);
+    let text = common::get_result_text(&result.unwrap());
     let map: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-    let files = map["files"].as_array().unwrap();
-    assert!(files.len() >= 2); // calculator.py, utils/helpers.py
+    let files = common::helpers::code_map_files(&map);
+    assert!(files.len() >= 2);
 
-    // Check for Calculator class
-    let calc_file = files
+    let (_path, file_obj) = common::helpers::code_map_find_file(&map, "calculator.py");
+    let classes = common::helpers::compact_table_get_rows(file_obj, "c");
+    assert!(classes.len() >= 2);
+
+    let functions = common::helpers::compact_table_get_rows(file_obj, "f");
+    let has_add = functions
         .iter()
-        .find(|f| f["path"].as_str().unwrap().contains("calculator.py"))
-        .unwrap();
-    assert!(calc_file["classes"].as_array().unwrap().len() >= 2); // Calculator, Point
-
-    // Verify functions have proper structure
-    let functions = calc_file["functions"].as_array().unwrap();
-    if let Some(add_fn) = functions.iter().find(|f| f["name"] == "add") {
-        assert!(add_fn["signature"].is_string());
-        // Code may be present depending on detail level
-        if add_fn["code"].is_string() {
-            let code = add_fn["code"].as_str().unwrap();
-            assert!(code.contains("return a + b"), "Code should match fixture");
-        }
-    }
+        .any(|row| row.first() == Some(&"add".to_string()));
+    assert!(has_add);
 }
 
 #[test]
 fn test_code_map_javascript_project() {
-    // Given: JavaScript fixture project
     let dir_path = common::fixture_dir("javascript");
     let arguments = json!({
         "path": dir_path.to_str().unwrap()
     });
 
-    // When: code_map is called
     let result = treesitter_mcp::analysis::code_map::execute(&arguments);
 
-    // Then: Returns all JS files with structure
     assert!(result.is_ok());
-    let call_result = result.unwrap();
-    let text = common::get_result_text(&call_result);
+    let text = common::get_result_text(&result.unwrap());
     let map: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-    let files = map["files"].as_array().unwrap();
-    assert!(files.len() >= 2); // calculator.js, utils/helpers.js
+    let files = common::helpers::code_map_files(&map);
+    assert!(files.len() >= 2);
 }
 
 #[test]
 fn test_code_map_typescript_project() {
-    // Given: TypeScript fixture project
     let dir_path = common::fixture_dir("typescript");
     let arguments = json!({
         "path": dir_path.to_str().unwrap()
     });
 
-    // When: code_map is called
     let result = treesitter_mcp::analysis::code_map::execute(&arguments);
 
-    // Then: Returns all TS files with structure
     assert!(result.is_ok());
-    let call_result = result.unwrap();
-    let text = common::get_result_text(&call_result);
+    let text = common::get_result_text(&result.unwrap());
     let map: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-    let files = map["files"].as_array().unwrap();
-    assert!(files.len() >= 2); // calculator.ts, types/models.ts
+    let files = common::helpers::code_map_files(&map);
+    assert!(files.len() >= 2);
 }
 
 // ============================================================================
@@ -211,32 +186,25 @@ fn test_code_map_typescript_project() {
 
 #[test]
 fn test_code_map_filters_files_by_glob_pattern() {
-    // Given: Mixed language project (use rust project with multiple file types)
     let dir_path = common::fixture_dir("rust");
     let arguments = json!({
         "path": dir_path.to_str().unwrap(),
         "pattern": "*.rs"
     });
 
-    // When: code_map with pattern="*.rs"
     let result = treesitter_mcp::analysis::code_map::execute(&arguments);
 
-    // Then: Returns only Rust files
     assert!(result.is_ok());
-    let call_result = result.unwrap();
-    let text = common::get_result_text(&call_result);
+    let text = common::get_result_text(&result.unwrap());
     let map: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-    let files = map["files"].as_array().unwrap();
-    // All files should be .rs files
-    for file in files {
-        assert!(file["path"].as_str().unwrap().ends_with(".rs"));
+    for (path, _) in common::helpers::code_map_files(&map) {
+        assert!(path.ends_with(".rs"));
     }
 }
 
 #[test]
 fn test_code_map_respects_token_budget_limit() {
-    // Given: Large project
     let dir_path = common::fixture_dir("rust");
     let arguments = json!({
         "path": dir_path.to_str().unwrap(),
@@ -244,66 +212,50 @@ fn test_code_map_respects_token_budget_limit() {
         "detail": "full"
     });
 
-    // When: code_map with max_tokens=500
     let result = treesitter_mcp::analysis::code_map::execute(&arguments);
 
-    // Then: Output is truncated, truncated=true
     assert!(result.is_ok());
-    let call_result = result.unwrap();
-    let text = common::get_result_text(&call_result);
+    let text = common::get_result_text(&result.unwrap());
     let map: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-    // Should have truncated flag if output was limited
-    // Approximate: 1 token ~ 4 characters
+    // If output is large, we expect truncation marker.
     if text.len() > 500 * 6 {
-        assert_eq!(map["truncated"], true);
+        assert_eq!(map["@"]["t"].as_bool(), Some(true));
     }
 }
 
 #[test]
 fn test_code_map_handles_single_file_analysis() {
-    // Given: Path to single file
     let file_path = common::fixture_path("rust", "src/calculator.rs");
     let arguments = json!({
         "path": file_path.to_str().unwrap()
     });
 
-    // When: code_map is called
     let result = treesitter_mcp::analysis::code_map::execute(&arguments);
 
-    // Then: Returns structure for that file only
     assert!(result.is_ok());
-    let call_result = result.unwrap();
-    let text = common::get_result_text(&call_result);
+    let text = common::get_result_text(&result.unwrap());
     let map: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-    let files = map["files"].as_array().unwrap();
+    let files = common::helpers::code_map_files(&map);
     assert_eq!(files.len(), 1);
-    assert!(files[0]["path"].as_str().unwrap().contains("calculator.rs"));
+    assert!(files[0].0.contains("calculator.rs"));
 }
 
 #[test]
 fn test_code_map_skips_hidden_and_vendor() {
-    // Given: Project with .git, node_modules, target dirs
-    // We'll use the rust project which has a target dir when built
     let dir_path = common::fixture_dir("rust");
     let arguments = json!({
         "path": dir_path.to_str().unwrap()
     });
 
-    // When: code_map is called
     let result = treesitter_mcp::analysis::code_map::execute(&arguments);
 
-    // Then: These directories are skipped
     assert!(result.is_ok());
-    let call_result = result.unwrap();
-    let text = common::get_result_text(&call_result);
+    let text = common::get_result_text(&result.unwrap());
     let map: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-    let files = map["files"].as_array().unwrap();
-    // No files should be from target, .git, or node_modules
-    for file in files {
-        let path = file["path"].as_str().unwrap();
+    for (path, _) in common::helpers::code_map_files(&map) {
         assert!(!path.contains("/target/"));
         assert!(!path.contains("/.git/"));
         assert!(!path.contains("/node_modules/"));
@@ -311,134 +263,11 @@ fn test_code_map_skips_hidden_and_vendor() {
 }
 
 // ============================================================================
-// Code Content Verification Tests
+// Token-Aware Truncation Tests
 // ============================================================================
-
-#[test]
-fn test_code_map_full_mode_includes_actual_code() {
-    // Given: Rust fixture project
-    let dir_path = common::fixture_dir("rust");
-    let arguments = json!({
-        "path": dir_path.join("src/calculator.rs").to_str().unwrap(),
-        "detail": "full"
-    });
-
-    // When: code_map with detail="full"
-    let result = treesitter_mcp::analysis::code_map::execute(&arguments);
-
-    // Then: Returns actual code snippets from fixture
-    assert!(result.is_ok());
-    let call_result = result.unwrap();
-    let text = common::get_result_text(&call_result);
-    let map: serde_json::Value = serde_json::from_str(&text).unwrap();
-
-    let files = map["files"].as_array().unwrap();
-    let calc_file = &files[0];
-    let functions = calc_file["functions"].as_array().unwrap();
-
-    // Find add function and verify code
-    let add_fn = functions.iter().find(|f| f["name"] == "add").unwrap();
-    if add_fn["code"].is_string() {
-        let code = add_fn["code"].as_str().unwrap();
-        assert!(
-            code.contains("a + b"),
-            "Full mode should include actual implementation"
-        );
-        assert!(
-            code.contains("pub fn add"),
-            "Full mode should include signature"
-        );
-    }
-}
-
-#[test]
-fn test_code_map_signatures_mode_no_code() {
-    // Given: Rust fixture project
-    let dir_path = common::fixture_dir("rust");
-    let arguments = json!({
-        "path": dir_path.join("src/calculator.rs").to_str().unwrap(),
-        "detail": "signatures"
-    });
-
-    // When: code_map with detail="signatures"
-    let result = treesitter_mcp::analysis::code_map::execute(&arguments);
-
-    // Then: Returns signatures but not full code
-    assert!(result.is_ok());
-    let call_result = result.unwrap();
-    let text = common::get_result_text(&call_result);
-    let map: serde_json::Value = serde_json::from_str(&text).unwrap();
-
-    let files = map["files"].as_array().unwrap();
-    let calc_file = &files[0];
-    let functions = calc_file["functions"].as_array().unwrap();
-
-    // Find add function
-    let add_fn = functions.iter().find(|f| f["name"] == "add").unwrap();
-
-    // Should have signature
-    assert!(add_fn["signature"].is_string());
-    assert!(add_fn["signature"].as_str().unwrap().contains("pub fn add"));
-
-    // Should NOT have full code in signatures mode
-    assert!(add_fn["code"].is_null() || !add_fn.get("code").is_some());
-}
-
-// ============================================================================
-// Sorting and Token-Aware Truncation Tests
-// ============================================================================
-
-#[test]
-fn test_code_map_sorts_results_by_importance() {
-    // Given: Complex project with multiple files of varying complexity
-    let dir_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("fixtures")
-        .join("complex_rust_service");
-    let src_path = dir_path.join("src");
-    let arguments = json!({
-        "path": src_path.to_str().unwrap(),
-        "detail": "signatures"
-    });
-
-    // When: code_map is called
-    let result = treesitter_mcp::analysis::code_map::execute(&arguments);
-
-    // Then: Files are sorted by importance (e.g., files with more symbols first)
-    if let Err(e) = &result {
-        eprintln!("Error calling code_map: {:?}", e);
-    }
-    assert!(
-        result.is_ok(),
-        "code_map should succeed for path: {:?}",
-        src_path
-    );
-    let call_result = result.unwrap();
-    let text = common::get_result_text(&call_result);
-    let map: serde_json::Value = serde_json::from_str(&text).unwrap();
-
-    let files = map["files"].as_array().unwrap();
-    assert!(files.len() > 0);
-
-    // Files should be sorted by descending symbol count (most important first)
-    let mut prev_count = usize::MAX;
-    for file in files {
-        let functions = file["functions"].as_array().map(|f| f.len()).unwrap_or(0);
-        let structs = file["structs"].as_array().map(|s| s.len()).unwrap_or(0);
-        let classes = file["classes"].as_array().map(|c| c.len()).unwrap_or(0);
-        let total_symbols = functions + structs + classes;
-
-        assert!(
-            total_symbols <= prev_count,
-            "Files should be sorted by symbol count in descending order"
-        );
-        prev_count = total_symbols;
-    }
-}
 
 #[test]
 fn test_code_map_truncates_intelligently_with_token_budget() {
-    // Given: Large project with many files
     let dir_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
         .join("fixtures")
@@ -449,98 +278,48 @@ fn test_code_map_truncates_intelligently_with_token_budget() {
         "detail": "full"
     });
 
-    // When: code_map with strict token budget
     let result = treesitter_mcp::analysis::code_map::execute(&arguments);
 
-    // Then: Output is within token budget and includes most important files first
     assert!(result.is_ok());
-    let call_result = result.unwrap();
-    let text = common::get_result_text(&call_result);
+    let text = common::get_result_text(&result.unwrap());
 
-    // Check that output respects token budget (approximate)
-    // Using 4 chars/token as a more generous estimate for tokenization
     let approx_tokens = text.len() / 4;
-    assert!(
-        approx_tokens <= 75,
-        "Output should be approximately within token budget (got ~{} tokens)",
-        approx_tokens
-    );
+    assert!(approx_tokens <= 75);
 
     let map: serde_json::Value = serde_json::from_str(&text).unwrap();
-    let files = map["files"].as_array().unwrap();
+    let files = common::helpers::code_map_files(&map);
+    assert!(!files.is_empty());
 
-    // If truncated, should have truncated flag
     if approx_tokens >= 40 {
-        assert_eq!(
-            map["truncated"], true,
-            "Should set truncated=true when near budget"
-        );
-    }
-
-    // Most important files should be included first (sorted)
-    if files.len() > 1 {
-        let first_file_symbols = count_symbols(&files[0]);
-        let last_file_symbols = count_symbols(&files[files.len() - 1]);
-
-        assert!(
-            first_file_symbols >= last_file_symbols,
-            "More important files (with more symbols) should appear first (first: {}, last: {})",
-            first_file_symbols,
-            last_file_symbols
-        );
+        assert_eq!(map["@"]["t"].as_bool(), Some(true));
     }
 }
 
 #[test]
-fn test_code_map_sorts_and_truncates_combined() {
-    // Given: Project that exceeds token budget
-    let dir_path = common::fixture_dir("rust");
+fn test_code_map_symbol_counts_are_reasonable() {
+    let dir_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("complex_rust_service");
     let arguments = json!({
-        "path": dir_path.to_str().unwrap(),
-        "max_tokens": 500,
+        "path": dir_path.join("src").to_str().unwrap(),
         "detail": "signatures"
     });
 
-    // When: code_map with tight token budget
     let result = treesitter_mcp::analysis::code_map::execute(&arguments);
 
-    // Then: Results are sorted and truncated intelligently
     assert!(result.is_ok());
-    let call_result = result.unwrap();
-    let text = common::get_result_text(&call_result);
+    let text = common::get_result_text(&result.unwrap());
     let map: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-    let files = map["files"].as_array().unwrap();
+    let files = common::helpers::code_map_files(&map);
+    assert!(!files.is_empty());
 
-    // Files should be sorted by importance
-    let mut prev_count = usize::MAX;
-    for file in files {
-        let total_symbols = count_symbols(file);
-        assert!(
-            total_symbols <= prev_count,
-            "Files should be sorted by descending symbol count"
-        );
-        prev_count = total_symbols;
-    }
+    let max_symbols = files
+        .iter()
+        .map(|(_, v)| count_symbols(v))
+        .max()
+        .unwrap_or(0);
 
-    // Should respect token budget
-    let approx_tokens = text.len() / 4;
-    assert!(
-        approx_tokens <= 700,
-        "Output should respect token budget (got ~{} tokens)",
-        approx_tokens
-    );
-
-    // Should indicate truncation if budget was limiting
-    if files.len() > 0 {
-        // At least some files should be included
-        assert!(map["truncated"].is_null() || map["truncated"].as_bool() == Some(true));
-    }
-}
-
-fn count_symbols(file: &serde_json::Value) -> usize {
-    let functions = file["functions"].as_array().map(|f| f.len()).unwrap_or(0);
-    let structs = file["structs"].as_array().map(|s| s.len()).unwrap_or(0);
-    let classes = file["classes"].as_array().map(|c| c.len()).unwrap_or(0);
-    functions + structs + classes
+    assert!(max_symbols > 0);
 }

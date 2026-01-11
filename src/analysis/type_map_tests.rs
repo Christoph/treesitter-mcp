@@ -4,6 +4,46 @@ mod tests {
     use std::fs;
     use tempfile::tempdir;
 
+    fn parse_compact_row(row: &str) -> Vec<String> {
+        let mut fields = Vec::new();
+        let mut current = String::new();
+        let mut escape = false;
+
+        for ch in row.chars() {
+            if escape {
+                match ch {
+                    'n' => current.push('\n'),
+                    'r' => current.push('\r'),
+                    '|' => current.push('|'),
+                    '\\' => current.push('\\'),
+                    other => current.push(other),
+                }
+                escape = false;
+                continue;
+            }
+
+            match ch {
+                '\\' => escape = true,
+                '|' => {
+                    fields.push(current);
+                    current = String::new();
+                }
+                other => current.push(other),
+            }
+        }
+
+        fields.push(current);
+        fields
+    }
+
+    fn parse_compact_rows(rows: &str) -> Vec<Vec<String>> {
+        if rows.is_empty() {
+            return Vec::new();
+        }
+
+        rows.lines().map(parse_compact_row).collect()
+    }
+
     #[test]
     fn test_type_map_full_workflow() -> eyre::Result<()> {
         let dir = tempdir()?;
@@ -27,7 +67,7 @@ mod tests {
         "#;
         fs::write(src_dir.join("app.ts"), ts_content)?;
 
-        // Execute type_map via the handler logic (orchestrated)
+        // Execute type_map
         let args = serde_json::json!({
             "path": dir.path().to_str().unwrap(),
             "max_tokens": 5000
@@ -43,24 +83,37 @@ mod tests {
 
         let json: Value = serde_json::from_str(text)?;
 
-        let types = json["types"].as_array().unwrap();
+        assert_eq!(json["h"], "name|kind|file|line|usage_count");
 
-        // Config should have 1 usage (in app.ts)
-        let config = types.iter().find(|t| t["name"] == "Config").unwrap();
-        assert_eq!(config["usage_count"], 1);
-        assert_eq!(config["kind"], "struct");
+        let rows_str = json["types"].as_str().unwrap_or("");
+        let rows = parse_compact_rows(rows_str);
 
-        // User should have 0 usage
-        let user = types.iter().find(|t| t["name"] == "User").unwrap();
-        assert_eq!(user["usage_count"], 0);
-        assert_eq!(user["kind"], "interface");
+        let find_row = |name: &str| {
+            rows.iter()
+                .find(|r| r.first().map(|v| v.as_str()) == Some(name))
+                .unwrap_or_else(|| panic!("Missing type row for '{name}'"))
+        };
 
-        // Mode should have 1 usage
-        let mode = types.iter().find(|t| t["name"] == "Mode").unwrap();
-        assert_eq!(mode["usage_count"], 1);
+        // Row columns: name|kind|file|line|usage_count
+        let config = find_row("Config");
+        assert_eq!(config.get(1).map(|s| s.as_str()), Some("struct"));
+        assert_eq!(config.get(4).and_then(|s| s.parse::<u64>().ok()), Some(1));
 
-        assert_eq!(json["total_types"], 3);
-        assert_eq!(json["truncated"], false);
+        let user = find_row("User");
+        assert_eq!(user.get(1).map(|s| s.as_str()), Some("interface"));
+        assert_eq!(user.get(4).and_then(|s| s.parse::<u64>().ok()), Some(0));
+
+        let mode = find_row("Mode");
+        assert_eq!(mode.get(1).map(|s| s.as_str()), Some("enum"));
+        assert_eq!(mode.get(4).and_then(|s| s.parse::<u64>().ok()), Some(1));
+
+        // Should not be truncated with max_tokens=5000
+        let truncated = json
+            .get("@")
+            .and_then(|m| m.get("t"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        assert!(!truncated);
 
         Ok(())
     }

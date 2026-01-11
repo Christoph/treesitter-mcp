@@ -1,14 +1,15 @@
 use std::path::Path;
 
 use eyre::Result;
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 use tiktoken_rs::cl100k_base;
 
 use crate::analysis::path_utils;
 use crate::analysis::usage_counter::count_all_usages;
-use crate::extraction::types::{extract_types, LimitHit, TypeDefinition, TypeKind};
+use crate::common::budget::BudgetTracker;
+use crate::common::{budget, format};
+use crate::extraction::types::{extract_types, TypeDefinition, TypeKind};
 use crate::mcp_types::{CallToolResult, CallToolResultExt};
-use crate::parser::detect_language;
 
 pub fn execute(arguments: &Value) -> Result<CallToolResult> {
     // Backward-compatible input handling:
@@ -22,7 +23,6 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult> {
     let max_tokens = arguments["max_tokens"].as_u64().unwrap_or(2000) as usize;
     let limit = arguments["limit"].as_u64().map(|v| v as usize);
     let offset = arguments["offset"].as_u64().unwrap_or(0) as usize;
-    let include_deps = arguments["include_deps"].as_bool().unwrap_or(false);
 
     let pattern = arguments["pattern"].as_str();
 
@@ -55,7 +55,7 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult> {
             .then_with(|| a.name.cmp(&b.name))
     });
 
-    // 3.5) Optional name filtering
+    // 4) Optional name filtering
     let mut filtered: Vec<TypeDefinition> = match name_filter {
         Some(filter) => extraction_result
             .types
@@ -65,7 +65,7 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult> {
         None => extraction_result.types,
     };
 
-    // 3.6) Pagination (legacy)
+    // 5) Pagination
     if offset > 0 {
         filtered = filtered.into_iter().skip(offset).collect();
     }
@@ -73,42 +73,87 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult> {
         filtered.truncate(limit);
     }
 
-    // 4) Token-aware truncation (new schema uses this; legacy output derives from it)
-    let (final_types, limit_hit) = truncate_to_tokens(filtered, max_tokens);
+    // 6) Build compact output
+    // `BudgetTracker` uses a conservative estimate; final enforcement below uses BPE.
+    let mut budget_tracker = BudgetTracker::new((max_tokens * 9) / 10);
 
-    let language = detect_top_level_language(path_str, path);
+    let mut rows = Vec::new();
+    let mut truncated = extraction_result.limit_hit.is_some();
 
-    // Legacy grouped output (for existing test suite compatibility)
-    let legacy = build_legacy_output(&final_types, language.as_str(), include_deps);
-
-    // New schema output + legacy fields
-    let mut response = json!({
-        "types": final_types,
-        "truncated": limit_hit.is_some() || extraction_result.limit_hit.is_some(),
-        "total_types": extraction_result.total_types,
-        "types_included": legacy_total_count(&legacy),
-        "limit_hit": limit_hit.or(extraction_result.limit_hit),
-    });
-
-    if let Some(obj) = response.as_object_mut() {
-        if let Some(legacy_obj) = legacy.as_object() {
-            for (k, v) in legacy_obj {
-                obj.insert(k.clone(), v.clone());
-            }
+    for ty in &filtered {
+        let row = type_to_row(ty);
+        let estimated = budget::estimate_symbol_tokens(row.len() + 8);
+        if !budget_tracker.add(estimated) {
+            truncated = true;
+            break;
         }
+        rows.push(row);
     }
 
-    Ok(CallToolResult::success(response.to_string()))
+    let mut out = Map::new();
+    out.insert("h".to_string(), json!("name|kind|file|line|usage_count"));
+    out.insert("types".to_string(), json!(rows.join("\n")));
+
+    // Hard enforcement: drop rows until within token budget.
+    let bpe = cl100k_base().unwrap();
+    loop {
+        let text = serde_json::to_string(&Value::Object(out.clone())).unwrap_or_default();
+        if bpe.encode_with_special_tokens(&text).len() <= max_tokens {
+            break;
+        }
+
+        truncated = true;
+
+        let Some(types_str) = out.get("types").and_then(Value::as_str) else {
+            break;
+        };
+
+        if types_str.is_empty() {
+            break;
+        }
+
+        let mut lines: Vec<&str> = types_str.lines().collect();
+        lines.pop();
+        out.insert("types".to_string(), json!(lines.join("\n")));
+    }
+
+    if truncated {
+        out.insert("@".to_string(), json!({"t": true}));
+    }
+
+    Ok(CallToolResult::success(
+        serde_json::to_string(&Value::Object(out)).unwrap_or_default(),
+    ))
 }
 
-fn detect_top_level_language(path_str: &str, path: &Path) -> String {
-    if path.is_dir() {
-        return "Mixed".to_string();
-    }
+fn type_to_row(ty: &TypeDefinition) -> String {
+    let file = path_utils::to_relative_path(ty.file.to_string_lossy().as_ref());
+    let kind = type_kind_str(ty.kind);
+    let line = ty.line.to_string();
+    let usage = ty.usage_count.to_string();
 
-    match detect_language(path_str) {
-        Ok(lang) => lang.name().to_string(),
-        Err(_) => "Unknown".to_string(),
+    let owned = [
+        ty.name.as_str(),
+        kind,
+        file.as_str(),
+        line.as_str(),
+        usage.as_str(),
+    ];
+    format::format_row(&owned)
+}
+
+fn type_kind_str(kind: TypeKind) -> &'static str {
+    match kind {
+        TypeKind::Interface => "interface",
+        TypeKind::Class => "class",
+        TypeKind::Struct => "struct",
+        TypeKind::Enum => "enum",
+        TypeKind::Trait => "trait",
+        TypeKind::Protocol => "protocol",
+        TypeKind::TypeAlias => "type_alias",
+        TypeKind::Record => "record",
+        TypeKind::TypedDict => "typed_dict",
+        TypeKind::NamedTuple => "named_tuple",
     }
 }
 
@@ -118,246 +163,4 @@ fn looks_like_glob(pattern: &str) -> bool {
         || pattern.contains('[')
         || pattern.contains('{')
         || pattern.contains('/')
-}
-
-fn truncate_to_tokens(
-    types: Vec<TypeDefinition>,
-    max_tokens: usize,
-) -> (Vec<TypeDefinition>, Option<LimitHit>) {
-    let bpe = cl100k_base().unwrap();
-    let mut result = Vec::new();
-    let mut current_tokens = 0;
-
-    for type_def in types {
-        let serialized = serde_json::to_string(&type_def).unwrap_or_default();
-        let tokens = bpe.encode_with_special_tokens(&serialized).len();
-
-        // Add some overhead for JSON structure (commas, array brackets)
-        if current_tokens + tokens + 2 > max_tokens {
-            return (result, Some(LimitHit::TokenLimit));
-        }
-
-        current_tokens += tokens + 2;
-        result.push(type_def);
-    }
-
-    (result, None)
-}
-
-fn build_legacy_output(types: &[TypeDefinition], language: &str, include_deps: bool) -> Value {
-    let mut interfaces = Vec::new();
-    let mut classes = Vec::new();
-    let mut structs = Vec::new();
-    let mut enums = Vec::new();
-    let mut traits = Vec::new();
-    let mut type_aliases = Vec::new();
-    let mut others = Vec::new();
-
-    for ty in types {
-        let file = path_utils::to_relative_path(ty.file.to_string_lossy().as_ref());
-
-        match ty.kind {
-            TypeKind::Interface => {
-                let mut fields = Vec::new();
-                let mut members = Vec::new();
-                if let Some(def_members) = &ty.members {
-                    for m in def_members {
-                        if m.type_annotation.contains('(') {
-                            members.push(json!({
-                                "name": m.name,
-                                "signature": m.type_annotation,
-                                "visibility": "public",
-                            }));
-                        } else {
-                            fields.push(json!({
-                                "name": m.name,
-                                "type": m.type_annotation,
-                                "visibility": "public",
-                            }));
-                        }
-                    }
-                }
-
-                interfaces.push(json!({
-                    "name": ty.name,
-                    "file": file,
-                    "line": ty.line,
-                    "signature": ty.signature,
-                    "usage_count": ty.usage_count,
-                    "fields": fields,
-                    "members": members,
-                    "visibility": "public",
-                }));
-            }
-            TypeKind::Class => {
-                classes.push(legacy_class_like(ty, &file));
-            }
-            TypeKind::Struct => {
-                let mut value = legacy_class_like(ty, &file);
-                if let Some(obj) = value.as_object_mut() {
-                    obj.insert("kind".to_string(), json!("struct"));
-                }
-                structs.push(value);
-            }
-            TypeKind::Enum => {
-                let variants: Vec<Value> = ty
-                    .variants
-                    .as_ref()
-                    .map(|v| {
-                        v.iter()
-                            .map(|variant| {
-                                json!({
-                                    "name": variant.name,
-                                    "type": variant.type_annotation,
-                                    "visibility": "public",
-                                })
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
-
-                enums.push(json!({
-                    "name": ty.name,
-                    "file": file,
-                    "line": ty.line,
-                    "signature": ty.signature,
-                    "usage_count": ty.usage_count,
-                    "variants": variants,
-                    "visibility": "public",
-                }));
-            }
-            TypeKind::Trait | TypeKind::Protocol => {
-                let members: Vec<Value> = ty
-                    .members
-                    .as_ref()
-                    .map(|m| {
-                        m.iter()
-                            .map(|member| {
-                                json!({
-                                    "name": member.name,
-                                    "signature": member.type_annotation,
-                                    "visibility": "public",
-                                })
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
-
-                traits.push(json!({
-                    "name": ty.name,
-                    "file": file,
-                    "line": ty.line,
-                    "signature": ty.signature,
-                    "usage_count": ty.usage_count,
-                    "members": members,
-                    "visibility": "public",
-                }));
-            }
-            TypeKind::TypeAlias => {
-                type_aliases.push(json!({
-                    "name": ty.name,
-                    "file": file,
-                    "line": ty.line,
-                    "signature": ty.signature,
-                    "usage_count": ty.usage_count,
-                    "visibility": "public",
-                }));
-            }
-            TypeKind::Record | TypeKind::TypedDict | TypeKind::NamedTuple => {
-                others.push(json!({
-                    "name": ty.name,
-                    "file": file,
-                    "line": ty.line,
-                    "signature": ty.signature,
-                    "usage_count": ty.usage_count,
-                    "visibility": "public",
-                }));
-            }
-        }
-    }
-
-    let mut result = json!({
-        "language": language,
-        "interfaces": interfaces,
-        "classes": classes,
-        "structs": structs,
-        "enums": enums,
-        "traits": traits,
-        "type_aliases": type_aliases,
-        "others": others,
-    });
-
-    if include_deps {
-        if let Some(obj) = result.as_object_mut() {
-            obj.insert("includes_dependencies".to_string(), json!(true));
-            obj.insert("dependencies".to_string(), json!([]));
-        }
-    }
-
-    result
-}
-
-fn legacy_class_like(ty: &TypeDefinition, file: &str) -> Value {
-    let fields: Vec<Value> = ty
-        .fields
-        .as_ref()
-        .map(|f| {
-            f.iter()
-                .map(|field| {
-                    json!({
-                        "name": field.name,
-                        "type": field.type_annotation,
-                        "visibility": "public",
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-
-    let members: Vec<Value> = ty
-        .members
-        .as_ref()
-        .map(|m| {
-            m.iter()
-                .map(|member| {
-                    json!({
-                        "name": member.name,
-                        "signature": member.type_annotation,
-                        "visibility": "public",
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-
-    json!({
-        "name": ty.name,
-        "file": file,
-        "line": ty.line,
-        "signature": ty.signature,
-        "usage_count": ty.usage_count,
-        "fields": fields,
-        "members": members,
-        "visibility": "public",
-    })
-}
-
-fn legacy_total_count(legacy: &Value) -> usize {
-    let mut total = 0;
-    for key in [
-        "interfaces",
-        "classes",
-        "structs",
-        "enums",
-        "traits",
-        "type_aliases",
-        "others",
-    ] {
-        total += legacy
-            .get(key)
-            .and_then(|v| v.as_array())
-            .map(|v| v.len())
-            .unwrap_or(0);
-    }
-    total
 }

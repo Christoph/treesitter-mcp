@@ -34,14 +34,14 @@ fn test_find_usages_across_trait_implementations() {
     let text = common::get_result_text(&call_result);
     let usages: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-    let usage_list = usages["usages"].as_array().unwrap();
+    let usage_rows = common::helpers::find_usages_rows(&usages);
 
-    eprintln!("Found {} usages", usage_list.len());
-    for usage in usage_list.iter() {
-        eprintln!(
-            "  - {} at {}:{}",
-            usage["usage_type"], usage["file"], usage["line"]
-        );
+    eprintln!("Found {} usages", usage_rows.len());
+    for row in &usage_rows {
+        let file = row.get(0).cloned().unwrap_or_default();
+        let line = row.get(1).cloned().unwrap_or_default();
+        let usage_type = row.get(3).cloned().unwrap_or_default();
+        eprintln!("  - {} at {}:{}", usage_type, file, line);
     }
 
     // Should find:
@@ -51,21 +51,23 @@ fn test_find_usages_across_trait_implementations() {
     // 4. Implementation for InMemoryProductRepository
     // 5. Trait bound usages in services.rs
     assert!(
-        usage_list.len() >= 5,
+        usage_rows.len() >= 5,
         "Expected at least 5 usages of Repository trait, found {}",
-        usage_list.len()
+        usage_rows.len()
     );
 
     // Verify we found usages in repositories.rs (where trait is defined)
-    let in_repositories = usage_list
+    let in_repositories = usage_rows
         .iter()
-        .any(|u| u["file"].as_str().unwrap().contains("repositories.rs"));
+        .filter_map(|row| row.first())
+        .any(|file| file.contains("repositories.rs"));
     assert!(in_repositories, "Should find Repository in repositories.rs");
 
     // Verify we found implementations in persistence.rs
-    let in_persistence = usage_list
+    let in_persistence = usage_rows
         .iter()
-        .filter(|u| u["file"].as_str().unwrap().contains("persistence.rs"))
+        .filter_map(|row| row.first())
+        .filter(|file| file.contains("persistence.rs"))
         .count();
     assert!(
         in_persistence >= 3,
@@ -90,15 +92,15 @@ fn test_find_usages_with_generic_bounds() {
     let text = common::get_result_text(&call_result);
     let usages: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-    let usage_list = usages["usages"].as_array().unwrap();
+    let usage_rows = common::helpers::find_usages_rows(&usages);
 
     // Should find trait definition, implementation, and usage in OrderService generic bounds
-    assert!(usage_list.len() >= 2, "Expected at least 2 usages");
+    assert!(usage_rows.len() >= 2, "Expected at least 2 usages");
 
     // Check that we found usages in different files
-    let files: std::collections::HashSet<_> = usage_list
+    let files: std::collections::HashSet<_> = usage_rows
         .iter()
-        .map(|u| u["file"].as_str().unwrap())
+        .filter_map(|row| row.first().cloned())
         .collect();
     assert!(files.len() >= 2, "Should find usages across multiple files");
 }
@@ -120,7 +122,7 @@ fn test_find_usages_of_domain_event() {
     let text = common::get_result_text(&call_result);
     let usages: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-    let usage_list = usages["usages"].as_array().unwrap();
+    let usage_rows = common::helpers::find_usages_rows(&usages);
 
     // Should find usages in:
     // - events.rs (definition)
@@ -128,13 +130,13 @@ fn test_find_usages_of_domain_event() {
     // - messaging.rs (publishing events)
     // - services.rs (taking events)
     assert!(
-        usage_list.len() >= 4,
+        usage_rows.len() >= 4,
         "Expected at least 4 usages across layers"
     );
 
-    let files: std::collections::HashSet<_> = usage_list
+    let files: std::collections::HashSet<_> = usage_rows
         .iter()
-        .map(|u| u["file"].as_str().unwrap())
+        .filter_map(|row| row.first().cloned())
         .collect();
     assert!(files.len() >= 3, "Should span at least 3 files");
 }
@@ -164,12 +166,17 @@ fn test_code_map_shows_layered_architecture() {
     // Verify code map returns results (even if truncated)
     assert!(text.len() > 100, "Should generate substantial output");
 
-    // Verify at least some files are present
-    assert!(text.contains("\"path\""), "Should contain file paths");
+    let map: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let files = common::helpers::code_map_files(&map);
 
-    // Verify at least API layer is visible (it's in the output)
+    // Verify at least some files are present
+    assert!(!files.is_empty(), "Should contain file paths");
+
+    // Verify at least API layer is visible
     assert!(
-        text.contains("/api/") || text.contains("handlers"),
+        files
+            .iter()
+            .any(|(p, _)| p.contains("/api/") || p.contains("handlers")),
         "Should contain API layer"
     );
 
@@ -224,14 +231,14 @@ fn test_find_usages_of_value_object() {
     let text = common::get_result_text(&call_result);
     let usages: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-    let usage_list = usages["usages"].as_array().unwrap();
+    let usage_rows = common::helpers::find_usages_rows(&usages);
 
     // Money is used in:
     // - value_objects.rs (definition)
     // - models.rs (Product, Order)
     // - services.rs (calculate_total_revenue)
     // - queries.rs (CalculateRevenueQuery)
-    assert!(usage_list.len() >= 4, "Expected at least 4 usages of Money");
+    assert!(usage_rows.len() >= 4, "Expected at least 4 usages of Money");
 }
 
 #[test]
@@ -318,7 +325,7 @@ fn test_find_usages_of_newtype_id() {
     let text = common::get_result_text(&call_result);
     let usages: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-    let usage_list = usages["usages"].as_array().unwrap();
+    let usage_rows = common::helpers::find_usages_rows(&usages);
 
     // UserId is used extensively:
     // - models.rs (definition, User, Order)
@@ -328,14 +335,14 @@ fn test_find_usages_of_newtype_id() {
     // - commands.rs (command fields)
     // - dto.rs (conversions)
     assert!(
-        usage_list.len() >= 6,
+        usage_rows.len() >= 6,
         "Expected at least 6 usages of UserId across layers"
     );
 
     // Verify cross-layer usage
-    let files: std::collections::HashSet<_> = usage_list
+    let files: std::collections::HashSet<_> = usage_rows
         .iter()
-        .map(|u| u["file"].as_str().unwrap())
+        .filter_map(|row| row.first().cloned())
         .collect();
     assert!(
         files.len() >= 4,
@@ -379,11 +386,11 @@ fn test_affected_by_diff_when_trait_signature_changes() {
     let call_result = result.unwrap();
     let text = common::get_result_text(&call_result);
     let usages: serde_json::Value = serde_json::from_str(&text).unwrap();
-    let usage_list = usages["usages"].as_array().unwrap();
+    let usage_rows = common::helpers::find_usages_rows(&usages);
 
     // Should find trait definition + 3 implementations + multiple call sites
     assert!(
-        usage_list.len() >= 7,
+        usage_rows.len() >= 7,
         "Expected at least 7 locations affected by find_by_id signature change"
     );
 }
@@ -405,7 +412,7 @@ fn test_rename_domain_model_impact() {
     let call_result = result.unwrap();
     let text = common::get_result_text(&call_result);
     let usages: serde_json::Value = serde_json::from_str(&text).unwrap();
-    let usage_list = usages["usages"].as_array().unwrap();
+    let usage_rows = common::helpers::find_usages_rows(&usages);
 
     // Order is used in:
     // - models.rs (definition, methods)
@@ -417,14 +424,14 @@ fn test_rename_domain_model_impact() {
     // - lib.rs (re-export)
 
     assert!(
-        usage_list.len() >= 10,
+        usage_rows.len() >= 10,
         "Renaming Order would affect at least 10 locations"
     );
 
     // Verify it spans all architectural layers
-    let files: std::collections::HashSet<_> = usage_list
+    let files: std::collections::HashSet<_> = usage_rows
         .iter()
-        .map(|u| u["file"].as_str().unwrap())
+        .filter_map(|row| row.first().cloned())
         .collect();
     assert!(files.len() >= 5, "Order is used across at least 5 files");
 }
@@ -446,11 +453,11 @@ fn test_extract_interface_from_concrete_repository() {
     let call_result = result.unwrap();
     let text = common::get_result_text(&call_result);
     let usages: serde_json::Value = serde_json::from_str(&text).unwrap();
-    let usage_list = usages["usages"].as_array().unwrap();
+    let usage_rows = common::helpers::find_usages_rows(&usages);
 
     // Should find definition and any direct usages
     // (In this architecture, it's used via trait bounds, so might be few direct usages)
-    assert!(usage_list.len() >= 1, "Should find at least the definition");
+    assert!(usage_rows.len() >= 1, "Should find at least the definition");
 }
 
 // ============================================================================
@@ -535,14 +542,14 @@ fn test_find_all_implementations_of_trait() {
     let call_result = result.unwrap();
     let text = common::get_result_text(&call_result);
     let usages: serde_json::Value = serde_json::from_str(&text).unwrap();
-    let usage_list = usages["usages"].as_array().unwrap();
+    let usage_rows = common::helpers::find_usages_rows(&usages);
 
     // Should find:
     // 1. Trait definition
     // 2. Implementation for InMemoryUserRepository
     // 3. Usage in OrderService generic bounds
     assert!(
-        usage_list.len() >= 2,
+        usage_rows.len() >= 2,
         "Should find trait definition and implementation"
     );
 }
@@ -573,8 +580,8 @@ fn test_code_map_on_nested_module_structure() {
     // Should handle nested structure: src/domain/models.rs, src/application/services.rs, etc.
     assert!(text.len() > 1000, "Should generate substantial output");
 
-    // Should show multiple files (JSON output is typically one line)
-    let file_count = text.matches("\"path\"").count();
+    let map: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let file_count = common::helpers::code_map_files(&map).len();
     eprintln!("File count: {}", file_count);
     assert!(file_count >= 2, "Should show at least some files");
 }

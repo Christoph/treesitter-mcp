@@ -21,7 +21,7 @@ fn default_one() -> Option<u32> {
 /// View a source file with flexible detail levels and automatic type inclusion
 #[mcp_tool(
     name = "view_code",
-    description = "View file with flexible detail levels. Returns code/signatures with automatic project type inclusion to prevent hallucinations. USE WHEN: ✅ Need to view/edit a file ✅ Want type definitions from dependencies ✅ Need full code or just signatures. DETAIL LEVELS: 'signatures' (skeleton only), 'full' (complete code). FOCUS: Set focus_symbol to get full code for one symbol + signatures for rest. AUTO-INCLUDES: All struct/class/interface definitions from project dependencies (not external libs). TOKEN COST: MEDIUM-HIGH. WORKFLOW: code_map → view_code"
+    description = "View file in compact schema (BREAKING). Output keys: `p` (relative path), `h` (header for f/s/c rows), `f` (functions rows), `s` (structs rows), `c` (classes rows), optional deps `deps` (map dep_path -> type rows), plus optional tables: imports `ih`+`im`, trait methods `th`+`tm`, interfaces `ah`+`i`, properties `ph`+`pr`, class implements `ch`+`ci`, class methods `mh`+`cm`, Rust impl methods `bh`+`bm`. Rows are newline-delimited; fields are pipe-delimited and escaped: `\\` -> `\\\\`, `\n` -> `\\n`, `\r` -> `\\r`, `|` -> `\\|`. Meta: `@.t=true` when truncated. DETAIL: 'signatures' (name/line/sig), 'full' (adds doc/code). FOCUS: set focus_symbol to keep code only for that symbol."
 )]
 #[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
 pub struct ViewCode {
@@ -257,7 +257,7 @@ impl QueryPattern {
 /// WORKFLOW: template_context → edit template with known variables
 #[mcp_tool(
     name = "template_context",
-    description = "Find Rust structs associated with an Askama template file. Returns struct names, fields, and types (resolved up to 3 levels deep) that are available as variables in the template. Use this when editing templates to know what variables can be used and their types."
+    description = "Find Askama template context in compact schema (BREAKING). Output keys: `tpl` (relative template path), `h` (header), `ctx` (rows: struct|field|type), `sh` (header), `s` (rows: struct|file|line). Rows are newline-delimited; fields are pipe-delimited and escaped: `\\` -> `\\\\`, `\n` -> `\\n`, `\r` -> `\\r`, `|` -> `\\|`."
 )]
 #[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
 pub struct TemplateContext {
@@ -278,7 +278,7 @@ impl TemplateContext {
 /// Generate a usage-sorted map of all project types. Returns structs, classes, enums, interfaces, traits, protocols, and type aliases prioritized by usage frequency.
 #[mcp_tool(
     name = "type_map",
-    description = "Generate a usage-sorted map of all project types. Returns structs, classes, enums, interfaces, traits, protocols, and type aliases prioritized by usage frequency across the codebase. Provides LLM agents with accurate type context to prevent hallucinations. USE WHEN: ✅ Starting an LLM coding session (context priming) ✅ Need accurate type definitions across entire project ✅ Want to understand which types are most important. DON'T USE: ❌ Need function/method implementations → use view_code ❌ Need call hierarchy or control flow → use code_map ❌ Analyzing a single file → use view_code. TOKEN COST: MEDIUM (2000-3000 tokens typical)."
+    description = "Generate a usage-sorted map of project types in compact schema (BREAKING). Output keys: `h` (header) and `types` (rows: name|kind|file|line|usage_count). Optional meta under `@` (e.g. `@.t=true` when truncated). Rows are newline-delimited; fields are pipe-delimited and escaped: `\\` -> `\\\\`, `\n` -> `\\n`, `\r` -> `\\r`, `|` -> `\\|`."
 )]
 #[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
 pub struct TypeMap {
