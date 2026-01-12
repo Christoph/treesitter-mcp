@@ -5,8 +5,8 @@
 
 use async_trait::async_trait;
 use rust_mcp_sdk::schema::{
-    schema_utils::CallToolError, CallToolRequestParams, CallToolResult,
-    ListToolsResult, PaginatedRequestParams, RpcError,
+    schema_utils::CallToolError, CallToolRequestParams, CallToolResult, ListToolsResult,
+    PaginatedRequestParams, RpcError,
 };
 use rust_mcp_sdk::{mcp_server::ServerHandler, McpServer};
 use std::sync::Arc;

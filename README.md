@@ -23,6 +23,7 @@ Tree-sitter MCP Server exposes powerful code analysis tools through the MCP prot
 - **Swift** (.swift)
 - **C#** (.cs)
 - **Java** (.java)
+- **Go** (.go)
 
 ## Installation
 
@@ -61,7 +62,7 @@ Add the `treesitter-mcp` entry to `mcpServers`:
 {
   "mcpServers": {
     "treesitter-mcp": {
-      "command": "/ABSOLUTE/PATH/TO/treesitter-mcp/target/release/treesitter-mcp",
+      "command": "/ABSOLUTE/PATH/TO/treesitter-mcp",
       "args": []
     }
   }
@@ -75,7 +76,7 @@ Add the `treesitter-mcp` entry to `mcpServers`:
 For any other MCP client, configure it to run the binary directly:
 
 ```bash
-/path/to/treesitter-mcp/target/release/treesitter-mcp
+/path/to/treesitter-mcp
 ```
 
 Alternatively, you can run it via Cargo (slower startup):
@@ -87,11 +88,6 @@ cargo run --release --manifest-path /path/to/treesitter-mcp/Cargo.toml
 ## Running Manually
 
 The server communicates via `stdio` (standard input/output). You can run it manually to verify it starts (it will wait for JSON-RPC messages):
-
-```bash
-./target/release/treesitter-mcp
-```
-
 ## Available Tools
 
 ### Quick Tool Selection Guide
@@ -120,17 +116,17 @@ Choose the right tool for your task:
 
 | Tool | Scope | Token Cost | Speed | Best For |
 |------|-------|------------|-------|----------|
-| `type_map` | Directory | **Medium** | Fast | LLM context priming, finding key types |
+| `type_map` | Directory | Medium | Fast | LLM context priming, finding key types |
 | `code_map` | Directory | Medium | Fast | First-time exploration |
-| `view_code` (signatures) | Single file | **Low** | Fast | Quick overview, API understanding |
-| `view_code` (full) | Single file | **High** | Fast | Deep understanding, multiple functions |
+| `view_code` (signatures) | Single file | Low | Fast | Quick overview, API understanding |
+| `view_code` (full) | Single file | High | Fast | Deep understanding, multiple functions |
 | `view_code` (focused) | Single file | Medium | Fast | Editing specific function |
 | `find_usages` | Multi-file | Medium-High | Medium | Refactoring, impact analysis |
 | `affected_by_diff` | Multi-file | Medium-High | Medium | Post-change validation |
-| `parse_diff` | Single file | **Low-Medium** | Fast | Verify changes |
-| `symbol_at_line` | Single file | **Low** | Fast | Error debugging, scope lookup |
+| `parse_diff` | Single file | Low-Medium | Fast | Verify changes |
+| `symbol_at_line` | Single file | Low | Fast | Error debugging, scope lookup |
 | `query_pattern` | Single file | Medium | Medium | Complex patterns (advanced) |
-| `template_context` | Single file | **Low-Medium** | Fast | Askama template editing |
+| `template_context` | Single file | Low-Medium | Fast | Askama template editing |
 
 ### Common Workflow Patterns
 
@@ -209,14 +205,18 @@ Generate a usage-sorted map of all project types. Returns structs, classes, enum
 - `max_tokens` (integer, optional, default: 2000): Token budget (tiktoken counted)
 - `pattern` (string, optional): Glob filter (e.g., `"*.rs"`, `"src/**/*.ts"`)
 
-**Returns:** JSON with types sorted by usage count (descending), then name (ascending).
-- `name`: Type identifier
-- `kind`: `"struct"`, `"class"`, `"enum"`, `"trait"`, `"interface"`, `"protocol"`, `"type_alias"`, `"record"`, `"typed_dict"`, `"named_tuple"`
-- `signature`: Full declaration with visibility and generics
-- `usage_count`: Number of references across project
-- `fields`: For structs/classes (data members only)
-- `variants`: For enums
-- `members`: For traits/interfaces/protocols (methods + associated types)
+**Returns:** Compact schema (usage-sorted types)
+
+- Output keys: `h` (header) and `types` (rows: `name|kind|file|line|usage_count`)
+- Optional meta: `@` (e.g. `@.t=true` when truncated)
+- Rows are newline-delimited; fields are pipe-delimited and escaped (`\\`, `\n`, `\r`, `\|`)
+
+```json
+{
+  "h": "name|kind|file|line|usage_count",
+  "types": "User|struct|src/domain/models.rs|11|42\nOrder|struct|src/domain/models.rs|107|37"
+}
+```
 
 ---
 
@@ -246,59 +246,17 @@ View a source file with flexible detail levels and automatic type inclusion from
 
 **Auto-Includes**: All struct/class/interface definitions from project dependencies (not external libs)
 
-**Examples**:
+**Returns**: Compact schema (BREAKING).
 
-Quick overview (signatures only):
+- Output keys: `p` (relative path) plus row tables (`h`/`f`/`s`/`c`), and optional additional tables (`ih`/`im`, `bh`/`bm`, etc.)
+- Optional meta: `@` (e.g. `@.t=true` when truncated)
+
 ```json
 {
-  "file_path": "src/calculator.rs",
-  "detail": "signatures"
-}
-```
-
-Full implementation:
-```json
-{
-  "file_path": "src/calculator.rs",
-  "detail": "full"
-}
-```
-
-Focused editing (optimized):
-```json
-{
-  "file_path": "src/calculator.rs",
-  "detail": "full",
-  "focus_symbol": "add"
-}
-```
-
-**Returns**:
-```json
-{
-  "path": "src/calculator.rs",
-  "functions": [
-    {"name": "add", "signature": "pub fn add(a: i32, b: i32) -> i32", "line": 5, "code": "..."}
-  ],
-  "structs": [
-    {"name": "Calculator", "line": 15, "fields": [...]}
-  ],
-  "impl_blocks": [
-    {
-      "type_name": "Calculator",
-      "methods": [
-        {"name": "new", "signature": "pub fn new() -> Self", "line": 20}
-      ]
-    }
-  ],
-  "traits": [...],
-  "dependencies": [
-    {
-      "path": "src/models.rs",
-      "structs": [...],
-      "impl_blocks": [...]
-    }
-  ]
+  "p": "src/calculator.rs",
+  "h": "name|line|sig",
+  "f": "add|5|pub fn add(a: i32, b: i32) -> i32",
+  "s": "Calculator|15|pub struct Calculator"
 }
 ```
 
@@ -321,9 +279,9 @@ Generate hierarchical map of a DIRECTORY (not single file). Returns structure ov
 - ✅ You don't know which file to examine
 
 **Don't Use When:**
-- ❌ You know the specific file → use `file_shape` or `parse_file`
-- ❌ You need implementation details → use `parse_file` after identifying files
-- ❌ Analyzing a single file → use `file_shape`
+- ❌ You know the specific file → use `view_code`
+- ❌ You need implementation details → use `view_code` after identifying files
+- ❌ Analyzing a single file → use `view_code`
 
 **Token Cost:** MEDIUM (scales with project size)
 
@@ -345,23 +303,24 @@ Generate hierarchical map of a DIRECTORY (not single file). Returns structure ov
 
 **Optimization:** Start with `detail="minimal"` for large projects, use `pattern` to filter
 
-**Typical Workflow:** `code_map` → `file_shape` (specific files) → `parse_file`/`read_focused_code`
+**Typical Workflow:** `code_map` → `view_code` (signatures/full/focus)
 
-**Returns**: JSON object with aggregated file information:
+**Returns**: Compact schema keyed by relative file paths.
+
+- Top-level keys are file paths
+- Per-file keys: `h` + optional `f`/`s`/`c` row strings
+- Optional meta: `@` (e.g. `@.t=true` when truncated)
+
 ```json
 {
-  "files": [
-    {
-      "path": "src/main.rs",
-      "functions": ["main", "initialize"],
-      "structs": ["Config"]
-    },
-    {
-      "path": "src/parser.rs",
-      "functions": ["parse_code", "detect_language"]
-    }
-  ],
-  "truncated": false
+  "src/main.rs": {
+    "h": "name|line|sig",
+    "f": "main|10|fn main()\ninitialize|25|fn initialize()"
+  },
+  "src/config.rs": {
+    "h": "name|line|sig",
+    "s": "Config|5|pub struct Config"
+  }
 }
 ```
 
@@ -405,24 +364,16 @@ Find ALL usages of a symbol (function, variable, class, type) across files. Sema
 
 **Typical Workflow:** `find_usages` (before changes) → make changes → `affected_by_diff` (verify impact)
 
-**Returns**: JSON object with all usages:
+**Returns**: Compact schema.
+
+- Output keys: `sym` (symbol), `h` (header), `u` (usage rows)
+- Optional meta: `@` (e.g. `@.t=true` when truncated)
+
 ```json
 {
-  "symbol": "helper_fn",
-  "usages": [
-    {
-      "file": "src/main.rs",
-      "line": 42,
-      "column": 15,
-      "context": "let result = helper_fn();"
-    },
-    {
-      "file": "src/utils.rs",
-      "line": 18,
-      "column": 9,
-      "context": "helper_fn() + 10"
-    }
-  ]
+  "sym": "helper_fn",
+  "h": "file|line|col|type|context",
+  "u": "src/main.rs|42|15|call|let result = helper_fn();\nsrc/utils.rs|18|9|reference|helper_fn() + 10"
 }
 ```
 
@@ -458,20 +409,17 @@ Get symbol (function/class/method) at specific line with signature and scope cha
 }
 ```
 
-**Returns**: Symbol name, signature, kind, and enclosing scopes from innermost to outermost
+**Returns**: Compact schema.
+
+- Output keys: `sym` (symbol name), `kind` (abbrev), `sig` (signature), `l` (line), `scope` (scope chain)
+
 ```json
 {
-  "symbol": {
-    "name": "calculate",
-    "kind": "function",
-    "signature": "pub fn calculate(x: i32) -> i32",
-    "line": 40
-  },
-  "scope_chain": [
-    {"kind": "function", "name": "calculate"},
-    {"kind": "impl_block", "name": "Calculator"},
-    {"kind": "module", "name": "math"}
-  ]
+  "sym": "calculate",
+  "kind": "fn",
+  "sig": "pub fn calculate(x: i32) -> i32",
+  "l": 40,
+  "scope": "math::Calculator::calculate"
 }
 ```
 
@@ -491,7 +439,7 @@ Analyze structural changes vs git revision. Returns symbol-level diff (functions
 
 **Don't Use When:**
 - ❌ You need to see what might break → use `affected_by_diff`
-- ❌ You haven't made changes yet → use `parse_file`
+- ❌ You haven't made changes yet → use `view_code`
 - ❌ You need line-by-line diff → use `git diff`
 
 **Token Cost:** LOW-MEDIUM (much smaller than re-reading file)
@@ -510,48 +458,16 @@ Analyze structural changes vs git revision. Returns symbol-level diff (functions
 
 **Typical Workflow:** After changes: `parse_diff` (verify) → `affected_by_diff` (check impact)
 
-**Returns**: JSON object with structural changes:
+**Returns**: Compact schema.
+
+- Output keys: `p` (relative file path), `cmp` (compare_to), `h` (header), `changes` (rows)
+
 ```json
 {
-  "file_path": "src/calculator.rs",
-  "compare_to": "HEAD",
-  "compare_to_sha": "abc123...",
-  "no_structural_change": false,
-  "structural_changes": [
-    {
-      "change_type": "signature_changed",
-      "symbol_type": "function",
-      "name": "add",
-      "line": 15,
-      "before": "fn add(a: i32, b: i32) -> i32",
-      "after": "fn add(a: i64, b: i64) -> i64",
-      "details": [
-        {
-          "kind": "parameter_changed",
-          "name": "param_0",
-          "from": "a: i32",
-          "to": "a: i64"
-        },
-        {
-          "kind": "return_type",
-          "from": "i32",
-          "to": "i64"
-        }
-      ]
-    },
-    {
-      "change_type": "added",
-      "symbol_type": "function",
-      "name": "multiply",
-      "line": 25,
-      "after": "fn multiply(a: i64, b: i64) -> i64"
-    }
-  ],
-  "summary": {
-    "added": 1,
-    "removed": 0,
-    "modified": 1
-  }
+  "p": "src/calculator.rs",
+  "cmp": "HEAD",
+  "h": "type|name|line|change",
+  "changes": "fn|add|15|sig_changed: fn add(a: i64, b: i64) -> i64\nfn|multiply|25|added"
 }
 ```
 
@@ -598,44 +514,16 @@ Find usages AFFECTED by your changes. Combines `parse_diff` + `find_usages` to s
 
 **Typical Workflow:** `parse_diff` (see changes) → `affected_by_diff` (assess impact) → fix issues
 
-**Returns**: JSON object with affected usages and risk levels:
+**Returns**: Compact schema.
+
+- Output keys: `p` (relative file path), `h` (header), `affected` (rows)
+- `risk` is one of: `high` | `medium` | `low`
+
 ```json
 {
-  "file_path": "src/calculator.rs",
-  "compare_to": "HEAD",
-  "affected_changes": [
-    {
-      "symbol": "add",
-      "change_type": "signature_changed",
-      "change_details": "fn add(a: i64, b: i64) -> i64",
-      "potentially_affected": [
-        {
-          "file": "src/main.rs",
-          "line": 42,
-          "column": 15,
-          "usage_type": "call",
-          "code": "let sum = add(x, y);",
-          "risk": "high",
-          "reason": "Call site may pass wrong argument types"
-        },
-        {
-          "file": "tests/calculator_test.rs",
-          "line": 15,
-          "column": 12,
-          "usage_type": "call",
-          "code": "assert_eq!(add(1, 2), 3);",
-          "risk": "high",
-          "reason": "Call site may pass wrong argument types"
-        }
-      ]
-    }
-  ],
-  "summary": {
-    "high_risk": 2,
-    "medium_risk": 0,
-    "low_risk": 0,
-    "total_usages": 2
-  }
+  "p": "src/calculator.rs",
+  "h": "symbol|change|file|line|risk",
+  "affected": "add|sig_changed|src/main.rs|42|high\nadd|sig_changed|tests/calculator_test.rs|15|high"
 }
 ```
 
@@ -658,7 +546,7 @@ Execute custom tree-sitter S-expression query for advanced AST pattern matching.
 
 **Don't Use When:**
 - ❌ Finding function/variable usages → use `find_usages` (simpler, cross-language)
-- ❌ You don't know tree-sitter syntax → use `find_usages` or `parse_file`
+- ❌ You don't know tree-sitter syntax → use `find_usages` or `view_code`
 - ❌ Simple symbol search → use `find_usages`
 
 **Token Cost:** MEDIUM (depends on match count)
@@ -700,28 +588,15 @@ Execute custom tree-sitter S-expression query for advanced AST pattern matching.
 (use_declaration) @import
 ```
 
-**Returns**: JSON object with matches:
+**Returns**: Compact schema.
+
+- Output keys: `q` (query), `h` (header), `m` (match rows)
+
 ```json
 {
-  "query": "(function_item name: (identifier) @name)",
-  "matches": [
-    {
-      "line": 5,
-      "column": 8,
-      "text": "add",
-      "captures": {
-        "name": "add"
-      }
-    },
-    {
-      "line": 10,
-      "column": 8,
-      "text": "multiply",
-      "captures": {
-        "name": "multiply"
-      }
-    }
-  ]
+  "q": "(function_item name: (identifier) @name)",
+  "h": "file|line|col|text",
+  "m": "src/calculator.rs|5|8|add\nsrc/calculator.rs|10|8|multiply"
 }
 ```
 
@@ -752,28 +627,19 @@ Find Rust structs associated with an Askama template file. Returns struct names,
 }
 ```
 
-**Returns**: Struct names and fields with types
+**Returns**: Compact schema.
+
+- Output keys: `tpl` (relative template path)
+- Context rows: `h` + `ctx` (rows: `struct|field|type`)
+- Struct locations: `sh` + `s` (rows: `struct|file|line`)
+
 ```json
 {
-  "structs": [
-    {
-      "name": "CalculatorContext",
-      "fields": [
-        {
-          "name": "result",
-          "type": "i32"
-        },
-        {
-          "name": "history",
-          "type": "Vec<HistoryEntry>",
-          "nested_fields": [
-            {"name": "operation", "type": "String"},
-            {"name": "value", "type": "i32"}
-          ]
-        }
-      ]
-    }
-  ]
+  "tpl": "templates/calculator.html",
+  "h": "struct|field|type",
+  "ctx": "CalculatorContext|result|i32\nCalculatorContext|history|Vec<HistoryEntry>",
+  "sh": "struct|file|line",
+  "s": "CalculatorContext|src/templates.rs|12"
 }
 ```
 
@@ -785,7 +651,7 @@ Find Rust structs associated with an Askama template file. Returns struct names,
 
 - **Parsing**: Tree-sitter parsers are highly optimized and can handle large files efficiently
 - **Token Limits**: The `code_map` tool respects token budgets to avoid overwhelming AI context windows
-- **Caching**: Parsed trees are not cached between requests; consider using `file_shape` for repeated queries
+- **Caching**: Parsed trees are not cached between requests; prefer `view_code` with `detail="signatures"` for repeated lightweight reads
 - **Directory Traversal**: Automatically skips hidden files, `target/`, and `node_modules/`
 
 ## Contributing

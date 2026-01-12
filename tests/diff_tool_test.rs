@@ -111,6 +111,44 @@ fn test_parse_diff_function_added() {
 }
 
 #[test]
+fn test_parse_diff_go_function_added() {
+    let dir = setup_git_repo();
+
+    commit_file(
+        &dir,
+        "lib.go",
+        "package main\n\nfunc add(a int, b int) int { return a + b }\n",
+    );
+
+    fs::write(
+        dir.path().join("lib.go"),
+        "package main\n\nfunc add(a int, b int) int { return a + b }\nfunc subtract(a int, b int) int { return a - b }\n",
+    )
+    .unwrap();
+
+    let file_path = dir.path().join("lib.go");
+    let arguments = json!({
+        "file_path": file_path.to_str().unwrap(),
+        "compare_to": "HEAD"
+    });
+
+    let result = treesitter_mcp::analysis::diff::execute_parse_diff(&arguments);
+    assert!(result.is_ok());
+
+    let text = common::get_result_text(&result.unwrap());
+    let analysis: serde_json::Value = serde_json::from_str(&text).unwrap();
+
+    let changes = rows(&analysis, "changes");
+    assert!(
+        changes
+            .iter()
+            .any(|r| r.get(1).map(|s| s.as_str()) == Some("subtract")
+                && r.get(3).map(|s| s.as_str()) == Some("added")),
+        "Should include subtract as added"
+    );
+}
+
+#[test]
 fn test_parse_diff_signature_changed() {
     let dir = setup_git_repo();
 

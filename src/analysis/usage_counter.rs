@@ -85,7 +85,7 @@ fn language_for_path(path: &Path) -> CountLanguage {
         "rs" => CountLanguage::Rust,
         "py" => CountLanguage::Python,
         "js" | "jsx" | "mjs" | "cjs" | "ts" | "tsx" => CountLanguage::JavaScript,
-        "java" | "cs" | "c" | "h" | "cpp" | "hpp" | "cc" => CountLanguage::CLike,
+        "go" | "java" | "cs" | "c" | "h" | "cpp" | "hpp" | "cc" => CountLanguage::CLike,
         _ => CountLanguage::Plain,
     }
 }
