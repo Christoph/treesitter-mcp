@@ -8,13 +8,13 @@ mod tools;
 
 use handler::TreesitterServerHandler;
 use rust_mcp_sdk::schema::{
-    Implementation, InitializeResult, ServerCapabilities, ServerCapabilitiesTools,
-    LATEST_PROTOCOL_VERSION,
+    Implementation, InitializeResult, ProtocolVersion, ServerCapabilities,
+    ServerCapabilitiesTools,
 };
 use rust_mcp_sdk::{
     error::SdkResult,
-    mcp_server::{server_runtime, ServerRuntime},
-    McpServer, StdioTransport, TransportOptions,
+    mcp_server::{server_runtime, McpServerOptions, ServerRuntime},
+    McpServer, StdioTransport, ToMcpServerHandler, TransportOptions,
 };
 use std::sync::Arc;
 
@@ -31,6 +31,12 @@ async fn main() -> SdkResult<()> {
             name: env!("CARGO_PKG_NAME").to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
             title: Some("Tree-sitter MCP Server".to_string()),
+            description: Some(
+                "A high-performance MCP server for tree-sitter code analysis operations."
+                    .to_string(),
+            ),
+            icons: vec![],
+            website_url: None,
         },
         capabilities: ServerCapabilities {
             tools: Some(ServerCapabilitiesTools { list_changed: None }),
@@ -40,7 +46,7 @@ async fn main() -> SdkResult<()> {
         instructions: Some(
             "A high-performance MCP server for tree-sitter code analysis operations.".to_string(),
         ),
-        protocol_version: LATEST_PROTOCOL_VERSION.to_string(),
+        protocol_version: ProtocolVersion::V2025_11_25.into(),
     };
 
     // Create stdio transport
@@ -50,8 +56,13 @@ async fn main() -> SdkResult<()> {
     let handler = TreesitterServerHandler::new();
 
     // Create and start MCP server
-    let server: Arc<ServerRuntime> =
-        server_runtime::create_server(server_details, transport, handler);
+    let server: Arc<ServerRuntime> = server_runtime::create_server(McpServerOptions {
+        server_details,
+        transport,
+        handler: handler.to_mcp_server_handler(),
+        task_store: None,
+        client_task_store: None,
+    });
 
     if let Err(start_error) = server.start().await {
         eprintln!(
