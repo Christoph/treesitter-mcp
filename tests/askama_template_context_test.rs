@@ -2,6 +2,8 @@ use std::path::PathBuf;
 
 mod common;
 
+use serde_json::json;
+
 #[test]
 fn test_find_single_template_struct() {
     // RED: This test will fail because askama module doesn't exist yet
@@ -352,5 +354,46 @@ fn test_no_template_structs_found() {
         structs.len(),
         0,
         "Should return empty vector for non-existent template"
+    );
+}
+
+#[test]
+fn test_template_context_execute_compact_schema() {
+    let fixture_path = PathBuf::from("tests/fixtures/askama_project");
+    let template_path = fixture_path.join("templates/calculator.html");
+
+    let args = json!({"template_path": template_path.to_string_lossy()});
+    let result = treesitter_mcp::analysis::askama::execute(&args).expect("execute should succeed");
+
+    let text = common::get_result_text(&result);
+    let output: serde_json::Value = serde_json::from_str(&text).expect("valid json");
+
+    let tpl = output.get("tpl").and_then(|v| v.as_str()).unwrap_or("");
+    common::helpers::assert_path_is_relative(tpl);
+    assert!(tpl.contains("templates/calculator.html"));
+
+    assert_eq!(
+        output.get("h").and_then(|v| v.as_str()),
+        Some("struct|field|type")
+    );
+    let ctx = output.get("ctx").and_then(|v| v.as_str()).unwrap_or("");
+    assert!(ctx.contains("CalculatorTemplate"));
+    assert!(ctx.contains("result"));
+    assert!(ctx.contains("history"));
+
+    assert_eq!(
+        output.get("sh").and_then(|v| v.as_str()),
+        Some("struct|file|line")
+    );
+    let s_rows = output.get("s").and_then(|v| v.as_str()).unwrap_or("");
+    let rows = common::helpers::parse_compact_rows(s_rows);
+    assert!(
+        rows.iter().any(|r| {
+            r.get(0).map(|s| s.as_str()) == Some("CalculatorTemplate")
+                && r.get(1)
+                    .map(|p| p.contains("tests/fixtures/askama_project/src/templates.rs"))
+                    .unwrap_or(false)
+        }),
+        "Should include CalculatorTemplate location"
     );
 }

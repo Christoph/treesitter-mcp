@@ -95,7 +95,7 @@ fn test_parse_file_returns_relative_path() {
     let text = common::get_result_text(&call_result);
     let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-    let path = shape["path"].as_str().unwrap();
+    let path = shape["p"].as_str().unwrap();
 
     // Should NOT contain absolute path markers
     assert!(
@@ -134,7 +134,7 @@ fn test_file_shape_returns_relative_path() {
     let text = common::get_result_text(&call_result);
     let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-    let path = shape["path"].as_str().unwrap();
+    let path = shape["p"].as_str().unwrap();
 
     // Should NOT contain absolute path markers
     assert!(
@@ -173,25 +173,7 @@ fn test_code_map_returns_relative_paths() {
     let text = common::get_result_text(&call_result);
     let map: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-    let files = map["files"].as_array().unwrap();
-    assert!(files.len() > 0, "Should find at least one file");
-
-    // Check that all file paths are relative
-    for file in files {
-        let path = file["path"].as_str().unwrap();
-        assert!(
-            is_relative_path(path),
-            "File path should be relative, got: {}",
-            path
-        );
-
-        // Should contain recognizable path components
-        assert!(
-            path.contains("src") || path.contains("calculator") || path.contains("models"),
-            "Should contain relative path structure, got: {}",
-            path
-        );
-    }
+    common::helpers::assert_all_code_map_paths_relative(&map);
 }
 
 // ============================================================================
@@ -216,25 +198,7 @@ fn test_find_usages_returns_relative_paths() {
     let text = common::get_result_text(&call_result);
     let usages: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-    let usage_list = usages["usages"].as_array().unwrap();
-    assert!(usage_list.len() > 0, "Should find at least one usage");
-
-    // Check that all file paths are relative
-    for usage in usage_list {
-        let file = usage["file"].as_str().unwrap();
-        assert!(
-            is_relative_path(file),
-            "File path should be relative, got: {}",
-            file
-        );
-
-        // Should contain recognizable path components
-        assert!(
-            file.contains("src") || file.contains("calculator") || file.contains("models"),
-            "Should contain relative path structure, got: {}",
-            file
-        );
-    }
+    common::helpers::assert_all_find_usages_paths_relative(&usages);
 }
 
 // ============================================================================
@@ -266,7 +230,7 @@ pub fn add(a: i32, b: i32) -> i32 {
     let text = common::get_result_text(&call_result);
     let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-    let path = shape["path"].as_str().unwrap();
+    let path = shape["p"].as_str().unwrap();
 
     // Should be relative to git root
     assert!(
@@ -310,7 +274,7 @@ fn test_relative_path_strips_absolute_markers() {
         let text = common::get_result_text(&call_result);
         let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-        let path = shape["path"].as_str().unwrap();
+        let path = shape["p"].as_str().unwrap();
 
         // Then: No absolute path markers
         assert!(
@@ -361,7 +325,7 @@ fn test_relative_path_preserves_structure() {
     let text = common::get_result_text(&call_result);
     let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-    let path = shape["path"].as_str().unwrap();
+    let path = shape["p"].as_str().unwrap();
 
     // Then: Path structure is preserved
     // Should be able to identify the file location from the relative path
@@ -398,7 +362,7 @@ fn test_relative_path_multiple_tools_consistent() {
 
     let parse_file_text = common::get_result_text(&parse_file_result.unwrap());
     let parse_file_shape: serde_json::Value = serde_json::from_str(&parse_file_text).unwrap();
-    let parse_file_path = parse_file_shape["path"].as_str().unwrap();
+    let parse_file_path = parse_file_shape["p"].as_str().unwrap();
 
     // When: file_shape is called
     let file_shape_args = json!({
@@ -410,7 +374,7 @@ fn test_relative_path_multiple_tools_consistent() {
 
     let file_shape_text = common::get_result_text(&file_shape_result.unwrap());
     let file_shape_shape: serde_json::Value = serde_json::from_str(&file_shape_text).unwrap();
-    let file_shape_path = file_shape_shape["path"].as_str().unwrap();
+    let file_shape_path = file_shape_shape["p"].as_str().unwrap();
 
     // When: code_map is called
     let code_map_args = json!({
@@ -422,12 +386,7 @@ fn test_relative_path_multiple_tools_consistent() {
 
     let code_map_text = common::get_result_text(&code_map_result.unwrap());
     let code_map_map: serde_json::Value = serde_json::from_str(&code_map_text).unwrap();
-    let code_map_files = code_map_map["files"].as_array().unwrap();
-    let code_map_calc_file = code_map_files
-        .iter()
-        .find(|f| f["path"].as_str().unwrap().contains("calculator.rs"))
-        .unwrap();
-    let code_map_path = code_map_calc_file["path"].as_str().unwrap();
+    let (code_map_path, _) = common::helpers::code_map_find_file(&code_map_map, "calculator.rs");
 
     // Then: All paths are relative and consistent
     assert!(
@@ -506,7 +465,7 @@ pub fn subtract(a: i32, b: i32) -> i32 {
     let text = common::get_result_text(&call_result);
     let analysis: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-    let file_path_result = analysis["file_path"].as_str().unwrap();
+    let file_path_result = analysis["p"].as_str().unwrap();
 
     assert!(
         is_relative_path(file_path_result),
@@ -587,21 +546,20 @@ pub fn add_to_calculator(calc: &mut Calculator, value: i32) {
     let analysis: serde_json::Value = serde_json::from_str(&text).unwrap();
 
     // Check main file_path
-    let file_path_result = analysis["file_path"].as_str().unwrap();
+    let file_path_result = analysis["p"].as_str().unwrap();
     assert!(
         is_relative_path(file_path_result),
         "file_path should be relative, got: {}",
         file_path_result
     );
 
-    // Check affected_changes file paths
-    if let Some(affected_changes) = analysis["affected_changes"].as_array() {
-        for change in affected_changes {
-            let affected_file = change["file"].as_str().unwrap();
+    // Check affected file paths from compact rows
+    for row in common::helpers::parse_compact_rows(analysis["affected"].as_str().unwrap_or("")) {
+        if let Some(file) = row.get(2) {
             assert!(
-                is_relative_path(affected_file),
+                is_relative_path(file),
                 "affected file path should be relative, got: {}",
-                affected_file
+                file
             );
         }
     }
@@ -627,7 +585,7 @@ fn test_relative_path_token_savings() {
     let text = common::get_result_text(&call_result);
     let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-    let relative_path = shape["path"].as_str().unwrap();
+    let relative_path = shape["p"].as_str().unwrap();
 
     // Then: Relative path is significantly shorter than absolute path
     let absolute_path = file_path.to_str().unwrap();
@@ -693,7 +651,7 @@ pub fn add(a: i32, b: i32) -> i32 {
     let text = common::get_result_text(&call_result);
     let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-    let path = shape["path"].as_str().unwrap();
+    let path = shape["p"].as_str().unwrap();
 
     // Should be relative (no absolute markers)
     assert!(

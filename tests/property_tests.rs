@@ -88,15 +88,12 @@ proptest! {
             let text = common::get_result_text(&call_result);
             let output: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-            // Should have symbol and scope_chain
-            prop_assert!(output["symbol"].is_object(), "Should have symbol");
+            prop_assert!(output["sym"].is_string(), "Should have sym");
+            prop_assert!(output["scope"].is_string(), "Should have scope");
+            prop_assert!(output["kind"].is_string(), "Should have kind");
 
-            let scope_chain = output["scope_chain"].as_array().unwrap();
-            prop_assert!(!scope_chain.is_empty(), "Should have at least one scope");
-
-            // Outermost scope should have kind
-            let outermost = scope_chain.last().unwrap();
-            prop_assert!(outermost["kind"].is_string(), "Outermost should have kind");
+            let scope = output["scope"].as_str().unwrap();
+            prop_assert!(!scope.is_empty(), "Scope should be non-empty");
         }
     }
 }
@@ -124,21 +121,14 @@ proptest! {
             let text = common::get_result_text(&call_result);
             let usages: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-            if let Some(usage_list) = usages["usages"].as_array() {
-                for usage in usage_list {
-                    // All usages should have a file path
-                    prop_assert!(usage["file"].is_string(), "Usage should have file");
+            for row in common::helpers::find_usages_rows(&usages) {
+                let file = row.get(0).cloned().unwrap_or_default();
+                let line = row.get(1).and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
+                let column = row.get(2).and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
 
-                    // All usages should have line and column
-                    prop_assert!(usage["line"].is_number(), "Usage should have line");
-                    prop_assert!(usage["column"].is_number(), "Usage should have column");
-
-                    // Line and column should be positive
-                    let line = usage["line"].as_u64().unwrap();
-                    let column = usage["column"].as_u64().unwrap();
-                    prop_assert!(line > 0, "Line should be positive");
-                    prop_assert!(column > 0, "Column should be positive");
-                }
+                prop_assert!(!file.is_empty(), "Usage should have file");
+                prop_assert!(line > 0, "Line should be positive");
+                prop_assert!(column > 0, "Column should be positive");
             }
         }
     }
@@ -188,7 +178,9 @@ fn test_parse_file_is_deterministic() {
     // Property: Calling parse_file multiple times should return identical results
     let file_path = common::fixture_path("rust", "src/calculator.rs");
     let arguments = json!({
-        "file_path": file_path.to_str().unwrap()
+        "file_path": file_path.to_str().unwrap(),
+        "include_deps": false,
+        "max_tokens": 10_000
     });
 
     let result1 = treesitter_mcp::analysis::view_code::execute(&arguments).unwrap();
@@ -242,17 +234,13 @@ proptest! {
             let text = common::get_result_text(&call_result);
             let usages: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-            if let Some(usage_list) = usages["usages"].as_array() {
-                for usage in usage_list {
-                    if let Some(code) = usage["code"].as_str() {
-                        let line_count = code.lines().count();
-                        // Code should have at most (2 * context_lines + 1) lines
-                        // (context before + target line + context after)
-                        prop_assert!(
-                            line_count <= (2 * context_lines as usize + 1) || context_lines == 0,
-                            "Code should respect context_lines parameter"
-                        );
-                    }
+            for row in common::helpers::find_usages_rows(&usages) {
+                if let Some(context) = row.get(4) {
+                    let line_count = context.lines().count();
+                    prop_assert!(
+                        line_count <= (2 * context_lines as usize + 1) || context_lines == 0,
+                        "Context should respect context_lines parameter"
+                    );
                 }
             }
         }
@@ -309,26 +297,25 @@ proptest! {
             let text = common::get_result_text(&call_result);
             let map: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-            // All detail levels should have files array
-            prop_assert!(map["files"].is_array(), "Should have files array");
-
-            let files = map["files"].as_array().unwrap();
+            let files = common::helpers::code_map_files(&map);
             if !files.is_empty() {
-                let first_file = &files[0];
+                let (_path, first_file) = files[0];
+                prop_assert!(first_file["h"].is_string(), "Should have header");
 
-                // All detail levels should have path
-                prop_assert!(first_file["path"].is_string(), "Should have path");
+                let header = first_file["h"].as_str().unwrap();
+                if detail == "minimal" {
+                    prop_assert_eq!(header, "name|line");
+                } else if detail == "signatures" {
+                    prop_assert_eq!(header, "name|line|sig");
+                } else {
+                    prop_assert_eq!(header, "name|line|sig|doc|code");
+                }
 
-                // Check detail-specific fields
-                if detail == "signatures" || detail == "full" {
-                    // Should have functions with signatures
-                    if let Some(functions) = first_file["functions"].as_array() {
-                        if !functions.is_empty() {
-                            // At least some functions should have signatures
-                            let has_signatures = functions.iter().any(|f| f["signature"].is_string());
-                            prop_assert!(has_signatures || detail == "minimal",
-                                "Signatures detail should include signatures");
-                        }
+                if detail != "minimal" {
+                    let rows = first_file.get("f").and_then(|v| v.as_str()).unwrap_or("");
+                    let parsed = common::helpers::parse_compact_rows(rows);
+                    if let Some(first_row) = parsed.first() {
+                        prop_assert!(first_row.len() >= 3);
                     }
                 }
             }
@@ -369,7 +356,9 @@ proptest! {
 
         let file_path = common::fixture_path(lang, file);
         let arguments = json!({
-            "file_path": file_path.to_str().unwrap()
+            "file_path": file_path.to_str().unwrap(),
+            "include_deps": false,
+            "max_tokens": 10_000
         });
 
         let result = treesitter_mcp::analysis::view_code::execute(&arguments);
@@ -381,11 +370,18 @@ proptest! {
             let text = common::get_result_text(&call_result);
             let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-            // Should have language field
-            prop_assert!(shape["language"].is_string(), "Should have language");
+            // Compact schema keys
+            prop_assert!(shape.get("p").and_then(|v| v.as_str()).is_some(), "Should have p");
+            prop_assert!(shape.get("h").and_then(|v| v.as_str()).is_some(), "Should have h");
 
-            // Should have functions array
-            prop_assert!(shape["functions"].is_array(), "Should have functions");
+            // Should have at least one symbol table
+            prop_assert!(
+                shape.get("f").is_some()
+                    || shape.get("s").is_some()
+                    || shape.get("c").is_some()
+                    || shape.get("i").is_some(),
+                "Should have at least one symbol table"
+            );
         }
     }
 }
@@ -413,15 +409,12 @@ proptest! {
             let text = common::get_result_text(&call_result);
             let usages: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-            if let Some(usage_list) = usages["usages"].as_array() {
-                for usage in usage_list {
-                    if let Some(line) = usage["line"].as_u64() {
-                        prop_assert!(line > 0, "Line numbers should be positive (1-indexed)");
-                    }
-                    if let Some(column) = usage["column"].as_u64() {
-                        prop_assert!(column > 0, "Column numbers should be positive (1-indexed)");
-                    }
-                }
+            for row in common::helpers::find_usages_rows(&usages) {
+                let line = row.get(1).and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
+                let column = row.get(2).and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
+
+                prop_assert!(line > 0, "Line numbers should be positive (1-indexed)");
+                prop_assert!(column > 0, "Column numbers should be positive (1-indexed)");
             }
         }
     }
@@ -447,11 +440,8 @@ fn test_empty_results_are_valid_json() {
     // Should be valid JSON
     let usages: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-    // Should have usages array (even if empty)
-    assert!(usages["usages"].is_array(), "Should have usages array");
-
-    // Should have symbol field
-    assert!(usages["symbol"].is_string(), "Should have symbol field");
+    assert!(usages["u"].is_string(), "Should have usage rows");
+    assert!(usages["sym"].is_string(), "Should have sym field");
 }
 
 // ============================================================================
@@ -477,14 +467,13 @@ proptest! {
             let text = common::get_result_text(&call_result);
             let usages: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-            if let Some(usage_list) = usages["usages"].as_array() {
-                if !usage_list.is_empty() {
-                    // At least one usage should have non-empty code
-                    let has_code = usage_list.iter().any(|u| {
-                        u["code"].as_str().map(|s| !s.is_empty()).unwrap_or(false)
-                    });
-                    prop_assert!(has_code, "Should have non-empty code when context_lines > 0");
-                }
+            let rows = common::helpers::find_usages_rows(&usages);
+            if !rows.is_empty() {
+                // At least one usage should have non-empty context
+                let has_context = rows
+                    .iter()
+                    .any(|row| row.get(4).map(|s| !s.is_empty()).unwrap_or(false));
+                prop_assert!(has_context, "Should have non-empty context when context_lines > 0");
             }
         }
     }

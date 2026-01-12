@@ -5,8 +5,8 @@
 
 use async_trait::async_trait;
 use rust_mcp_sdk::schema::{
-    schema_utils::CallToolError, CallToolRequest, CallToolResult, ListToolsRequest,
-    ListToolsResult, RpcError,
+    schema_utils::CallToolError, CallToolRequestParams, CallToolResult,
+    ListToolsResult, PaginatedRequestParams, RpcError,
 };
 use rust_mcp_sdk::{mcp_server::ServerHandler, McpServer};
 use std::sync::Arc;
@@ -32,7 +32,7 @@ impl TreesitterServerHandler {
 impl ServerHandler for TreesitterServerHandler {
     async fn handle_list_tools_request(
         &self,
-        _request: ListToolsRequest,
+        _request: Option<PaginatedRequestParams>,
         _runtime: Arc<dyn McpServer>,
     ) -> Result<ListToolsResult, RpcError> {
         Ok(ListToolsResult {
@@ -44,13 +44,13 @@ impl ServerHandler for TreesitterServerHandler {
 
     async fn handle_call_tool_request(
         &self,
-        request: CallToolRequest,
+        request: CallToolRequestParams,
         _runtime: Arc<dyn McpServer>,
     ) -> Result<CallToolResult, CallToolError> {
-        log::info!("Calling tool: {}", request.tool_name());
+        log::info!("Calling tool: {}", request.name);
 
         // Convert request params into the TreesitterTools enum
-        let tool: TreesitterTools = TreesitterTools::try_from(request.params)?;
+        let tool: TreesitterTools = TreesitterTools::try_from(request)?;
 
         // Match the tool variant and execute its corresponding logic
         match tool {

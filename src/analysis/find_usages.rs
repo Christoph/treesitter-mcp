@@ -1,36 +1,39 @@
 //! Find Usages Tool
 //!
-//! Searches for all usages of a symbol (function, struct, class) across files.
-//! Uses tree-sitter to parse and search for identifier nodes.
-//! Returns usage locations with code snippets, usage type classification, and AST node information.
+//! Searches for all usages of a symbol across files.
+//!
+//! Breaking schema change (v1):
+//! ```json
+//! {
+//!   "sym": "parse",
+//!   "h": "file|line|col|type|context",
+//!   "u": "src/main.rs|42|10|call|let x = parse(input)\n..."
+//! }
+//! ```
 
-use crate::analysis::path_utils;
-use crate::mcp_types::{CallToolResult, CallToolResultExt};
-use crate::parser::{detect_language, parse_code};
-use serde_json::Value;
 use std::fs;
 use std::io;
 use std::path::Path;
+
+use serde_json::json;
+use serde_json::Value;
 use tiktoken_rs::cl100k_base;
 use tree_sitter::{Node, Tree};
 
-#[derive(Debug, serde::Serialize)]
-struct FindUsagesResult {
-    symbol: String,
-    usages: Vec<Usage>,
-}
+use crate::analysis::path_utils;
+use crate::common::budget;
+use crate::common::budget::BudgetTracker;
+use crate::common::compact::CompactOutput;
+use crate::mcp_types::{CallToolResult, CallToolResultExt};
+use crate::parser::{detect_language, parse_code};
 
-#[derive(Debug, serde::Serialize, Clone)]
-struct Usage {
+#[derive(Debug, Clone)]
+struct UsageRow {
     file: String,
     line: usize,
     column: usize,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    usage_type: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    node_type: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    code: Option<String>,
+    usage_type: String,
+    context: String,
 }
 
 pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
@@ -59,25 +62,32 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
     log::info!("Finding usages of '{symbol}' in: {path_str}");
 
     let path = Path::new(path_str);
-
     if !path.exists() {
         return Err(io::Error::new(
             io::ErrorKind::NotFound,
-            format!("Path does not exist: {}", path_str),
+            format!("Path does not exist: {path_str}"),
         ));
     }
 
-    let mut usages = Vec::new();
+    let mut usages: Vec<UsageRow> = Vec::new();
+    let mut context_budget = ContextBudget::new(max_context_lines);
 
     if path.is_file() {
-        search_file(path, symbol, context_lines, &mut usages)?;
+        let _ = search_file(
+            path,
+            symbol,
+            context_lines,
+            &mut context_budget,
+            &mut usages,
+        )?;
     } else if path.is_dir() {
-        search_directory(path, symbol, context_lines, &mut usages)?;
-    }
-
-    // Apply context cap if specified
-    if let Some(max) = max_context_lines {
-        apply_context_cap(&mut usages, context_lines, max);
+        let _ = search_directory(
+            path,
+            symbol,
+            context_lines,
+            &mut context_budget,
+            &mut usages,
+        )?;
     }
 
     // Convert all file paths to relative paths
@@ -85,85 +95,81 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
         usage.file = path_utils::to_relative_path(&usage.file);
     }
 
-    let mut result = FindUsagesResult {
-        symbol: symbol.to_string(),
-        usages,
-    };
+    let header = "file|line|col|type|context";
 
-    if let Some(max_tokens) = max_tokens {
-        apply_token_budget(&mut result, max_tokens)?;
+    let (rows, truncated_by_budget) = build_rows_with_budget(
+        &usages,
+        header,
+        max_tokens.unwrap_or(usize::MAX),
+        max_tokens.is_some(),
+    )?;
+
+    let mut result = json!({
+        "sym": symbol,
+        "h": header,
+        "u": rows,
+    });
+
+    if truncated_by_budget {
+        result["@"] = json!({"t": true});
     }
 
-    let result_json = serde_json::to_string(&result).map_err(|e| {
+    let json_text = serde_json::to_string(&result).map_err(|e| {
         io::Error::new(
             io::ErrorKind::InvalidData,
             format!("Failed to serialize result to JSON: {e}"),
         )
     })?;
-    Ok(CallToolResult::success(result_json))
+
+    Ok(CallToolResult::success(json_text))
 }
 
-fn apply_token_budget(result: &mut FindUsagesResult, max_tokens: usize) -> Result<(), io::Error> {
+fn build_rows_with_budget(
+    usages: &[UsageRow],
+    header: &str,
+    max_tokens: usize,
+    enforce: bool,
+) -> Result<(String, bool), io::Error> {
+    if !enforce {
+        return Ok((usages_to_rows(usages, header), false));
+    }
+
     let bpe = cl100k_base()
         .map_err(|e| io::Error::other(format!("Failed to initialize tiktoken tokenizer: {e}")))?;
 
-    let mut json = serde_json::to_string(result).map_err(|e| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("Failed to serialize result to JSON: {e}"),
-        )
-    })?;
+    // 10% buffer for conservative estimate.
+    let mut tracker = BudgetTracker::new((max_tokens * 9) / 10);
 
-    if bpe.encode_with_special_tokens(&json).len() <= max_tokens {
-        return Ok(());
+    let mut kept: Vec<UsageRow> = Vec::new();
+    for usage in usages {
+        // Estimate without serialization (conservative).
+        let line = usage.line.to_string();
+        let column = usage.column.to_string();
+        let total_chars = usage.file.len()
+            + line.len()
+            + column.len()
+            + usage.usage_type.len()
+            + usage.context.len()
+            + 4;
+
+        let estimated = budget::estimate_symbol_tokens(total_chars);
+        if !tracker.add(estimated) {
+            break;
+        }
+        kept.push(usage.clone());
     }
 
-    // 1) Drop code snippets first
-    for usage in result.usages.iter_mut() {
-        usage.code = None;
-    }
+    let mut truncated = kept.len() < usages.len();
 
-    json = serde_json::to_string(result).map_err(|e| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("Failed to serialize result to JSON: {e}"),
-        )
-    })?;
-
-    if bpe.encode_with_special_tokens(&json).len() <= max_tokens {
-        return Ok(());
-    }
-
-    // 2) Drop usage_type + node_type
-    for usage in result.usages.iter_mut() {
-        usage.usage_type = None;
-        usage.node_type = None;
-    }
-
-    json = serde_json::to_string(result).map_err(|e| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("Failed to serialize result to JSON: {e}"),
-        )
-    })?;
-
-    if bpe.encode_with_special_tokens(&json).len() <= max_tokens {
-        return Ok(());
-    }
-
-    // 3) Truncate usages list (keep prefix)
-    let original = result.usages.len();
-    let mut low = 0usize;
-    let mut high = original;
-
-    while low < high {
-        let mid = (low + high) / 2;
-        let candidate = FindUsagesResult {
-            symbol: result.symbol.clone(),
-            usages: result.usages[..mid].to_vec(),
-        };
-
-        let candidate_json = serde_json::to_string(&candidate).map_err(|e| {
+    // Hard enforcement by truncating rows from the end until we fit.
+    loop {
+        let candidate_rows = usages_to_rows(&kept, header);
+        let candidate_json = serde_json::to_string(&json!({
+            "sym": "_",
+            "h": header,
+            "u": candidate_rows,
+        }))
+        .map_err(|e| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("Failed to serialize result to JSON: {e}"),
@@ -171,26 +177,76 @@ fn apply_token_budget(result: &mut FindUsagesResult, max_tokens: usize) -> Resul
         })?;
 
         if bpe.encode_with_special_tokens(&candidate_json).len() <= max_tokens {
-            low = mid + 1;
-        } else {
-            high = mid;
+            return Ok((candidate_rows, truncated));
+        }
+
+        if kept.pop().is_none() {
+            return Ok((String::new(), true));
+        }
+        truncated = true;
+    }
+}
+
+fn usages_to_rows(usages: &[UsageRow], header: &str) -> String {
+    let mut output = CompactOutput::new(header);
+
+    for usage in usages {
+        let line = usage.line.to_string();
+        let column = usage.column.to_string();
+
+        output.add_row(&[
+            &usage.file,
+            &line,
+            &column,
+            &usage.usage_type,
+            &usage.context,
+        ]);
+    }
+
+    output.rows_string()
+}
+
+struct ContextBudget {
+    max_total_lines: Option<u32>,
+    used_lines: u32,
+}
+
+impl ContextBudget {
+    fn new(max_total_lines: Option<u32>) -> Self {
+        Self {
+            max_total_lines,
+            used_lines: 0,
         }
     }
 
-    // `low` is first failing size
-    let keep = low.saturating_sub(1);
-    result.usages.truncate(keep);
+    fn can_add_lines(&self, additional: u32) -> bool {
+        match self.max_total_lines {
+            None => true,
+            Some(max) => self.used_lines + additional <= max,
+        }
+    }
 
-    Ok(())
+    fn add_lines(&mut self, additional: u32) -> bool {
+        if self.can_add_lines(additional) {
+            self.used_lines += additional;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn max_is_zero(&self) -> bool {
+        matches!(self.max_total_lines, Some(0))
+    }
 }
 
-/// Recursively search directory for symbol usages
 fn search_directory(
     dir: &Path,
     symbol: &str,
     context_lines: u32,
-    usages: &mut Vec<Usage>,
-) -> Result<(), io::Error> {
+    budget: &mut ContextBudget,
+    usages: &mut Vec<UsageRow>,
+) -> Result<bool, io::Error> {
     let entries = fs::read_dir(dir).map_err(|e| {
         io::Error::new(
             io::ErrorKind::NotFound,
@@ -202,7 +258,6 @@ fn search_directory(
         let entry = entry?;
         let path = entry.path();
 
-        // Skip hidden files and common ignore patterns
         if let Some(name) = path.file_name() {
             let name_str = name.to_string_lossy();
             if name_str.starts_with('.') || name_str == "target" || name_str == "node_modules" {
@@ -211,25 +266,27 @@ fn search_directory(
         }
 
         if path.is_file() {
-            // Only search files with detectable language
-            if detect_language(&path).is_ok() {
-                let _ = search_file(&path, symbol, context_lines, usages);
+            if detect_language(&path).is_ok()
+                && !search_file(&path, symbol, context_lines, budget, usages)?
+            {
+                return Ok(false);
             }
-        } else if path.is_dir() {
-            search_directory(&path, symbol, context_lines, usages)?;
+        } else if path.is_dir() && !search_directory(&path, symbol, context_lines, budget, usages)?
+        {
+            return Ok(false);
         }
     }
 
-    Ok(())
+    Ok(true)
 }
 
-/// Search for symbol usages in a single file
 fn search_file(
     path: &Path,
     symbol: &str,
     context_lines: u32,
-    usages: &mut Vec<Usage>,
-) -> Result<(), io::Error> {
+    budget: &mut ContextBudget,
+    usages: &mut Vec<UsageRow>,
+) -> Result<bool, io::Error> {
     let source = fs::read_to_string(path).map_err(|e| {
         io::Error::new(
             io::ErrorKind::NotFound,
@@ -243,6 +300,7 @@ fn search_file(
             format!("Cannot detect language for file {}: {e}", path.display()),
         )
     })?;
+
     let tree = parse_code(&source, language).map_err(|e| {
         io::Error::new(
             io::ErrorKind::InvalidData,
@@ -250,52 +308,78 @@ fn search_file(
         )
     })?;
 
-    find_identifiers(&tree, &source, symbol, path, context_lines, usages);
-
-    Ok(())
+    Ok(find_identifiers(
+        &tree,
+        &source,
+        symbol,
+        path,
+        context_lines,
+        budget,
+        usages,
+    ))
 }
 
-/// Find all identifier nodes matching the symbol name
 fn find_identifiers(
     tree: &Tree,
     source: &str,
     symbol: &str,
     path: &Path,
     context_lines: u32,
-    usages: &mut Vec<Usage>,
-) {
+    budget: &mut ContextBudget,
+    usages: &mut Vec<UsageRow>,
+) -> bool {
     let root = tree.root_node();
     let mut cursor = root.walk();
-
-    visit_node(&mut cursor, source, symbol, path, context_lines, usages);
+    visit_node(
+        &mut cursor,
+        source,
+        symbol,
+        path,
+        context_lines,
+        budget,
+        usages,
+    )
 }
 
-/// Recursively visit nodes to find matching identifiers
 fn visit_node(
     cursor: &mut tree_sitter::TreeCursor,
     source: &str,
     symbol: &str,
     path: &Path,
     context_lines: u32,
-    usages: &mut Vec<Usage>,
-) {
+    budget: &mut ContextBudget,
+    usages: &mut Vec<UsageRow>,
+) -> bool {
     let node = cursor.node();
 
-    // Check if this node is an identifier that matches our symbol
     if node.kind() == "identifier" || node.kind().ends_with("_identifier") {
         if let Ok(text) = node.utf8_text(source.as_bytes()) {
             if text == symbol {
                 let start_pos = node.start_position();
-                let usage_type = classify_usage_type(&node, source);
-                let code = extract_code_with_context(source, start_pos.row, context_lines);
+                let usage_type = classify_usage_type(&node);
 
-                usages.push(Usage {
+                let context = if budget.max_is_zero() {
+                    String::new()
+                } else {
+                    extract_code_with_context(source, start_pos.row, context_lines)
+                };
+
+                let context_line_count = if budget.max_is_zero() {
+                    0
+                } else {
+                    context.lines().count() as u32
+                };
+
+                if !budget.add_lines(context_line_count) {
+                    return false;
+                }
+
+                usages.push(UsageRow {
                     file: path.to_string_lossy().to_string(),
                     line: start_pos.row + 1,
                     column: start_pos.column + 1,
-                    usage_type: Some(usage_type),
-                    node_type: Some(node.kind().to_string()),
-                    code: Some(code),
+                    usage_type,
+                    context,
                 });
             }
         }
@@ -303,27 +387,28 @@ fn visit_node(
 
     if cursor.goto_first_child() {
         loop {
-            visit_node(cursor, source, symbol, path, context_lines, usages);
+            if !visit_node(cursor, source, symbol, path, context_lines, budget, usages) {
+                cursor.goto_parent();
+                return false;
+            }
             if !cursor.goto_next_sibling() {
                 break;
             }
         }
         cursor.goto_parent();
     }
+
+    true
 }
 
-/// Classify the usage type based on the node and its context
-/// Checks parent, grandparent, and great-grandparent nodes for better classification
-fn classify_usage_type(node: &Node, _source: &str) -> String {
-    // Check parent node to determine usage type
+fn classify_usage_type(node: &Node) -> String {
     if let Some(parent) = node.parent() {
         let parent_kind = parent.kind();
 
-        // Definition: function_item, struct_item, class_definition, etc.
         if parent_kind == "function_item"
             || parent_kind == "function_declaration"
             || parent_kind == "method_definition"
-            || parent_kind == "method_declaration" // C# methods
+            || parent_kind == "method_declaration"
             || parent_kind == "struct_item"
             || parent_kind == "class_definition"
             || parent_kind == "class_declaration"
@@ -334,7 +419,6 @@ fn classify_usage_type(node: &Node, _source: &str) -> String {
             return "definition".to_string();
         }
 
-        // Variable declarations: let, const, var
         if parent_kind == "let_declaration"
             || parent_kind == "const_item"
             || parent_kind == "static_item"
@@ -344,7 +428,6 @@ fn classify_usage_type(node: &Node, _source: &str) -> String {
             return "definition".to_string();
         }
 
-        // Import: use_declaration, import_statement, import_clause
         if parent_kind == "use_declaration"
             || parent_kind == "import_statement"
             || parent_kind == "import_clause"
@@ -353,7 +436,6 @@ fn classify_usage_type(node: &Node, _source: &str) -> String {
             return "import".to_string();
         }
 
-        // Call: call_expression, method_call_expression
         if parent_kind == "call_expression"
             || parent_kind == "method_call_expression"
             || parent_kind == "call"
@@ -361,7 +443,6 @@ fn classify_usage_type(node: &Node, _source: &str) -> String {
             return "call".to_string();
         }
 
-        // Type reference: type_annotation, type_identifier, generic_type
         if parent_kind == "type_annotation"
             || parent_kind == "type_identifier"
             || parent_kind == "generic_type"
@@ -371,11 +452,9 @@ fn classify_usage_type(node: &Node, _source: &str) -> String {
             return "type_reference".to_string();
         }
 
-        // Check grandparent for more context
         if let Some(grandparent) = parent.parent() {
             let grandparent_kind = grandparent.kind();
 
-            // Variable declarations in grandparent
             if grandparent_kind == "let_declaration"
                 || grandparent_kind == "const_item"
                 || grandparent_kind == "variable_declaration"
@@ -383,7 +462,6 @@ fn classify_usage_type(node: &Node, _source: &str) -> String {
                 return "definition".to_string();
             }
 
-            // Type reference in function parameters or return types
             if grandparent_kind == "parameter"
                 || grandparent_kind == "formal_parameter"
                 || grandparent_kind == "return_type"
@@ -391,17 +469,14 @@ fn classify_usage_type(node: &Node, _source: &str) -> String {
                 return "type_reference".to_string();
             }
 
-            // Call in method chain or nested calls
             if grandparent_kind == "call_expression" || grandparent_kind == "method_call_expression"
             {
                 return "call".to_string();
             }
 
-            // Check great-grandparent for destructuring patterns
             if let Some(great_grandparent) = grandparent.parent() {
                 let great_grandparent_kind = great_grandparent.kind();
 
-                // Destructuring in variable declarations
                 if great_grandparent_kind == "let_declaration"
                     || great_grandparent_kind == "const_item"
                     || great_grandparent_kind == "variable_declaration"
@@ -412,44 +487,15 @@ fn classify_usage_type(node: &Node, _source: &str) -> String {
         }
     }
 
-    // Default to reference for other cases
     "reference".to_string()
 }
 
-/// Extract code snippet with context lines around the target line
 fn extract_code_with_context(source: &str, line: usize, context_lines: u32) -> String {
     let lines: Vec<&str> = source.lines().collect();
     let context_lines = context_lines as usize;
 
     let start_line = line.saturating_sub(context_lines);
-
     let end_line = std::cmp::min(line + context_lines + 1, lines.len());
 
     lines[start_line..end_line].join("\n")
-}
-
-/// Apply context line cap by truncating usages if total exceeds max
-fn apply_context_cap(usages: &mut Vec<Usage>, context_per_usage: u32, max_total: u32) {
-    if usages.is_empty() {
-        return;
-    }
-
-    // Special case: if max is 0, remove all code but keep metadata
-    if max_total == 0 {
-        for usage in usages.iter_mut() {
-            usage.code = None;
-        }
-        return;
-    }
-
-    // Calculate lines per usage (context before + line + context after)
-    let lines_per_usage = (context_per_usage * 2) + 1;
-
-    // Calculate max usages we can include
-    let max_usages = (max_total / lines_per_usage).max(1) as usize;
-
-    // Truncate if we exceed the limit
-    if usages.len() > max_usages {
-        usages.truncate(max_usages);
-    }
 }

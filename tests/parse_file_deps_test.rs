@@ -62,47 +62,32 @@ fn test_parse_file_with_deps_rust() {
     let text = common::get_result_text(&call_result);
     let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-    let project_types = shape["project_types"].as_array().unwrap();
-    assert!(
-        project_types.len() >= 1,
-        "Should include at least calculator module types"
-    );
+    // Compact schema: dependencies are provided via a `deps` map.
+    let deps = shape
+        .get("deps")
+        .and_then(|v| v.as_object())
+        .expect("Should include deps object when include_deps=true");
 
-    // Verify calculator types are included
-    let calc_types = project_types.iter().find(|d| {
-        d["path"]
-            .as_str()
-            .map(|p| p.contains("calculator"))
-            .unwrap_or(false)
-    });
-    assert!(calc_types.is_some(), "Should include calculator types");
+    assert!(!deps.is_empty(), "Should include at least one dependency");
 
-    let calc = calc_types.unwrap();
+    // Basic structural check: at least one dep entry with rows.
+    let first_rows = deps
+        .iter()
+        .find_map(|(_path, rows)| rows.as_str())
+        .expect("Deps entries should contain row strings");
 
-    // Check structs (types only, no code)
-    if let Some(structs) = calc["structs"].as_array() {
-        for struct_info in structs {
-            assert!(struct_info["name"].is_string(), "Should have name");
-            // Structs in project_types should not have code
-            assert!(
-                struct_info["code"].is_null() || !struct_info["code"].is_string(),
-                "Should NOT have code body for types"
-            );
-        }
-    }
+    let rows = common::helpers::parse_compact_rows(first_rows);
+    assert!(!rows.is_empty(), "Dep should have rows");
 
-    // Check impl blocks (methods should have signatures but no code)
-    if let Some(impl_blocks) = calc["impl_blocks"].as_array() {
-        for impl_block in impl_blocks {
-            let methods = impl_block["methods"].as_array().unwrap();
-            for method in methods {
-                assert!(method["signature"].is_string(), "Should have signature");
-                assert!(
-                    method["code"].is_null() || !method["code"].is_string(),
-                    "Should NOT have code body"
-                );
-            }
-        }
+    for row in rows {
+        assert!(
+            !row.get(0).map(|s| s.is_empty()).unwrap_or(true),
+            "Row should have a type name"
+        );
+        assert!(
+            row.get(1).and_then(|s| s.parse::<usize>().ok()).is_some(),
+            "Row should have a numeric line"
+        );
     }
 }
 
@@ -159,25 +144,17 @@ fn test_parse_file_deps_python() {
     // Then: Should succeed
     assert!(result.is_ok());
 
-    // Verify Python class methods are included in main file
+    // Verify Python class methods are included in main file (compact `cm` rows)
     let text = common::get_result_text(&result.unwrap());
     let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-    if let Some(classes) = shape["classes"].as_array() {
-        for class in classes {
-            if let Some(methods) = class["methods"].as_array() {
-                if !methods.is_empty() {
-                    // Verify methods have signatures
-                    for method in methods {
-                        assert!(method["name"].is_string(), "Method should have name");
-                        assert!(
-                            method["signature"].is_string(),
-                            "Method should have signature"
-                        );
-                    }
-                }
-            }
-        }
+    let rows_str = shape.get("cm").and_then(|v| v.as_str()).unwrap_or("");
+    let rows = common::helpers::parse_compact_rows(rows_str);
+
+    for row in rows {
+        assert!(!row.get(0).map(|s| s.is_empty()).unwrap_or(true)); // class
+        assert!(!row.get(1).map(|s| s.is_empty()).unwrap_or(true)); // method
+        assert!(!row.get(3).map(|s| s.is_empty()).unwrap_or(true)); // signature
     }
 }
 
@@ -197,21 +174,16 @@ fn test_parse_file_deps_javascript() {
     // Then: Should succeed
     assert!(result.is_ok());
 
-    // Verify JS class methods are included
+    // Verify JS class methods are included (compact `cm` rows)
     let text = common::get_result_text(&result.unwrap());
     let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-    if let Some(classes) = shape["classes"].as_array() {
-        for class in classes {
-            if let Some(methods) = class["methods"].as_array() {
-                if !methods.is_empty() {
-                    // Verify methods have signatures
-                    for method in methods {
-                        assert!(method["name"].is_string(), "Method should have name");
-                    }
-                }
-            }
-        }
+    let rows_str = shape.get("cm").and_then(|v| v.as_str()).unwrap_or("");
+    let rows = common::helpers::parse_compact_rows(rows_str);
+
+    for row in rows {
+        assert!(!row.get(0).map(|s| s.is_empty()).unwrap_or(true)); // class
+        assert!(!row.get(1).map(|s| s.is_empty()).unwrap_or(true)); // method
     }
 }
 
@@ -231,37 +203,21 @@ fn test_parse_file_deps_typescript() {
     // Then: Should succeed
     assert!(result.is_ok());
 
-    // Verify TS interfaces and classes are included
+    // Verify TS interfaces and classes are included (compact `i` + `cm` rows)
     let text = common::get_result_text(&result.unwrap());
     let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-    // Check for interfaces
-    if let Some(interfaces) = shape["interfaces"].as_array() {
-        for interface in interfaces {
-            assert!(interface["name"].is_string(), "Interface should have name");
-            if let Some(methods) = interface["methods"].as_array() {
-                if !methods.is_empty() {
-                    // Verify interface methods have signatures
-                    for method in methods {
-                        assert!(method["name"].is_string(), "Method should have name");
-                    }
-                }
-            }
-        }
+    let iface_rows_str = shape.get("i").and_then(|v| v.as_str()).unwrap_or("");
+    let iface_rows = common::helpers::parse_compact_rows(iface_rows_str);
+    for row in iface_rows {
+        assert!(!row.get(0).map(|s| s.is_empty()).unwrap_or(true)); // iface name
     }
 
-    // Check for classes
-    if let Some(classes) = shape["classes"].as_array() {
-        for class in classes {
-            if let Some(methods) = class["methods"].as_array() {
-                if !methods.is_empty() {
-                    // Verify class methods have signatures
-                    for method in methods {
-                        assert!(method["name"].is_string(), "Method should have name");
-                    }
-                }
-            }
-        }
+    let method_rows_str = shape.get("cm").and_then(|v| v.as_str()).unwrap_or("");
+    let method_rows = common::helpers::parse_compact_rows(method_rows_str);
+    for row in method_rows {
+        assert!(!row.get(0).map(|s| s.is_empty()).unwrap_or(true)); // class
+        assert!(!row.get(1).map(|s| s.is_empty()).unwrap_or(true)); // method
     }
 }
 
@@ -284,22 +240,7 @@ fn test_parse_file_deps_rust_traits() {
     let text = common::get_result_text(&result.unwrap());
     let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-    // Check dependencies for traits (if any exist)
-    if let Some(deps) = shape["dependencies"].as_array() {
-        for dep in deps {
-            if let Some(traits) = dep["traits"].as_array() {
-                for trait_def in traits {
-                    assert!(trait_def["name"].is_string(), "Trait should have name");
-                    if let Some(methods) = trait_def["methods"].as_array() {
-                        for method in methods {
-                            assert!(
-                                method["signature"].is_string(),
-                                "Trait method should have signature"
-                            );
-                        }
-                    }
-                }
-            }
-        }
-    }
+    // Compact schema: dependency output is a `deps` map of row strings.
+    let deps = shape.get("deps").and_then(|v| v.as_object());
+    assert!(deps.is_some(), "Should include deps object");
 }

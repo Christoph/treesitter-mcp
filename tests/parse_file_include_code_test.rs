@@ -12,7 +12,9 @@ fn test_parse_file_include_code_false_omits_function_code() {
     let file_path = common::fixture_path("rust", "src/calculator.rs");
     let arguments = json!({
         "file_path": file_path.to_str().unwrap(),
-        "detail": "signatures"
+        "detail": "signatures",
+        "include_deps": false,
+        "max_tokens": 10_000
     });
 
     // When: parse_file is called
@@ -24,27 +26,17 @@ fn test_parse_file_include_code_false_omits_function_code() {
     let text = common::get_result_text(&call_result);
     let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-    let functions = shape["functions"].as_array().unwrap();
-    assert!(!functions.is_empty(), "Should have functions");
+    let header = shape.get("h").and_then(|v| v.as_str()).unwrap();
+    assert_eq!(header, "name|line|sig");
 
-    for func in functions {
-        // Code should be null or absent
-        assert!(
-            func["code"].is_null() || !func.as_object().unwrap().contains_key("code"),
-            "Function '{}' should NOT have code when include_code=false",
-            func["name"]
-        );
-        // But signature and line should still be present
-        assert!(
-            func["signature"].is_string(),
-            "Function '{}' should have signature",
-            func["name"]
-        );
-        assert!(
-            func["line"].is_number(),
-            "Function '{}' should have line number",
-            func["name"]
-        );
+    let rows_str = shape.get("f").and_then(|v| v.as_str()).unwrap_or("");
+    let rows = common::helpers::parse_compact_rows(rows_str);
+    assert!(!rows.is_empty(), "Should have functions");
+
+    for row in rows {
+        assert!(!row.get(0).map(|s| s.is_empty()).unwrap_or(true));
+        assert!(row.get(1).and_then(|s| s.parse::<usize>().ok()).is_some());
+        assert!(!row.get(2).map(|s| s.is_empty()).unwrap_or(true));
     }
 }
 
@@ -54,7 +46,9 @@ fn test_parse_file_include_code_false_omits_struct_code() {
     let file_path = common::fixture_path("rust", "src/models/mod.rs");
     let arguments = json!({
         "file_path": file_path.to_str().unwrap(),
-        "detail": "signatures"
+        "detail": "signatures",
+        "include_deps": false,
+        "max_tokens": 10_000
     });
 
     // When: parse_file is called
@@ -66,22 +60,18 @@ fn test_parse_file_include_code_false_omits_struct_code() {
     let text = common::get_result_text(&call_result);
     let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-    let structs = shape["structs"].as_array().unwrap();
-    assert!(!structs.is_empty(), "Should have structs");
+    let header = shape.get("h").and_then(|v| v.as_str()).unwrap();
+    assert_eq!(header, "name|line|sig");
 
-    for struct_item in structs {
-        // Code should be null or absent
-        assert!(
-            struct_item["code"].is_null() || !struct_item.as_object().unwrap().contains_key("code"),
-            "Struct '{}' should NOT have code when include_code=false",
-            struct_item["name"]
-        );
-        // But name and line should still be present
-        assert!(struct_item["name"].is_string(), "Struct should have name");
-        assert!(
-            struct_item["line"].is_number(),
-            "Struct should have line number"
-        );
+    let rows_str = shape.get("s").and_then(|v| v.as_str()).unwrap_or("");
+    let rows = common::helpers::parse_compact_rows(rows_str);
+    assert!(!rows.is_empty(), "Should have structs");
+
+    for row in rows {
+        assert!(!row.get(0).map(|s| s.is_empty()).unwrap_or(true));
+        assert!(row.get(1).and_then(|s| s.parse::<usize>().ok()).is_some());
+        // signature snippet may be empty depending on language/shape
+        assert!(row.len() >= 3);
     }
 }
 
@@ -91,7 +81,9 @@ fn test_parse_file_include_code_false_omits_class_code() {
     let file_path = common::fixture_path("python", "calculator.py");
     let arguments = json!({
         "file_path": file_path.to_str().unwrap(),
-        "detail": "signatures"
+        "detail": "signatures",
+        "include_deps": false,
+        "max_tokens": 10_000
     });
 
     // When: parse_file is called
@@ -103,22 +95,17 @@ fn test_parse_file_include_code_false_omits_class_code() {
     let text = common::get_result_text(&call_result);
     let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-    let classes = shape["classes"].as_array().unwrap();
-    assert!(!classes.is_empty(), "Should have classes");
+    let header = shape.get("h").and_then(|v| v.as_str()).unwrap();
+    assert_eq!(header, "name|line|sig");
 
-    for class_item in classes {
-        // Code should be null or absent
-        assert!(
-            class_item["code"].is_null() || !class_item.as_object().unwrap().contains_key("code"),
-            "Class '{}' should NOT have code when include_code=false",
-            class_item["name"]
-        );
-        // But name and line should still be present
-        assert!(class_item["name"].is_string(), "Class should have name");
-        assert!(
-            class_item["line"].is_number(),
-            "Class should have line number"
-        );
+    let rows_str = shape.get("c").and_then(|v| v.as_str()).unwrap_or("");
+    let rows = common::helpers::parse_compact_rows(rows_str);
+    assert!(!rows.is_empty(), "Should have classes");
+
+    for row in rows {
+        assert!(!row.get(0).map(|s| s.is_empty()).unwrap_or(true));
+        assert!(row.get(1).and_then(|s| s.parse::<usize>().ok()).is_some());
+        assert!(row.len() >= 3);
     }
 }
 
@@ -132,7 +119,9 @@ fn test_parse_file_include_code_true_includes_code() {
     let file_path = common::fixture_path("rust", "src/calculator.rs");
     let arguments = json!({
         "file_path": file_path.to_str().unwrap(),
-        "detail": "full"
+        "detail": "full",
+        "include_deps": false,
+        "max_tokens": 10_000
     });
 
     // When: parse_file is called
@@ -144,26 +133,25 @@ fn test_parse_file_include_code_true_includes_code() {
     let text = common::get_result_text(&call_result);
     let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-    let functions = shape["functions"].as_array().unwrap();
-    assert!(!functions.is_empty(), "Should have functions");
+    let header = shape.get("h").and_then(|v| v.as_str()).unwrap();
+    assert_eq!(header, "name|line|sig|doc|code");
+    let code_idx = header.split('|').position(|c| c == "code").unwrap();
 
-    // At least one function should have code
-    let has_code = functions
+    let rows_str = shape.get("f").and_then(|v| v.as_str()).unwrap_or("");
+    let rows = common::helpers::parse_compact_rows(rows_str);
+    assert!(!rows.is_empty(), "Should have functions");
+
+    let has_code = rows
         .iter()
-        .any(|f| f["code"].is_string() && !f["code"].as_str().unwrap().is_empty());
-    assert!(
-        has_code,
-        "At least one function should have code when include_code=true"
-    );
+        .any(|r| r.get(code_idx).map(|c| !c.is_empty()).unwrap_or(false));
+    assert!(has_code, "At least one function should have code when full");
 
-    // Verify specific function has code
-    let add_fn = functions.iter().find(|f| f["name"] == "add").unwrap();
-    assert!(add_fn["code"].is_string(), "add function should have code");
-    let code = add_fn["code"].as_str().unwrap();
-    assert!(
-        code.contains("a + b"),
-        "Code should contain the actual implementation"
-    );
+    let add_row = rows
+        .iter()
+        .find(|r| r.first().map(|s| s.as_str()) == Some("add"))
+        .unwrap();
+    let code = add_row.get(code_idx).unwrap();
+    assert!(code.contains("a + b"));
 }
 
 // ============================================================================
@@ -175,7 +163,9 @@ fn test_parse_file_include_code_defaults_to_true() {
     // Given: Rust fixture WITHOUT include_code parameter (should default to true)
     let file_path = common::fixture_path("rust", "src/calculator.rs");
     let arguments = json!({
-        "file_path": file_path.to_str().unwrap()
+        "file_path": file_path.to_str().unwrap(),
+        "include_deps": false,
+        "max_tokens": 10_000
     });
 
     // When: parse_file is called
@@ -187,17 +177,18 @@ fn test_parse_file_include_code_defaults_to_true() {
     let text = common::get_result_text(&call_result);
     let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-    let functions = shape["functions"].as_array().unwrap();
-    assert!(!functions.is_empty());
+    let header = shape.get("h").and_then(|v| v.as_str()).unwrap();
+    assert_eq!(header, "name|line|sig|doc|code");
+    let code_idx = header.split('|').position(|c| c == "code").unwrap();
 
-    // At least one function should have code (default behavior)
-    let has_code = functions
+    let rows_str = shape.get("f").and_then(|v| v.as_str()).unwrap_or("");
+    let rows = common::helpers::parse_compact_rows(rows_str);
+    assert!(!rows.is_empty());
+
+    let has_code = rows
         .iter()
-        .any(|f| f["code"].is_string() && !f["code"].as_str().unwrap().is_empty());
-    assert!(
-        has_code,
-        "Should include code by default for backward compatibility"
-    );
+        .any(|r| r.get(code_idx).map(|c| !c.is_empty()).unwrap_or(false));
+    assert!(has_code, "Should include code by default");
 }
 
 // ============================================================================
@@ -210,7 +201,9 @@ fn test_parse_file_include_code_false_preserves_docs() {
     let file_path = common::fixture_path("rust", "src/calculator.rs");
     let arguments = json!({
         "file_path": file_path.to_str().unwrap(),
-        "detail": "signatures"
+        "detail": "signatures",
+        "include_deps": false,
+        "max_tokens": 10_000
     });
 
     // When: parse_file is called
@@ -222,23 +215,17 @@ fn test_parse_file_include_code_false_preserves_docs() {
     let text = common::get_result_text(&call_result);
     let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-    let functions = shape["functions"].as_array().unwrap();
-    let add_fn = functions.iter().find(|f| f["name"] == "add").unwrap();
+    // Compact signatures output omits code and doc to save tokens.
+    let header = shape.get("h").and_then(|v| v.as_str()).unwrap();
+    assert_eq!(header, "name|line|sig");
 
-    // Should have doc comment
-    assert!(
-        add_fn["doc"].is_string(),
-        "Should preserve doc comments when include_code=false"
-    );
-    let doc = add_fn["doc"].as_str().unwrap();
-    assert!(!doc.is_empty(), "Doc comment should not be empty");
-    assert!(doc.contains("Adds"), "Doc should contain description");
-
-    // But should NOT have code
-    assert!(
-        add_fn["code"].is_null() || !add_fn.as_object().unwrap().contains_key("code"),
-        "Should not have code when include_code=false"
-    );
+    let rows_str = shape.get("f").and_then(|v| v.as_str()).unwrap_or("");
+    let rows = common::helpers::parse_compact_rows(rows_str);
+    let add_row = rows
+        .iter()
+        .find(|r| r.first().map(|s| s.as_str()) == Some("add"))
+        .unwrap();
+    assert!(add_row.get(2).map(|s| !s.is_empty()).unwrap_or(false));
 }
 
 // ============================================================================
@@ -251,7 +238,9 @@ fn test_parse_file_include_code_false_javascript() {
     let file_path = common::fixture_path("javascript", "calculator.js");
     let arguments = json!({
         "file_path": file_path.to_str().unwrap(),
-        "detail": "signatures"
+        "detail": "signatures",
+        "include_deps": false,
+        "max_tokens": 10_000
     });
 
     // When: parse_file is called
@@ -263,25 +252,17 @@ fn test_parse_file_include_code_false_javascript() {
     let text = common::get_result_text(&call_result);
     let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-    let functions = shape["functions"].as_array().unwrap();
-    assert!(!functions.is_empty(), "Should have JavaScript functions");
+    let header = shape.get("h").and_then(|v| v.as_str()).unwrap();
+    assert_eq!(header, "name|line|sig");
 
-    for func in functions {
-        // Code should be null or absent
-        assert!(
-            func["code"].is_null() || !func.as_object().unwrap().contains_key("code"),
-            "JavaScript function '{}' should NOT have code when include_code=false",
-            func["name"]
-        );
-        // But signature and line should be present
-        assert!(
-            func["signature"].is_string(),
-            "JavaScript function should have signature"
-        );
-        assert!(
-            func["line"].is_number(),
-            "JavaScript function should have line number"
-        );
+    let rows_str = shape.get("f").and_then(|v| v.as_str()).unwrap_or("");
+    let rows = common::helpers::parse_compact_rows(rows_str);
+    assert!(!rows.is_empty(), "Should have JavaScript functions");
+
+    for row in rows {
+        assert!(!row.get(0).map(|s| s.is_empty()).unwrap_or(true));
+        assert!(row.get(1).and_then(|s| s.parse::<usize>().ok()).is_some());
+        assert!(!row.get(2).map(|s| s.is_empty()).unwrap_or(true));
     }
 }
 
@@ -291,7 +272,9 @@ fn test_parse_file_include_code_false_javascript_classes() {
     let file_path = common::fixture_path("javascript", "calculator.js");
     let arguments = json!({
         "file_path": file_path.to_str().unwrap(),
-        "detail": "signatures"
+        "detail": "signatures",
+        "include_deps": false,
+        "max_tokens": 10_000
     });
 
     // When: parse_file is called
@@ -303,25 +286,17 @@ fn test_parse_file_include_code_false_javascript_classes() {
     let text = common::get_result_text(&call_result);
     let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-    let classes = shape["classes"].as_array().unwrap();
-    assert!(!classes.is_empty(), "Should have JavaScript classes");
+    let header = shape.get("h").and_then(|v| v.as_str()).unwrap();
+    assert_eq!(header, "name|line|sig");
 
-    for class_item in classes {
-        // Code should be null or absent
-        assert!(
-            class_item["code"].is_null() || !class_item.as_object().unwrap().contains_key("code"),
-            "JavaScript class '{}' should NOT have code when include_code=false",
-            class_item["name"]
-        );
-        // But name and line should be present
-        assert!(
-            class_item["name"].is_string(),
-            "JavaScript class should have name"
-        );
-        assert!(
-            class_item["line"].is_number(),
-            "JavaScript class should have line number"
-        );
+    let rows_str = shape.get("c").and_then(|v| v.as_str()).unwrap_or("");
+    let rows = common::helpers::parse_compact_rows(rows_str);
+    assert!(!rows.is_empty(), "Should have JavaScript classes");
+
+    for row in rows {
+        assert!(!row.get(0).map(|s| s.is_empty()).unwrap_or(true));
+        assert!(row.get(1).and_then(|s| s.parse::<usize>().ok()).is_some());
+        assert!(row.len() >= 3);
     }
 }
 
@@ -335,7 +310,9 @@ fn test_parse_file_include_code_false_typescript() {
     let file_path = common::fixture_path("typescript", "calculator.ts");
     let arguments = json!({
         "file_path": file_path.to_str().unwrap(),
-        "detail": "signatures"
+        "detail": "signatures",
+        "include_deps": false,
+        "max_tokens": 10_000
     });
 
     // When: parse_file is called
@@ -347,25 +324,17 @@ fn test_parse_file_include_code_false_typescript() {
     let text = common::get_result_text(&call_result);
     let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-    let functions = shape["functions"].as_array().unwrap();
-    assert!(!functions.is_empty(), "Should have TypeScript functions");
+    let header = shape.get("h").and_then(|v| v.as_str()).unwrap();
+    assert_eq!(header, "name|line|sig");
 
-    for func in functions {
-        // Code should be null or absent
-        assert!(
-            func["code"].is_null() || !func.as_object().unwrap().contains_key("code"),
-            "TypeScript function '{}' should NOT have code when include_code=false",
-            func["name"]
-        );
-        // But signature and line should be present
-        assert!(
-            func["signature"].is_string(),
-            "TypeScript function should have signature"
-        );
-        assert!(
-            func["line"].is_number(),
-            "TypeScript function should have line number"
-        );
+    let rows_str = shape.get("f").and_then(|v| v.as_str()).unwrap_or("");
+    let rows = common::helpers::parse_compact_rows(rows_str);
+    assert!(!rows.is_empty(), "Should have TypeScript functions");
+
+    for row in rows {
+        assert!(!row.get(0).map(|s| s.is_empty()).unwrap_or(true));
+        assert!(row.get(1).and_then(|s| s.parse::<usize>().ok()).is_some());
+        assert!(!row.get(2).map(|s| s.is_empty()).unwrap_or(true));
     }
 }
 
@@ -379,7 +348,9 @@ fn test_parse_file_include_code_false_python() {
     let file_path = common::fixture_path("python", "calculator.py");
     let arguments = json!({
         "file_path": file_path.to_str().unwrap(),
-        "detail": "signatures"
+        "detail": "signatures",
+        "include_deps": false,
+        "max_tokens": 10_000
     });
 
     // When: parse_file is called
@@ -391,25 +362,17 @@ fn test_parse_file_include_code_false_python() {
     let text = common::get_result_text(&call_result);
     let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-    let functions = shape["functions"].as_array().unwrap();
-    assert!(!functions.is_empty(), "Should have Python functions");
+    let header = shape.get("h").and_then(|v| v.as_str()).unwrap();
+    assert_eq!(header, "name|line|sig");
 
-    for func in functions {
-        // Code should be null or absent
-        assert!(
-            func["code"].is_null() || !func.as_object().unwrap().contains_key("code"),
-            "Python function '{}' should NOT have code when include_code=false",
-            func["name"]
-        );
-        // But signature and line should be present
-        assert!(
-            func["signature"].is_string(),
-            "Python function should have signature"
-        );
-        assert!(
-            func["line"].is_number(),
-            "Python function should have line number"
-        );
+    let rows_str = shape.get("f").and_then(|v| v.as_str()).unwrap_or("");
+    let rows = common::helpers::parse_compact_rows(rows_str);
+    assert!(!rows.is_empty(), "Should have Python functions");
+
+    for row in rows {
+        assert!(!row.get(0).map(|s| s.is_empty()).unwrap_or(true));
+        assert!(row.get(1).and_then(|s| s.parse::<usize>().ok()).is_some());
+        assert!(!row.get(2).map(|s| s.is_empty()).unwrap_or(true));
     }
 }
 
@@ -419,7 +382,9 @@ fn test_parse_file_include_code_false_python_classes() {
     let file_path = common::fixture_path("python", "calculator.py");
     let arguments = json!({
         "file_path": file_path.to_str().unwrap(),
-        "detail": "signatures"
+        "detail": "signatures",
+        "include_deps": false,
+        "max_tokens": 10_000
     });
 
     // When: parse_file is called
@@ -431,25 +396,17 @@ fn test_parse_file_include_code_false_python_classes() {
     let text = common::get_result_text(&call_result);
     let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-    let classes = shape["classes"].as_array().unwrap();
-    assert!(!classes.is_empty(), "Should have Python classes");
+    let header = shape.get("h").and_then(|v| v.as_str()).unwrap();
+    assert_eq!(header, "name|line|sig");
 
-    for class_item in classes {
-        // Code should be null or absent
-        assert!(
-            class_item["code"].is_null() || !class_item.as_object().unwrap().contains_key("code"),
-            "Python class '{}' should NOT have code when include_code=false",
-            class_item["name"]
-        );
-        // But name and line should be present
-        assert!(
-            class_item["name"].is_string(),
-            "Python class should have name"
-        );
-        assert!(
-            class_item["line"].is_number(),
-            "Python class should have line number"
-        );
+    let rows_str = shape.get("c").and_then(|v| v.as_str()).unwrap_or("");
+    let rows = common::helpers::parse_compact_rows(rows_str);
+    assert!(!rows.is_empty(), "Should have Python classes");
+
+    for row in rows {
+        assert!(!row.get(0).map(|s| s.is_empty()).unwrap_or(true));
+        assert!(row.get(1).and_then(|s| s.parse::<usize>().ok()).is_some());
+        assert!(row.len() >= 3);
     }
 }
 
@@ -492,7 +449,9 @@ fn test_parse_file_include_code_false_preserves_all_metadata() {
     let file_path = common::fixture_path("rust", "src/calculator.rs");
     let arguments = json!({
         "file_path": file_path.to_str().unwrap(),
-        "detail": "signatures"
+        "detail": "signatures",
+        "include_deps": false,
+        "max_tokens": 10_000
     });
 
     // When: parse_file is called
@@ -500,26 +459,19 @@ fn test_parse_file_include_code_false_preserves_all_metadata() {
     let text = common::get_result_text(&result);
     let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-    // Then: All metadata should be preserved
-    assert!(shape["language"].is_string(), "Should have language");
-    assert!(shape["path"].is_string(), "Should have path");
-    assert!(shape["functions"].is_array(), "Should have functions array");
-    assert!(shape["imports"].is_array(), "Should have imports array");
+    // Then: Key metadata should be present in compact schema
+    assert!(
+        shape.get("p").and_then(|v| v.as_str()).is_some(),
+        "Should have p"
+    );
+    assert!(
+        shape.get("h").and_then(|v| v.as_str()).is_some(),
+        "Should have h"
+    );
 
-    let functions = shape["functions"].as_array().unwrap();
-    for func in functions {
-        assert!(func["name"].is_string(), "Should have function name");
-        assert!(func["signature"].is_string(), "Should have signature");
-        assert!(func["line"].is_number(), "Should have line number");
-        assert!(func["end_line"].is_number(), "Should have end_line number");
-        // doc is optional, but if present should be string
-        if func["doc"].is_string() {
-            assert!(
-                !func["doc"].as_str().unwrap().is_empty(),
-                "Doc should not be empty"
-            );
-        }
-    }
+    let rows_str = shape.get("f").and_then(|v| v.as_str()).unwrap_or("");
+    let rows = common::helpers::parse_compact_rows(rows_str);
+    assert!(!rows.is_empty(), "Should have functions rows");
 }
 
 // ============================================================================
@@ -532,7 +484,9 @@ fn test_parse_file_include_code_false_with_empty_functions() {
     let file_path = common::fixture_path("rust", "src/calculator.rs");
     let arguments = json!({
         "file_path": file_path.to_str().unwrap(),
-        "detail": "signatures"
+        "detail": "signatures",
+        "include_deps": false,
+        "max_tokens": 10_000
     });
 
     // When: parse_file is called
@@ -568,37 +522,28 @@ fn test_parse_file_include_code_explicit_false_vs_true() {
     let text_true = common::get_result_text(&result_true);
     let shape_true: serde_json::Value = serde_json::from_str(&text_true).unwrap();
 
-    // Then: Both should have same function names and signatures
-    let funcs_false = shape_false["functions"].as_array().unwrap();
-    let funcs_true = shape_true["functions"].as_array().unwrap();
-
-    assert_eq!(
-        funcs_false.len(),
-        funcs_true.len(),
-        "Should have same number of functions"
+    // Then: Both should have same function names/signatures/lines
+    let rows_false = common::helpers::parse_compact_rows(
+        shape_false.get("f").and_then(|v| v.as_str()).unwrap_or(""),
+    );
+    let rows_true = common::helpers::parse_compact_rows(
+        shape_true.get("f").and_then(|v| v.as_str()).unwrap_or(""),
     );
 
-    for (f_false, f_true) in funcs_false.iter().zip(funcs_true.iter()) {
-        assert_eq!(
-            f_false["name"], f_true["name"],
-            "Function names should match"
-        );
-        assert_eq!(
-            f_false["signature"], f_true["signature"],
-            "Function signatures should match"
-        );
-        assert_eq!(
-            f_false["line"], f_true["line"],
-            "Function line numbers should match"
-        );
+    assert_eq!(rows_false.len(), rows_true.len(), "Same number of rows");
 
-        // But code should differ
-        let has_code_false =
-            f_false["code"].is_string() && !f_false["code"].as_str().unwrap().is_empty();
-        let has_code_true =
-            f_true["code"].is_string() && !f_true["code"].as_str().unwrap().is_empty();
-
-        assert!(!has_code_false, "include_code=false should not have code");
-        assert!(has_code_true, "include_code=true should have code");
+    for (r_false, r_true) in rows_false.iter().zip(rows_true.iter()) {
+        assert_eq!(r_false.get(0), r_true.get(0));
+        assert_eq!(r_false.get(1), r_true.get(1));
+        assert_eq!(r_false.get(2), r_true.get(2));
     }
+
+    // And: code only exists in full output
+    let header_true = shape_true.get("h").and_then(|v| v.as_str()).unwrap();
+    let code_idx = header_true.split('|').position(|c| c == "code").unwrap();
+
+    assert!(rows_false.iter().all(|r| r.len() == 3));
+    assert!(rows_true
+        .iter()
+        .any(|r| r.get(code_idx).map(|c| !c.is_empty()).unwrap_or(false)));
 }

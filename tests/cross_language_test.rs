@@ -18,42 +18,36 @@ fn test_parse_file_extracts_functions_from_all_languages() {
         (
             "rust",
             "src/calculator.rs",
-            "Rust",
             vec!["add", "subtract", "multiply", "divide"],
         ),
         (
             "python",
             "calculator.py",
-            "Python",
             vec!["add", "subtract", "multiply", "divide"],
         ),
         (
             "javascript",
             "calculator.js",
-            "JavaScript",
             vec!["add", "subtract", "multiply", "divide"],
         ),
         (
             "typescript",
             "calculator.ts",
-            "TypeScript",
             vec!["add", "subtract", "multiply", "divide"],
         ),
         (
             "csharp",
             "Calculator.cs",
-            "C#",
             vec!["Add", "Subtract", "Multiply", "Divide"],
         ),
         (
             "java",
             "Calculator.java",
-            "Java",
             vec!["add", "subtract", "multiply", "divide"],
         ),
     ];
 
-    for (lang, file, expected_lang, expected_funcs) in test_cases {
+    for (lang, file, expected_funcs) in test_cases {
         let file_path = common::fixture_path(lang, file);
         let arguments = json!({
             "file_path": file_path.to_str().unwrap()
@@ -64,13 +58,6 @@ fn test_parse_file_extracts_functions_from_all_languages() {
 
         let text = common::get_result_text(&result);
         let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
-
-        // Verify language
-        assert_eq!(
-            shape["language"], expected_lang,
-            "Wrong language for {}",
-            lang
-        );
 
         // Verify functions
         for func_name in expected_funcs {
@@ -100,17 +87,22 @@ fn test_parse_file_extracts_classes_from_all_languages() {
         let text = common::get_result_text(&result);
         let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-        // For Rust, classes are called "structs"
-        let classes = if lang == "rust" {
-            shape["structs"].as_array()
-        } else {
-            shape["classes"].as_array()
-        };
+        // For Rust, classes are emitted via the `s` table (structs).
+        // For other languages, use the `c` table (classes).
+        let table_key = if lang == "rust" { "s" } else { "c" };
+        let rows_str = shape.get(table_key).and_then(|v| v.as_str()).unwrap_or("");
 
-        let classes = classes.unwrap_or_else(|| panic!("Should have classes/structs for {}", lang));
+        let rows = common::helpers::parse_compact_rows(rows_str);
+        assert!(
+            !rows.is_empty(),
+            "Should have classes/structs rows for {}",
+            lang
+        );
 
         for class_name in expected_classes {
-            let found = classes.iter().any(|c| c["name"] == class_name);
+            let found = rows
+                .iter()
+                .any(|row| row.first().map(|v| v.as_str()) == Some(class_name));
             assert!(found, "Should find class '{}' in {}", class_name, lang);
         }
     }
@@ -139,21 +131,26 @@ fn test_parse_file_includes_code_for_all_languages() {
         let text = common::get_result_text(&result);
         let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-        // Verify functions have code
-        let functions = shape["functions"]
-            .as_array()
-            .unwrap_or_else(|| panic!("Should have functions for {}", lang));
+        // Verify functions have code (compact `h` + `f` rows)
+        let header = shape.get("h").and_then(|v| v.as_str()).unwrap_or("");
+        let code_idx = header
+            .split('|')
+            .position(|field| field == "code")
+            .unwrap_or_else(|| panic!("Expected 'code' column in header for {}: {header}", lang));
+
+        let rows_str = shape.get("f").and_then(|v| v.as_str()).unwrap_or("");
+        let rows = common::helpers::parse_compact_rows(rows_str);
 
         assert!(
-            !functions.is_empty(),
-            "Should have at least one function for {}",
+            !rows.is_empty(),
+            "Should have at least one function row for {}",
             lang
         );
 
-        for func in functions {
-            let code = func["code"]
-                .as_str()
-                .unwrap_or_else(|| panic!("Function should have code for {}", lang));
+        for row in rows {
+            let code = row
+                .get(code_idx)
+                .unwrap_or_else(|| panic!("Missing code column {code_idx} for {}", lang));
             assert!(
                 !code.is_empty(),
                 "Function code should not be empty for {}",
@@ -195,27 +192,26 @@ fn test_find_usages_locates_function_calls_in_all_languages() {
         // Verify we found usages
         common::helpers::assert_min_count(&usages, "usages", 1);
 
-        // Verify each usage has required fields
-        let usage_list = usages["usages"].as_array().unwrap();
-        for usage in usage_list {
+        let usage_rows = common::helpers::find_usages_rows(&usages);
+        for row in usage_rows {
             assert!(
-                usage["file"].is_string(),
-                "Usage should have file for {}",
+                row.get(0).is_some(),
+                "Usage row should have file for {}",
                 lang
             );
             assert!(
-                usage["line"].is_number(),
-                "Usage should have line for {}",
+                row.get(1).is_some(),
+                "Usage row should have line for {}",
                 lang
             );
             assert!(
-                usage["column"].is_number(),
-                "Usage should have column for {}",
+                row.get(2).is_some(),
+                "Usage row should have column for {}",
                 lang
             );
             assert!(
-                usage["usage_type"].is_string(),
-                "Usage should have usage_type for {}",
+                row.get(3).is_some(),
+                "Usage row should have usage_type for {}",
                 lang
             );
         }
@@ -247,18 +243,17 @@ fn test_find_usages_returns_multiple_usages_for_all_languages() {
         let text = common::get_result_text(&result);
         let usages: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-        // Verify we found at least one usage (could be definition, reference, or call)
-        let usage_list = usages["usages"].as_array().unwrap();
+        let usage_rows = common::helpers::find_usages_rows(&usages);
         assert!(
-            !usage_list.is_empty(),
+            !usage_rows.is_empty(),
             "Should find at least one usage for '{}' in {}",
             symbol,
             lang
         );
 
         // Verify each usage has a valid usage_type
-        for usage in usage_list {
-            let usage_type = usage["usage_type"].as_str().unwrap_or("");
+        for row in usage_rows {
+            let usage_type = row.get(3).map(|s| s.as_str()).unwrap_or("");
             assert!(
                 !usage_type.is_empty(),
                 "Usage should have non-empty usage_type for {}",
@@ -298,40 +293,18 @@ fn test_get_context_returns_enclosing_scope_for_all_languages() {
         let text = common::get_result_text(&result);
         let output: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-        // Verify we have a symbol
+        // Compact schema fields
+        assert!(output["sym"].is_string(), "Should have sym for {}", lang);
+        assert!(output["sig"].is_string(), "Should have sig for {}", lang);
+        assert!(output["kind"].is_string(), "Should have kind for {}", lang);
         assert!(
-            output["symbol"].is_object(),
-            "Should have symbol for {}",
+            output["scope"].is_string(),
+            "Should have scope for {}",
             lang
         );
 
-        // Verify symbol has required fields
-        assert!(
-            output["symbol"]["name"].is_string(),
-            "Symbol should have name for {}",
-            lang
-        );
-        assert!(
-            output["symbol"]["signature"].is_string(),
-            "Symbol should have signature for {}",
-            lang
-        );
-        assert!(
-            output["symbol"]["kind"].is_string(),
-            "Symbol should have kind for {}",
-            lang
-        );
-
-        // Verify we have scope_chain
-        let scope_chain = output["scope_chain"]
-            .as_array()
-            .unwrap_or_else(|| panic!("Should have scope_chain for {}", lang));
-
-        assert!(
-            !scope_chain.is_empty(),
-            "Should have at least one scope for {}",
-            lang
-        );
+        let scope = output["scope"].as_str().unwrap();
+        assert!(!scope.is_empty(), "Scope should be non-empty for {}", lang);
     }
 }
 
@@ -360,21 +333,15 @@ fn test_get_context_outermost_is_source_file_for_all_languages() {
         let text = common::get_result_text(&result);
         let output: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-        // Verify we have scope_chain (outermost varies by language)
-        let scope_chain = output["scope_chain"].as_array().unwrap();
         assert!(
-            !scope_chain.is_empty(),
-            "Should have at least one scope for {}",
+            output["scope"].is_string(),
+            "Should have scope for {}",
             lang
         );
+        assert!(output["kind"].is_string(), "Should have kind for {}", lang);
 
-        // Just verify the outermost has a kind - different languages use different names
-        let outermost = scope_chain.last().unwrap();
-        assert!(
-            outermost["kind"].is_string(),
-            "Outermost scope should have kind for {}",
-            lang
-        );
+        let scope = output["scope"].as_str().unwrap();
+        assert!(!scope.is_empty(), "Scope should be non-empty for {}", lang);
     }
 }
 
@@ -406,10 +373,7 @@ fn test_code_map_provides_overview_for_all_languages() {
         let text = common::get_result_text(&result);
         let map: serde_json::Value = serde_json::from_str(&text).unwrap();
 
-        // Verify we have files
-        let files = map["files"]
-            .as_array()
-            .unwrap_or_else(|| panic!("Should have files for {}", lang));
+        let files = common::helpers::code_map_files(&map);
 
         assert!(
             !files.is_empty(),
@@ -418,13 +382,8 @@ fn test_code_map_provides_overview_for_all_languages() {
         );
 
         // Verify each file has required fields
-        for file in files {
-            assert!(
-                file["path"].is_string(),
-                "File should have path for {}",
-                lang
-            );
-            // Note: language field may not be present in code_map output
+        for (path, _file) in files {
+            assert!(!path.is_empty(), "File should have path for {}", lang);
         }
     }
 }
