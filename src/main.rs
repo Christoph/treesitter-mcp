@@ -8,7 +8,8 @@ mod tools;
 
 use handler::TreesitterServerHandler;
 use rust_mcp_sdk::schema::{
-    Implementation, InitializeResult, ProtocolVersion, ServerCapabilities, ServerCapabilitiesTools,
+    Implementation, InitializeResult, ProtocolVersion, ServerCapabilities,
+    ServerCapabilitiesTools,
 };
 use rust_mcp_sdk::{
     error::SdkResult,

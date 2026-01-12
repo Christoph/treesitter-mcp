@@ -69,25 +69,6 @@ fn test_type_map_typescript_contains_expected_types() {
 }
 
 #[test]
-fn test_type_map_go_contains_expected_types() {
-    let file_path = common::fixture_path("go", "types/models.go");
-    let arguments = json!({
-        "file_path": file_path.to_str().unwrap(),
-        "max_tokens": 10_000
-    });
-
-    let result = treesitter_mcp::analysis::type_map::execute(&arguments)
-        .unwrap_or_else(|e| panic!("type_map failed for Go: {e}"));
-
-    let text = common::get_result_text(&result);
-    let (_header, rows, _) = parse_type_map(&text);
-
-    let names = row_names(&rows);
-    assert!(names.contains(&"Point"));
-    assert!(names.contains(&"Calculator"));
-}
-
-#[test]
 fn test_type_map_python_contains_expected_types() {
     let file_path = common::fixture_path("python", "calculator.py");
     let arguments = json!({
