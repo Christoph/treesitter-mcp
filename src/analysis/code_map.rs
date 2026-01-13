@@ -183,96 +183,6 @@ fn apply_usage_counts(types: &mut [TypeDefinition], word_counts: &HashMap<String
     }
 }
 
-fn build_compact_output(
-    files: &[FileSymbols],
-    detail_level: DetailLevel,
-    max_tokens: usize,
-) -> Result<(Map<String, Value>, bool), io::Error> {
-    let bpe = cl100k_base()
-        .map_err(|e| io::Error::other(format!("Failed to initialize tiktoken tokenizer: {e}")))?;
-
-    let mut output = Map::new();
-    let mut ordered_files: Vec<String> = Vec::new();
-
-    // 10% buffer: estimates should err on the safe side.
-    let mut budget_tracker = BudgetTracker::new((max_tokens * 9) / 10);
-
-    for file in files {
-        let file_value = build_compact_file(file, detail_level);
-        let file_json = serde_json::to_string(&file_value).map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("Failed to serialize code map file entry: {e}"),
-            )
-        })?;
-
-        let estimated = budget::estimate_symbol_tokens(file_json.len());
-        if !budget_tracker.add(estimated) {
-            break;
-        }
-
-        output.insert(file.path.clone(), file_value);
-        ordered_files.push(file.path.clone());
-    }
-
-    let mut truncated = ordered_files.len() < files.len();
-
-    // If budget is extremely small, still return at least one file.
-    if output.is_empty() && !files.is_empty() {
-        let first = &files[0];
-        output.insert(first.path.clone(), build_compact_file(first, detail_level));
-        ordered_files.push(first.path.clone());
-        truncated = true;
-    }
-
-    // Hard enforcement with real token counts:
-    // - drop least-important files first
-    // - if only one file remains, progressively drop rows until it fits
-    loop {
-        let json_text = serde_json::to_string(&Value::Object(output.clone())).map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("Failed to serialize code map to JSON: {e}"),
-            )
-        })?;
-
-        if bpe.encode_with_special_tokens(&json_text).len() <= max_tokens {
-            break;
-        }
-
-        if ordered_files.len() > 1 {
-            let Some(last_path) = ordered_files.pop() else {
-                break;
-            };
-            output.remove(&last_path);
-            truncated = true;
-            continue;
-        }
-
-        let Some(only_path) = ordered_files.first().cloned() else {
-            break;
-        };
-
-        let Some(file_value) = output.get_mut(&only_path) else {
-            break;
-        };
-
-        if !shrink_single_file_to_fit(file_value, &bpe, max_tokens) {
-            // If we cannot shrink further, leave header-only.
-            truncated = true;
-            break;
-        }
-
-        truncated = true;
-    }
-
-    if truncated {
-        output.insert("@".to_string(), json!({"t": true}));
-    }
-
-    Ok((output, truncated))
-}
-
 fn build_compact_output_combined(
     result: &ExtractionResult,
     detail_level: DetailLevel,
@@ -609,121 +519,8 @@ fn symbols_to_rows(symbols: &[Value], detail_level: DetailLevel, kind: SymbolKin
         .join("\n")
 }
 
-fn collect_files(
-    dir: &Path,
-    files: &mut Vec<FileSymbols>,
-    detail_level: DetailLevel,
-    pattern: Option<&str>,
-) -> Result<(), io::Error> {
-    let entries = fs::read_dir(dir).map_err(|e| {
-        io::Error::new(
-            io::ErrorKind::NotFound,
-            format!("Failed to read directory {}: {e}", dir.display()),
-        )
-    })?;
-
-    for entry in entries {
-        let entry = entry?;
-        let path = entry.path();
-
-        // Skip hidden files and common ignore patterns
-        if let Some(name) = path.file_name() {
-            let name_str = name.to_string_lossy();
-            if name_str.starts_with('.') || IGNORE_DIRS.contains(&name_str.as_ref()) {
-                continue;
-            }
-        }
-
-        if path.is_file() {
-            if detect_language(&path).is_ok() {
-                if let Some(pat) = pattern {
-                    if !matches_pattern(&path, pat) {
-                        continue;
-                    }
-                }
-
-                if let Ok(entry) = process_file(&path, detail_level) {
-                    files.push(entry);
-                }
-            }
-        } else if path.is_dir() {
-            collect_files(&path, files, detail_level, pattern)?;
-        }
-    }
-
-    Ok(())
-}
-
 fn symbol_count(entry: &FileSymbols) -> usize {
     entry.functions.len() + entry.structs.len() + entry.classes.len()
-}
-
-fn process_file(path: &Path, detail_level: DetailLevel) -> Result<FileSymbols, io::Error> {
-    let source = fs::read_to_string(path).map_err(|e| {
-        io::Error::new(
-            io::ErrorKind::NotFound,
-            format!("Failed to read file {}: {e}", path.display()),
-        )
-    })?;
-
-    let language = detect_language(path).map_err(|e| {
-        io::Error::new(
-            io::ErrorKind::Unsupported,
-            format!("Cannot detect language for file {}: {e}", path.display()),
-        )
-    })?;
-    let tree = crate::parser::parse_code(&source, language).map_err(|e| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("Failed to parse {} code: {e}", language.name()),
-        )
-    })?;
-
-    let include_code = detail_level == DetailLevel::Full;
-    let enhanced_shape = crate::analysis::shape::extract_enhanced_shape(
-        &tree,
-        &source,
-        language,
-        Some(&path.to_string_lossy()),
-        include_code,
-    )?;
-
-    let functions = if enhanced_shape.functions.is_empty() {
-        Vec::new()
-    } else {
-        enhanced_shape
-            .functions
-            .iter()
-            .map(|f| filter_function_by_detail(f, detail_level))
-            .collect()
-    };
-
-    let structs = if enhanced_shape.structs.is_empty() {
-        Vec::new()
-    } else {
-        enhanced_shape
-            .structs
-            .iter()
-            .map(|s| filter_struct_by_detail(s, detail_level))
-            .collect()
-    };
-
-    let classes = if enhanced_shape.classes.is_empty() {
-        Vec::new()
-    } else {
-        enhanced_shape
-            .classes
-            .iter()
-            .map(|c| filter_class_by_detail(c, detail_level))
-            .collect()
-    };
-
-    Ok(FileSymbols {
-        path: path.to_string_lossy().to_string(),
-        functions,
-        structs,
-        classes,
-    })
 }
 
 fn collect_files_combined(
@@ -811,7 +608,7 @@ fn process_file_combined(
         )
     })?;
 
-    let tree = crate::parser::parse_code(&source, language).map_err(|e| {
+    let tree = crate::parser::parse_code(source, language).map_err(|e| {
         io::Error::new(
             io::ErrorKind::InvalidData,
             format!("Failed to parse {} code: {e}", language.name()),
@@ -821,7 +618,7 @@ fn process_file_combined(
     let include_code = options.detail_level == DetailLevel::Full;
     let enhanced_shape = crate::analysis::shape::extract_enhanced_shape(
         &tree,
-        &source,
+        source,
         language,
         Some(&path.to_string_lossy()),
         include_code,
@@ -830,7 +627,7 @@ fn process_file_combined(
     // Extract types if requested
     if options.with_types {
         let rel_path = std::path::PathBuf::from(path);
-        if let Ok(file_types) = extract_types_from_source(&source, &rel_path, language) {
+        if let Ok(file_types) = extract_types_from_source(source, &rel_path, language) {
             result.types.extend(file_types);
         }
     }
