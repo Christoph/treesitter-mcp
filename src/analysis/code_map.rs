@@ -125,12 +125,14 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
     };
 
     if path.is_file() {
-        if let Ok(entry) = process_file_combined(path, &options, &mut result) {
+        if let Ok(entry) = process_file_combined(path, &options, &mut result, None) {
             result.files.push(entry);
         }
     } else if path.is_dir() {
         collect_files_combined(path, &mut result, &options, pattern)?;
-        result.files.sort_by_key(|entry| Reverse(symbol_count(entry)));
+        result
+            .files
+            .sort_by_key(|entry| Reverse(symbol_count(entry)));
     }
 
     // Apply usage counts to types if requested
@@ -144,11 +146,9 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
         });
     } else if with_types {
         // Sort by file then line when not counting usages
-        result.types.sort_by(|a, b| {
-            a.file
-                .cmp(&b.file)
-                .then_with(|| a.line.cmp(&b.line))
-        });
+        result
+            .types
+            .sort_by(|a, b| a.file.cmp(&b.file).then_with(|| a.line.cmp(&b.line)));
     }
 
     // Convert all file paths to relative paths
@@ -156,7 +156,8 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
         entry.path = path_utils::to_relative_path(&entry.path);
     }
 
-    let (result_map, _truncated) = build_compact_output_combined(&result, detail_level, max_tokens, with_types)?;
+    let (result_map, _truncated) =
+        build_compact_output_combined(&result, detail_level, max_tokens, with_types)?;
 
     let json_text = serde_json::to_string(&Value::Object(result_map)).map_err(|e| {
         io::Error::new(
@@ -751,11 +752,14 @@ fn collect_files_combined(
         }
 
         if path.is_file() {
+            let mut pre_read_content: Option<String> = None;
+
             // For usage counting, we process ALL files to count words
             if options.count_usages {
                 if let Ok(content) = fs::read_to_string(&path) {
                     let lang = language_for_path(&path);
                     count_words_in_content(&content, lang, &mut result.word_counts);
+                    pre_read_content = Some(content);
                 }
             }
 
@@ -766,7 +770,9 @@ fn collect_files_combined(
                     }
                 }
 
-                if let Ok(entry) = process_file_combined(&path, options, result) {
+                if let Ok(entry) =
+                    process_file_combined(&path, options, result, pre_read_content.as_deref())
+                {
                     result.files.push(entry);
                 }
             }
@@ -782,13 +788,21 @@ fn process_file_combined(
     path: &Path,
     options: &ExtractionOptions,
     result: &mut ExtractionResult,
+    pre_read_content: Option<&str>,
 ) -> Result<FileSymbols, io::Error> {
-    let source = fs::read_to_string(path).map_err(|e| {
-        io::Error::new(
-            io::ErrorKind::NotFound,
-            format!("Failed to read file {}: {e}", path.display()),
-        )
-    })?;
+    let source_storage;
+    let source = match pre_read_content {
+        Some(s) => s,
+        None => {
+            source_storage = fs::read_to_string(path).map_err(|e| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("Failed to read file {}: {e}", path.display()),
+                )
+            })?;
+            &source_storage
+        }
+    };
 
     let language = detect_language(path).map_err(|e| {
         io::Error::new(
@@ -868,10 +882,8 @@ fn extract_types_from_source(
     use crate::parser::Language;
 
     let types = match language {
-        Language::Rust => {
-            crate::extraction::types::extract_rust_types(source, path)
-                .map_err(|e| io::Error::other(e.to_string()))?
-        }
+        Language::Rust => crate::extraction::types::extract_rust_types(source, path)
+            .map_err(|e| io::Error::other(e.to_string()))?,
         Language::TypeScript => {
             crate::extraction::types::extract_typescript_types(source, path, true)
                 .map_err(|e| io::Error::other(e.to_string()))?
@@ -880,10 +892,8 @@ fn extract_types_from_source(
             crate::extraction::types::extract_typescript_types(source, path, false)
                 .map_err(|e| io::Error::other(e.to_string()))?
         }
-        Language::Python => {
-            crate::extraction::types::extract_python_types(source, path)
-                .map_err(|e| io::Error::other(e.to_string()))?
-        }
+        Language::Python => crate::extraction::types::extract_python_types(source, path)
+            .map_err(|e| io::Error::other(e.to_string()))?,
         Language::Java | Language::Go | Language::CSharp => {
             // Type extraction for these languages uses different extractors
             Vec::new()

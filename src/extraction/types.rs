@@ -178,7 +178,14 @@ pub fn extract_types_with_options(
     let mut result = TypeExtractionResult::new();
 
     if path.is_file() {
-        process_single_file(path, &root_dir, &matcher, effective_limit, count_usages, &mut result)?;
+        process_single_file(
+            path,
+            &root_dir,
+            &matcher,
+            effective_limit,
+            count_usages,
+            &mut result,
+        )?;
     } else {
         let walker = WalkDir::new(path).into_iter().filter_entry(should_descend);
         for entry in walker {
@@ -223,9 +230,13 @@ pub fn extract_types_with_options(
 
             // Extract types from supported languages
             if let Some(language) = detect_language(file_path) {
-                if let Err(err) =
-                    process_file_with_source(&content, &rel_path, language, effective_limit, &mut result)
-                {
+                if let Err(err) = process_file_with_source(
+                    &content,
+                    &rel_path,
+                    language,
+                    effective_limit,
+                    &mut result,
+                ) {
                     debug!("Skipping file {}: {err}", file_path.display());
                 }
             }
@@ -268,8 +279,8 @@ fn process_single_file(
     }
 
     // Read file once for both extraction and counting
-    let source = fs::read_to_string(path)
-        .wrap_err_with(|| format!("Failed to read {}", path.display()))?;
+    let source =
+        fs::read_to_string(path).wrap_err_with(|| format!("Failed to read {}", path.display()))?;
 
     // Count words if requested
     if count_usages {
