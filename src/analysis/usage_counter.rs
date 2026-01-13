@@ -68,7 +68,7 @@ pub fn count_all_usages(types: &mut [TypeDefinition], project_path: &Path) -> Re
 }
 
 #[derive(Debug, Clone, Copy)]
-enum CountLanguage {
+pub enum CountLanguage {
     CLike,
     JavaScript,
     Rust,
@@ -76,7 +76,7 @@ enum CountLanguage {
     Plain,
 }
 
-fn language_for_path(path: &Path) -> CountLanguage {
+pub fn language_for_path(path: &Path) -> CountLanguage {
     let Some(ext) = path.extension().and_then(|s| s.to_str()) else {
         return CountLanguage::Plain;
     };
@@ -90,7 +90,22 @@ fn language_for_path(path: &Path) -> CountLanguage {
     }
 }
 
-fn strip_comments_and_strings(content: &str, language: CountLanguage) -> String {
+/// Count all identifier-like words in a file and accumulate into the provided map.
+/// This is useful for single-pass extraction+counting.
+pub fn count_words_in_content(
+    content: &str,
+    language: CountLanguage,
+    word_counts: &mut HashMap<String, usize>,
+) {
+    let stripped = strip_comments_and_strings(content, language);
+    for word in stripped.split(|c: char| !c.is_alphanumeric() && c != '_') {
+        if !word.is_empty() {
+            *word_counts.entry(word.to_string()).or_insert(0) += 1;
+        }
+    }
+}
+
+pub fn strip_comments_and_strings(content: &str, language: CountLanguage) -> String {
     match language {
         CountLanguage::Plain => content.to_string(),
         CountLanguage::Python => strip_with_config(

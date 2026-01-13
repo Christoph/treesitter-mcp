@@ -117,7 +117,9 @@ Choose the right tool for your task:
 | Tool | Scope | Token Cost | Speed | Best For |
 |------|-------|------------|-------|----------|
 | `type_map` | Directory | Medium | Fast | LLM context priming, finding key types |
+| `type_map` (count_usages=false) | Directory | Medium | Faster | Type locations without usage ranking |
 | `code_map` | Directory | Medium | Fast | First-time exploration |
+| `code_map` (with_types=true) | Directory | Medium | Fast | Code structure + types in one pass |
 | `view_code` (signatures) | Single file | Low | Fast | Quick overview, API understanding |
 | `view_code` (full) | Single file | High | Fast | Deep understanding, multiple functions |
 | `view_code` (focused) | Single file | Medium | Fast | Editing specific function |
@@ -130,7 +132,13 @@ Choose the right tool for your task:
 
 ### Common Workflow Patterns
 
-#### Pattern 1: LLM Session Initialization
+#### Pattern 1: LLM Session Initialization (Optimized - Single Pass)
+```
+1. code_map (path="src", with_types=true, count_usages=true)  → Get both structure AND usage-ranked types
+2. Begin coding tasks with full context
+```
+
+#### Pattern 1b: LLM Session Initialization (Traditional - Two Passes)
 ```
 1. type_map (path="src", max_tokens=3000)      → Get usage-ranked types
 2. code_map (path="src", detail="minimal")      → Get file structure
@@ -139,7 +147,7 @@ Choose the right tool for your task:
 
 #### Pattern 2: Exploring New Codebase
 ```
-1. code_map (path="src", detail="minimal")      → Get lay of the land
+1. code_map (path="src", detail="minimal", with_types=true)  → Get structure + types in one pass
 2. view_code (detail="signatures")              → Understand interfaces
 3. view_code (focus_symbol="function_name")     → Deep dive
 ```
@@ -197,6 +205,7 @@ Generate a usage-sorted map of all project types. Returns structs, classes, enum
 - ❌ Need function/method implementations → use `view_code`
 - ❌ Need call hierarchy or control flow → use `code_map`
 - ❌ Analyzing a single file → use `view_code`
+- ❌ Need both code structure AND types → use `code_map` with `with_types=true`
 
 **Token Cost:** MEDIUM (2000-3000 tokens typical for medium projects)
 
@@ -204,6 +213,7 @@ Generate a usage-sorted map of all project types. Returns structs, classes, enum
 - `path` (string, required): Directory to scan
 - `max_tokens` (integer, optional, default: 2000): Token budget (tiktoken counted)
 - `pattern` (string, optional): Glob filter (e.g., `"*.rs"`, `"src/**/*.ts"`)
+- `count_usages` (boolean, optional, default: true): Count usages across the project. Set to `false` for faster results when you only need type locations without usage ranking.
 
 **Returns:** Compact schema (usage-sorted types)
 
@@ -270,13 +280,14 @@ View a source file with flexible detail levels and automatic type inclusion from
 
 ### 3. code_map
 
-Generate hierarchical map of a DIRECTORY (not single file). Returns structure overview of multiple files.
+Generate hierarchical map of a DIRECTORY (not single file). Returns structure overview of multiple files with functions/classes/types.
 
 **Use When:**
 - ✅ First time exploring unfamiliar codebase
 - ✅ Finding where functionality lives across multiple files
 - ✅ Getting project structure overview
 - ✅ You don't know which file to examine
+- ✅ Need both code structure AND type definitions (use `with_types=true`)
 
 **Don't Use When:**
 - ❌ You know the specific file → use `view_code`
@@ -290,6 +301,8 @@ Generate hierarchical map of a DIRECTORY (not single file). Returns structure ov
 - `max_tokens` (integer, optional, default: 2000): Maximum tokens for output (budget limit to prevent overflow)
 - `detail` (string, optional, default: "signatures"): Detail level - "minimal" (names only), "signatures" (names + signatures), "full" (includes code)
 - `pattern` (string, optional): Glob pattern to filter files (e.g., "*.rs", "src/**/*.ts")
+- `with_types` (boolean, optional, default: false): Also extract type definitions (structs, enums, interfaces, etc.) in the same pass. More efficient than calling `type_map` separately.
+- `count_usages` (boolean, optional, default: false): When `with_types=true`, also count usages for each type. Set to `true` for usage-ranked types.
 
 **Example**:
 ```json
@@ -301,7 +314,21 @@ Generate hierarchical map of a DIRECTORY (not single file). Returns structure ov
 }
 ```
 
-**Optimization:** Start with `detail="minimal"` for large projects, use `pattern` to filter
+**Combined Mode Example** (replaces separate `code_map` + `type_map` calls):
+```json
+{
+  "path": "/path/to/project/src",
+  "max_tokens": 4000,
+  "detail": "minimal",
+  "with_types": true,
+  "count_usages": true
+}
+```
+
+**Optimization:**
+- Start with `detail="minimal"` for large projects
+- Use `pattern` to filter files
+- Use `with_types=true` instead of calling `type_map` separately (single file walk vs two)
 
 **Typical Workflow:** `code_map` → `view_code` (signatures/full/focus)
 
@@ -309,6 +336,7 @@ Generate hierarchical map of a DIRECTORY (not single file). Returns structure ov
 
 - Top-level keys are file paths
 - Per-file keys: `h` + optional `f`/`s`/`c` row strings
+- When `with_types=true`: includes `types` key with type definitions
 - Optional meta: `@` (e.g. `@.t=true` when truncated)
 
 ```json
@@ -320,6 +348,17 @@ Generate hierarchical map of a DIRECTORY (not single file). Returns structure ov
   "src/config.rs": {
     "h": "name|line|sig",
     "s": "Config|5|pub struct Config"
+  }
+}
+```
+
+**With `with_types=true`**:
+```json
+{
+  "src/main.rs": { "h": "name|line|sig", "f": "main|10|fn main()" },
+  "types": {
+    "h": "name|kind|file|line|usage_count",
+    "rows": "Config|struct|src/config.rs|5|12\nUser|struct|src/models.rs|10|8"
   }
 }
 ```
@@ -653,6 +692,22 @@ Find Rust structs associated with an Askama template file. Returns struct names,
 - **Token Limits**: The `code_map` tool respects token budgets to avoid overwhelming AI context windows
 - **Caching**: Parsed trees are not cached between requests; prefer `view_code` with `detail="signatures"` for repeated lightweight reads
 - **Directory Traversal**: Automatically skips hidden files, `target/`, and `node_modules/`
+
+### Single-Pass Optimizations
+
+Both `code_map` and `type_map` have been optimized for single-pass file traversal:
+
+| Operation | Before | After |
+|-----------|--------|-------|
+| `type_map` with usage counting | 2 file walks | 1 file walk |
+| `type_map` without usage counting | 2 file walks | 1 file walk (faster) |
+| `code_map` + `type_map` separately | 3 file walks | N/A |
+| `code_map` with `with_types=true` | N/A | 1 file walk |
+
+**Recommendations:**
+- Use `type_map` with `count_usages=false` when you only need type locations (skip usage counting)
+- Use `code_map` with `with_types=true` instead of calling both tools separately
+- The combined mode reads each file only once for both code structure and type extraction
 
 ## Contributing
 

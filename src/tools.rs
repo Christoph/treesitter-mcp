@@ -43,7 +43,7 @@ pub struct ViewCode {
 /// Generate a high-level code map of a directory with token budget awareness and detail levels
 #[mcp_tool(
     name = "code_map",
-    description = "Generate hierarchical map of a DIRECTORY (not single file). Returns structure overview of multiple files with functions/classes/types. Detail levels: 'minimal' (names only), 'signatures' (DEFAULT, names + signatures), 'full' (includes code). USE WHEN: ✅ First time exploring unfamiliar codebase ✅ Finding where functionality lives across files ✅ Getting project structure overview ✅ Don't know which file to examine. DON'T USE: ❌ Know specific file → use view_code ❌ Need implementation details → use view_code after identifying files. TOKEN COST: MEDIUM (scales with project size). OPTIMIZATION: Start with detail='minimal' for large projects, use pattern to filter. WORKFLOW: code_map → view_code"
+    description = "Generate hierarchical map of a DIRECTORY (not single file). Returns structure overview of multiple files with functions/classes/types. Detail levels: 'minimal' (names only), 'signatures' (DEFAULT, names + signatures), 'full' (includes code). USE WHEN: ✅ First time exploring unfamiliar codebase ✅ Finding where functionality lives across files ✅ Getting project structure overview ✅ Don't know which file to examine. DON'T USE: ❌ Know specific file → use view_code ❌ Need implementation details → use view_code after identifying files. TOKEN COST: MEDIUM (scales with project size). OPTIMIZATION: Start with detail='minimal' for large projects, use pattern to filter. WORKFLOW: code_map → view_code. COMBINED MODE: Set with_types=true to also extract type definitions (structs, enums, interfaces, etc.) in the same pass - more efficient than calling type_map separately."
 )]
 #[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
 pub struct CodeMap {
@@ -58,6 +58,13 @@ pub struct CodeMap {
     /// Glob pattern to filter files (e.g., "*.rs")
     #[serde(default)]
     pub pattern: Option<String>,
+    /// Also extract type definitions (structs, enums, interfaces, etc.) in the same pass.
+    /// More efficient than calling type_map separately. Output includes a "types" key.
+    #[serde(default)]
+    pub with_types: Option<bool>,
+    /// When with_types=true, also count usages for each type (default: false for performance).
+    #[serde(default)]
+    pub count_usages: Option<bool>,
 }
 
 /// Find all usages of a symbol with context and usage type classification
@@ -169,7 +176,9 @@ impl CodeMap {
             "path": self.path,
             "max_tokens": self.max_tokens.unwrap_or(2000),
             "detail": self.detail,
-            "pattern": self.pattern
+            "pattern": self.pattern,
+            "with_types": self.with_types.unwrap_or(false),
+            "count_usages": self.count_usages.unwrap_or(false)
         });
 
         code_map::execute(&args).map_err(CallToolError::new)
@@ -278,7 +287,7 @@ impl TemplateContext {
 /// Generate a usage-sorted map of all project types. Returns structs, classes, enums, interfaces, traits, protocols, and type aliases prioritized by usage frequency.
 #[mcp_tool(
     name = "type_map",
-    description = "Generate a usage-sorted map of project types in compact schema (BREAKING). Output keys: `h` (header) and `types` (rows: name|kind|file|line|usage_count). Optional meta under `@` (e.g. `@.t=true` when truncated). Rows are newline-delimited; fields are pipe-delimited and escaped: `\\` -> `\\\\`, `\n` -> `\\n`, `\r` -> `\\r`, `|` -> `\\|`."
+    description = "Generate a usage-sorted map of project types in compact schema (BREAKING). Output keys: `h` (header) and `types` (rows: name|kind|file|line|usage_count). Optional meta under `@` (e.g. `@.t=true` when truncated). Rows are newline-delimited; fields are pipe-delimited and escaped: `\\` -> `\\\\`, `\n` -> `\\n`, `\r` -> `\\r`, `|` -> `\\|`. PERFORMANCE: Set count_usages=false to skip usage counting for faster results when you only need type locations."
 )]
 #[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
 pub struct TypeMap {
@@ -290,6 +299,10 @@ pub struct TypeMap {
     /// Optional glob pattern to filter files (e.g., '*.rs', 'src/**/*.ts')
     #[serde(default)]
     pub pattern: Option<String>,
+    /// Whether to count usages across the project (default: true).
+    /// Set to false for faster results when you only need type locations.
+    #[serde(default)]
+    pub count_usages: Option<bool>,
 }
 
 impl TypeMap {
@@ -297,7 +310,8 @@ impl TypeMap {
         let args = serde_json::json!({
             "path": self.path,
             "max_tokens": self.max_tokens.unwrap_or(2000),
-            "pattern": self.pattern
+            "pattern": self.pattern,
+            "count_usages": self.count_usages.unwrap_or(true)
         });
 
         crate::analysis::type_map::execute(&args)

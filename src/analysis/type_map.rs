@@ -5,10 +5,9 @@ use serde_json::{json, Map, Value};
 use tiktoken_rs::cl100k_base;
 
 use crate::analysis::path_utils;
-use crate::analysis::usage_counter::count_all_usages;
 use crate::common::budget::BudgetTracker;
 use crate::common::{budget, format};
-use crate::extraction::types::{extract_types, TypeDefinition, TypeKind};
+use crate::extraction::types::{extract_types_with_options, TypeDefinition, TypeKind};
 use crate::mcp_types::{CallToolResult, CallToolResultExt};
 
 pub fn execute(arguments: &Value) -> Result<CallToolResult> {
@@ -23,6 +22,7 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult> {
     let max_tokens = arguments["max_tokens"].as_u64().unwrap_or(2000) as usize;
     let limit = arguments["limit"].as_u64().map(|v| v as usize);
     let offset = arguments["offset"].as_u64().unwrap_or(0) as usize;
+    let count_usages = arguments["count_usages"].as_bool().unwrap_or(true);
 
     let pattern = arguments["pattern"].as_str();
 
@@ -42,17 +42,21 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult> {
         None => (None, None),
     };
 
-    // 1) Extract types (with 1000 type limit)
-    let mut extraction_result = extract_types(path, file_glob, 1000)?;
+    // 1) Extract types with optional usage counting in a single pass
+    let mut extraction_result = extract_types_with_options(path, file_glob, 1000, count_usages)?;
 
-    // 2) Count usages (directory-wide if path is dir)
-    count_all_usages(&mut extraction_result.types, path)?;
-
-    // 3) Sort by usage_count DESC, then name ASC
+    // 2) Sort by usage_count DESC (if counted), then name ASC
     extraction_result.types.sort_by(|a, b| {
-        b.usage_count
-            .cmp(&a.usage_count)
-            .then_with(|| a.name.cmp(&b.name))
+        if count_usages {
+            b.usage_count
+                .cmp(&a.usage_count)
+                .then_with(|| a.name.cmp(&b.name))
+        } else {
+            // When not counting usages, sort by file path then line number for predictable output
+            a.file
+                .cmp(&b.file)
+                .then_with(|| a.line.cmp(&b.line))
+        }
     });
 
     // 4) Optional name filtering
