@@ -18,7 +18,7 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
-use globset::Glob;
+use globset::{Glob, GlobMatcher};
 use serde_json::json;
 use serde_json::Map;
 use serde_json::Value;
@@ -78,6 +78,11 @@ struct ExtractionOptions {
     count_usages: bool,
 }
 
+struct PatternMatcher {
+    matcher: GlobMatcher,
+    is_path_aware: bool,
+}
+
 /// Result of combined extraction
 struct ExtractionResult {
     files: Vec<FileSymbols>,
@@ -124,12 +129,28 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
         word_counts: HashMap::new(),
     };
 
+    let bpe = cl100k_base()
+        .map_err(|e| io::Error::other(format!("Failed to initialize tiktoken tokenizer: {e}")))?;
+
+    let compiled_matcher = pattern.and_then(|p| match Glob::new(p) {
+        Ok(glob) => Some(PatternMatcher {
+            matcher: glob.compile_matcher(),
+            is_path_aware: p.contains('/') || p.contains("**"),
+        }),
+        Err(e) => {
+            log::warn!("Invalid glob pattern '{}': {}", p, e);
+            None
+        }
+    });
+
     if path.is_file() {
-        if let Ok(entry) = process_file_combined(path, &options, &mut result, None) {
-            result.files.push(entry);
+        if let Ok(language) = detect_language(path) {
+            if let Ok(entry) = process_file_combined(path, &options, &mut result, None, language) {
+                result.files.push(entry);
+            }
         }
     } else if path.is_dir() {
-        collect_files_combined(path, &mut result, &options, pattern)?;
+        collect_files_combined(path, &mut result, &options, compiled_matcher.as_ref())?;
         result
             .files
             .sort_by_key(|entry| Reverse(symbol_count(entry)));
@@ -157,9 +178,9 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
     }
 
     let (result_map, _truncated) =
-        build_compact_output_combined(&result, detail_level, max_tokens, with_types)?;
+        build_compact_output_combined(&result, detail_level, max_tokens, with_types, &bpe)?;
 
-    let json_text = serde_json::to_string(&Value::Object(result_map)).map_err(|e| {
+    let json_text = serde_json::to_string(&result_map).map_err(|e| {
         io::Error::new(
             io::ErrorKind::InvalidData,
             format!("Failed to serialize code map to JSON: {e}"),
@@ -188,10 +209,8 @@ fn build_compact_output_combined(
     detail_level: DetailLevel,
     max_tokens: usize,
     with_types: bool,
+    bpe: &tiktoken_rs::CoreBPE,
 ) -> Result<(Map<String, Value>, bool), io::Error> {
-    let bpe = cl100k_base()
-        .map_err(|e| io::Error::other(format!("Failed to initialize tiktoken tokenizer: {e}")))?;
-
     let mut output = Map::new();
     let mut ordered_files: Vec<String> = Vec::new();
 
@@ -242,7 +261,8 @@ fn build_compact_output_combined(
 
     // Hard enforcement with real token counts
     loop {
-        let json_text = serde_json::to_string(&Value::Object(output.clone())).map_err(|e| {
+        // Optimization: serialize Map directly to avoid cloning the entire structure
+        let json_text = serde_json::to_string(&output).map_err(|e| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("Failed to serialize code map to JSON: {e}"),
@@ -281,7 +301,7 @@ fn build_compact_output_combined(
             break;
         };
 
-        if !shrink_single_file_to_fit(file_value, &bpe, max_tokens) {
+        if !shrink_single_file_to_fit(file_value, bpe, max_tokens) {
             truncated = true;
             break;
         }
@@ -445,9 +465,9 @@ fn shrink_single_file_to_fit(
     }
 
     // If we're still wildly over budget, allow dropping entire tables.
-    let snapshot = Value::Object(file_obj.clone());
-    let tmp_json = serde_json::to_string(&json!({"_": snapshot})).unwrap_or_default();
-    if bpe.encode_with_special_tokens(&tmp_json).len() > max_tokens {
+    // Optimization: Check the file object directly without cloning/wrapping
+    let file_json = serde_json::to_string(file_obj).unwrap_or_default();
+    if bpe.encode_with_special_tokens(&file_json).len() > max_tokens {
         // Prefer dropping `c`, then `s`, then `f`.
         for drop_key in ["c", "s", "f"] {
             if file_obj.contains_key(drop_key) {
@@ -527,7 +547,7 @@ fn collect_files_combined(
     dir: &Path,
     result: &mut ExtractionResult,
     options: &ExtractionOptions,
-    pattern: Option<&str>,
+    matcher: Option<&PatternMatcher>,
 ) -> Result<(), io::Error> {
     let entries = fs::read_dir(dir).map_err(|e| {
         io::Error::new(
@@ -554,27 +574,36 @@ fn collect_files_combined(
             // For usage counting, we process ALL files to count words
             if options.count_usages {
                 if let Ok(content) = fs::read_to_string(&path) {
-                    let lang = language_for_path(&path);
-                    count_words_in_content(&content, lang, &mut result.word_counts);
+                    let lang_for_count = language_for_path(&path);
+                    count_words_in_content(&content, lang_for_count, &mut result.word_counts);
                     pre_read_content = Some(content);
                 }
             }
 
-            if detect_language(&path).is_ok() {
-                if let Some(pat) = pattern {
-                    if !matches_pattern(&path, pat) {
-                        continue;
-                    }
-                }
+            // Code map output only for supported languages
+            let language = match detect_language(&path) {
+                Ok(lang) => lang,
+                Err(_) => continue,
+            };
 
-                if let Ok(entry) =
-                    process_file_combined(&path, options, result, pre_read_content.as_deref())
-                {
-                    result.files.push(entry);
+            // Apply pattern filter (if any)
+            if let Some(m) = matcher {
+                if !matches_pattern(&path, m) {
+                    continue;
                 }
             }
+
+            if let Ok(entry) = process_file_combined(
+                &path,
+                options,
+                result,
+                pre_read_content.as_deref(),
+                language,
+            ) {
+                result.files.push(entry);
+            }
         } else if path.is_dir() {
-            collect_files_combined(&path, result, options, pattern)?;
+            collect_files_combined(&path, result, options, matcher)?;
         }
     }
 
@@ -586,6 +615,7 @@ fn process_file_combined(
     options: &ExtractionOptions,
     result: &mut ExtractionResult,
     pre_read_content: Option<&str>,
+    language: crate::parser::Language,
 ) -> Result<FileSymbols, io::Error> {
     let source_storage;
     let source = match pre_read_content {
@@ -600,13 +630,6 @@ fn process_file_combined(
             &source_storage
         }
     };
-
-    let language = detect_language(path).map_err(|e| {
-        io::Error::new(
-            io::ErrorKind::Unsupported,
-            format!("Cannot detect language for file {}: {e}", path.display()),
-        )
-    })?;
 
     let tree = crate::parser::parse_code(source, language).map_err(|e| {
         io::Error::new(
@@ -627,7 +650,8 @@ fn process_file_combined(
     // Extract types if requested
     if options.with_types {
         let rel_path = std::path::PathBuf::from(path);
-        if let Ok(file_types) = extract_types_from_source(source, &rel_path, language) {
+        if let Ok(file_types) = extract_types_from_source(source, &rel_path, language, Some(&tree))
+        {
             result.types.extend(file_types);
         }
     }
@@ -675,28 +699,31 @@ fn extract_types_from_source(
     source: &str,
     path: &std::path::Path,
     language: crate::parser::Language,
+    tree: Option<&tree_sitter::Tree>,
 ) -> Result<Vec<TypeDefinition>, io::Error> {
     use crate::parser::Language;
 
     let types = match language {
-        Language::Rust => crate::extraction::types::extract_rust_types(source, path)
+        Language::Rust => crate::extraction::types::extract_rust_types(source, path, tree)
             .map_err(|e| io::Error::other(e.to_string()))?,
         Language::TypeScript => {
-            crate::extraction::types::extract_typescript_types(source, path, true)
+            crate::extraction::types::extract_typescript_types(source, path, true, tree)
                 .map_err(|e| io::Error::other(e.to_string()))?
         }
         Language::JavaScript => {
-            crate::extraction::types::extract_typescript_types(source, path, false)
+            crate::extraction::types::extract_typescript_types(source, path, false, tree)
                 .map_err(|e| io::Error::other(e.to_string()))?
         }
-        Language::Python => crate::extraction::types::extract_python_types(source, path)
+        Language::Python => crate::extraction::types::extract_python_types(source, path, tree)
             .map_err(|e| io::Error::other(e.to_string()))?,
-        Language::Java | Language::Go | Language::CSharp => {
-            // Type extraction for these languages uses different extractors
-            Vec::new()
-        }
+        Language::Java => crate::extraction::types::extract_java_types(source, path, tree)
+            .map_err(|e| io::Error::other(e.to_string()))?,
+        Language::Go => crate::extraction::types::extract_go_types(source, path, tree)
+            .map_err(|e| io::Error::other(e.to_string()))?,
+        Language::CSharp => crate::extraction::types::extract_csharp_types(source, path, tree)
+            .map_err(|e| io::Error::other(e.to_string()))?,
         Language::Html | Language::Css | Language::Swift => {
-            // These languages don't have type definitions
+            // These languages don't have type definitions or share extractors
             Vec::new()
         }
     };
@@ -781,21 +808,12 @@ fn filter_class_by_detail(cls: &EnhancedClassInfo, detail_level: DetailLevel) ->
     }
 }
 
-fn matches_pattern(path: &Path, pattern: &str) -> bool {
-    match Glob::new(pattern) {
-        Ok(glob) => {
-            let matcher = glob.compile_matcher();
-            if pattern.contains('/') || pattern.contains("**") {
-                matcher.is_match(path)
-            } else if let Some(file_name) = path.file_name() {
-                matcher.is_match(file_name)
-            } else {
-                false
-            }
-        }
-        Err(e) => {
-            log::warn!("Invalid glob pattern '{}': {}", pattern, e);
-            false
-        }
+fn matches_pattern(path: &Path, compiled: &PatternMatcher) -> bool {
+    if compiled.is_path_aware {
+        compiled.matcher.is_match(path)
+    } else if let Some(file_name) = path.file_name() {
+        compiled.matcher.is_match(file_name)
+    } else {
+        false
     }
 }

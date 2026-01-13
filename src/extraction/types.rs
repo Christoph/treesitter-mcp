@@ -224,6 +224,7 @@ pub fn extract_types_with_options(
                     language,
                     effective_limit,
                     &mut result,
+                    None,
                 ) {
                     debug!("Skipping file {}: {err}", file_path.display());
                 }
@@ -277,7 +278,7 @@ fn process_single_file(
     }
 
     if let Some(language) = detect_language(path) {
-        process_file_with_source(&source, &rel_path, language, limit, result)?;
+        process_file_with_source(&source, &rel_path, language, limit, result, None)?;
     }
     Ok(())
 }
@@ -288,15 +289,20 @@ fn process_file_with_source(
     language: SupportedLanguage,
     limit: usize,
     result: &mut TypeExtractionResult,
+    tree: Option<&tree_sitter::Tree>,
 ) -> Result<()> {
     let file_types = match language {
-        SupportedLanguage::Rust => extract_rust_types(source, relative_path)?,
-        SupportedLanguage::TypeScript => extract_typescript_types(source, relative_path, true)?,
-        SupportedLanguage::JavaScript => extract_typescript_types(source, relative_path, false)?,
-        SupportedLanguage::Python => extract_python_types(source, relative_path)?,
-        SupportedLanguage::Java => extract_java_types(source, relative_path)?,
-        SupportedLanguage::CSharp => extract_csharp_types(source, relative_path)?,
-        SupportedLanguage::Go => extract_go_types(source, relative_path)?,
+        SupportedLanguage::Rust => extract_rust_types(source, relative_path, tree)?,
+        SupportedLanguage::TypeScript => {
+            extract_typescript_types(source, relative_path, true, tree)?
+        }
+        SupportedLanguage::JavaScript => {
+            extract_typescript_types(source, relative_path, false, tree)?
+        }
+        SupportedLanguage::Python => extract_python_types(source, relative_path, tree)?,
+        SupportedLanguage::Java => extract_java_types(source, relative_path, tree)?,
+        SupportedLanguage::CSharp => extract_csharp_types(source, relative_path, tree)?,
+        SupportedLanguage::Go => extract_go_types(source, relative_path, tree)?,
     };
 
     for ty in file_types {
@@ -397,14 +403,22 @@ fn detect_language(path: &Path) -> Option<SupportedLanguage> {
 pub(crate) fn extract_rust_types(
     source: &str,
     relative_path: &Path,
+    tree: Option<&tree_sitter::Tree>,
 ) -> Result<Vec<TypeDefinition>> {
-    let mut parser = Parser::new();
-    parser
-        .set_language(&tree_sitter_rust::LANGUAGE.into())
-        .wrap_err("Failed to configure Rust parser")?;
-    let tree = parser
-        .parse(source, None)
-        .ok_or_else(|| eyre::eyre!("Failed to parse Rust source"))?;
+    let tree_storage;
+    let tree = match tree {
+        Some(t) => t,
+        None => {
+            let mut parser = Parser::new();
+            parser
+                .set_language(&tree_sitter_rust::LANGUAGE.into())
+                .wrap_err("Failed to configure Rust parser")?;
+            tree_storage = parser
+                .parse(source, None)
+                .ok_or_else(|| eyre::eyre!("Failed to parse Rust source"))?;
+            &tree_storage
+        }
+    };
 
     let query_src = r#"
         (struct_item name: (type_identifier) @name) @struct
@@ -680,19 +694,28 @@ pub(crate) fn extract_typescript_types(
     source: &str,
     relative_path: &Path,
     is_typescript: bool,
+    tree: Option<&tree_sitter::Tree>,
 ) -> Result<Vec<TypeDefinition>> {
-    let mut parser = Parser::new();
     let language = if is_typescript {
         tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()
     } else {
         tree_sitter_javascript::LANGUAGE.into()
     };
-    parser
-        .set_language(&language)
-        .wrap_err("Failed to configure TypeScript parser")?;
-    let tree = parser
-        .parse(source, None)
-        .ok_or_else(|| eyre::eyre!("Failed to parse TypeScript source"))?;
+
+    let tree_storage;
+    let tree = match tree {
+        Some(t) => t,
+        None => {
+            let mut parser = Parser::new();
+            parser
+                .set_language(&language)
+                .wrap_err("Failed to configure TypeScript parser")?;
+            tree_storage = parser
+                .parse(source, None)
+                .ok_or_else(|| eyre::eyre!("Failed to parse TypeScript source"))?;
+            &tree_storage
+        }
+    };
 
     let query_src = if is_typescript {
         r#"
@@ -893,14 +916,22 @@ fn collect_ts_variants(node: Node, source: &[u8]) -> Option<Vec<Variant>> {
 pub(crate) fn extract_python_types(
     source: &str,
     relative_path: &Path,
+    tree: Option<&tree_sitter::Tree>,
 ) -> Result<Vec<TypeDefinition>> {
-    let mut parser = Parser::new();
-    parser
-        .set_language(&tree_sitter_python::LANGUAGE.into())
-        .wrap_err("Failed to configure Python parser")?;
-    let tree = parser
-        .parse(source, None)
-        .ok_or_else(|| eyre::eyre!("Failed to parse Python source"))?;
+    let tree_storage;
+    let tree = match tree {
+        Some(t) => t,
+        None => {
+            let mut parser = Parser::new();
+            parser
+                .set_language(&tree_sitter_python::LANGUAGE.into())
+                .wrap_err("Failed to configure Python parser")?;
+            tree_storage = parser
+                .parse(source, None)
+                .ok_or_else(|| eyre::eyre!("Failed to parse Python source"))?;
+            &tree_storage
+        }
+    };
 
     let query_src = r#"
         (class_definition name: (identifier) @name) @class
@@ -1279,14 +1310,25 @@ fn unquote_python_string(raw: &str) -> String {
     trimmed.to_string()
 }
 
-fn extract_java_types(source: &str, relative_path: &Path) -> Result<Vec<TypeDefinition>> {
-    let mut parser = Parser::new();
-    parser
-        .set_language(&tree_sitter_java::LANGUAGE.into())
-        .wrap_err("Failed to configure Java parser")?;
-    let tree = parser
-        .parse(source, None)
-        .ok_or_else(|| eyre::eyre!("Failed to parse Java source"))?;
+pub(crate) fn extract_java_types(
+    source: &str,
+    relative_path: &Path,
+    tree: Option<&tree_sitter::Tree>,
+) -> Result<Vec<TypeDefinition>> {
+    let tree_storage;
+    let tree = match tree {
+        Some(t) => t,
+        None => {
+            let mut parser = Parser::new();
+            parser
+                .set_language(&tree_sitter_java::LANGUAGE.into())
+                .wrap_err("Failed to configure Java parser")?;
+            tree_storage = parser
+                .parse(source, None)
+                .ok_or_else(|| eyre::eyre!("Failed to parse Java source"))?;
+            &tree_storage
+        }
+    };
 
     let query_src = r#"
         (class_declaration name: (identifier) @name) @class
@@ -1419,14 +1461,25 @@ fn extract_java_types(source: &str, relative_path: &Path) -> Result<Vec<TypeDefi
     Ok(definitions)
 }
 
-fn extract_go_types(source: &str, relative_path: &Path) -> Result<Vec<TypeDefinition>> {
-    let mut parser = Parser::new();
-    parser
-        .set_language(&tree_sitter_go::LANGUAGE.into())
-        .wrap_err("Failed to configure Go parser")?;
-    let tree = parser
-        .parse(source, None)
-        .ok_or_else(|| eyre::eyre!("Failed to parse Go source"))?;
+pub(crate) fn extract_go_types(
+    source: &str,
+    relative_path: &Path,
+    tree: Option<&tree_sitter::Tree>,
+) -> Result<Vec<TypeDefinition>> {
+    let tree_storage;
+    let tree = match tree {
+        Some(t) => t,
+        None => {
+            let mut parser = Parser::new();
+            parser
+                .set_language(&tree_sitter_go::LANGUAGE.into())
+                .wrap_err("Failed to configure Go parser")?;
+            tree_storage = parser
+                .parse(source, None)
+                .ok_or_else(|| eyre::eyre!("Failed to parse Go source"))?;
+            &tree_storage
+        }
+    };
 
     let query_src = r#"
         (type_spec name: (type_identifier) @name type: (struct_type) @struct) @struct_spec
@@ -1589,14 +1642,25 @@ fn extract_go_types(source: &str, relative_path: &Path) -> Result<Vec<TypeDefini
     Ok(definitions)
 }
 
-fn extract_csharp_types(source: &str, relative_path: &Path) -> Result<Vec<TypeDefinition>> {
-    let mut parser = Parser::new();
-    parser
-        .set_language(&tree_sitter_c_sharp::LANGUAGE.into())
-        .wrap_err("Failed to configure C# parser")?;
-    let tree = parser
-        .parse(source, None)
-        .ok_or_else(|| eyre::eyre!("Failed to parse C# source"))?;
+pub(crate) fn extract_csharp_types(
+    source: &str,
+    relative_path: &Path,
+    tree: Option<&tree_sitter::Tree>,
+) -> Result<Vec<TypeDefinition>> {
+    let tree_storage;
+    let tree = match tree {
+        Some(t) => t,
+        None => {
+            let mut parser = Parser::new();
+            parser
+                .set_language(&tree_sitter_c_sharp::LANGUAGE.into())
+                .wrap_err("Failed to configure C# parser")?;
+            tree_storage = parser
+                .parse(source, None)
+                .ok_or_else(|| eyre::eyre!("Failed to parse C# source"))?;
+            &tree_storage
+        }
+    };
 
     let query_src = r#"
         (class_declaration name: (identifier) @name) @class

@@ -21,7 +21,7 @@ mod tests {
         let file_path = dir.path().join("test.rs");
         fs::write(&file_path, source)?;
 
-        let result = extract_rust_types(source, Path::new("test.rs"))?;
+        let result = extract_rust_types(source, Path::new("test.rs"), None)?;
         assert_eq!(result.len(), 4);
 
         let user = result.iter().find(|t| t.name == "User").unwrap();
@@ -56,7 +56,7 @@ mod tests {
             enum Role { Admin, User }
             type Id = number;
         "#;
-        let result = extract_typescript_types(source, Path::new("test.ts"), true)?;
+        let result = extract_typescript_types(source, Path::new("test.ts"), true, None)?;
         assert_eq!(result.len(), 4);
 
         let service = result.iter().find(|t| t.name == "UserService").unwrap();
@@ -89,7 +89,7 @@ UserDict = TypedDict("UserDict", {"id": int, "name": str})
 Point = NamedTuple("Point", [("x", int), ("y", int)])
 "#;
 
-        let result = extract_python_types(source, Path::new("test.py"))?;
+        let result = extract_python_types(source, Path::new("test.py"), None)?;
         assert_eq!(result.len(), 5);
 
         let user = result.iter().find(|t| t.name == "User").unwrap();
