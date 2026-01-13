@@ -130,18 +130,6 @@ pub struct TypeDefinition {
     pub members: Option<Vec<Member>>,
 }
 
-/// Extract types from a path (file or directory).
-///
-/// Set `count_usages` to true to also count usages during extraction (single-pass).
-/// This is more efficient than calling `count_all_usages` separately.
-pub fn extract_types(
-    path: impl AsRef<Path>,
-    pattern: Option<&str>,
-    max_types: usize,
-) -> Result<TypeExtractionResult> {
-    extract_types_with_options(path, pattern, max_types, false)
-}
-
 /// Extract types with optional usage counting in a single pass.
 pub fn extract_types_with_options(
     path: impl AsRef<Path>,

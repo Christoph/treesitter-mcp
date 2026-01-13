@@ -1,71 +1,5 @@
-use std::collections::{HashMap, HashSet};
-use std::fs;
+use std::collections::HashMap;
 use std::path::Path;
-
-use eyre::Result;
-use walkdir::WalkDir;
-
-use crate::extraction::types::TypeDefinition;
-
-pub fn count_all_usages(types: &mut [TypeDefinition], project_path: &Path) -> Result<()> {
-    if types.is_empty() {
-        return Ok(());
-    }
-
-    let unique_names: HashSet<String> = types.iter().map(|t| t.name.clone()).collect();
-    let mut usage_map: HashMap<String, usize> =
-        unique_names.into_iter().map(|name| (name, 0)).collect();
-
-    let mut definition_counts: HashMap<String, usize> = HashMap::new();
-    for type_def in types.iter() {
-        *definition_counts.entry(type_def.name.clone()).or_insert(0) += 1;
-    }
-
-    // Single pass through all files
-    let project_path_abs = project_path
-        .canonicalize()
-        .unwrap_or_else(|_| project_path.to_path_buf());
-
-    for entry in WalkDir::new(&project_path_abs)
-        .into_iter()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().is_file())
-    {
-        let file_path = entry.path();
-
-        // Skip hidden files/dirs and common ignore dirs
-        // Only check components relative to project_path to avoid skipping due to hidden parent dirs
-        if let Ok(rel_path) = file_path.strip_prefix(&project_path_abs) {
-            if is_rel_path_ignored(rel_path) {
-                continue;
-            }
-        }
-
-        let content = match fs::read_to_string(file_path) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-
-        let stripped = strip_comments_and_strings(&content, language_for_path(file_path));
-
-        // Count all type names in this file
-        for word in stripped.split(|c: char| !c.is_alphanumeric() && c != '_') {
-            if let Some(count) = usage_map.get_mut(word) {
-                *count += 1;
-            }
-        }
-    }
-
-    // Update usage counts
-    for type_def in types {
-        if let Some(&count) = usage_map.get(&type_def.name) {
-            let definition_count = definition_counts.get(&type_def.name).copied().unwrap_or(1);
-            type_def.usage_count = count.saturating_sub(definition_count);
-        }
-    }
-
-    Ok(())
-}
 
 #[derive(Debug, Clone, Copy)]
 pub enum CountLanguage {
@@ -442,16 +376,4 @@ fn ends_rust_raw_string(bytes: &[u8], quote_index: usize, hashes: usize) -> bool
     }
 
     true
-}
-
-fn is_rel_path_ignored(path: &Path) -> bool {
-    path.components().any(|c| {
-        let s = c.as_os_str().to_string_lossy();
-        s.starts_with('.')
-            || s == "target"
-            || s == "node_modules"
-            || s == "vendor"
-            || s == "build"
-            || s == "dist"
-    })
 }
