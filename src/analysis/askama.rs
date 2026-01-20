@@ -1,6 +1,8 @@
 use eyre::{Result, WrapErr};
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::{Path, PathBuf};
 use tree_sitter::Node;
@@ -11,6 +13,7 @@ use crate::mcp_types::{CallToolResult, CallToolResultExt};
 use crate::parser::{parse_code, Language};
 
 const MAX_NESTED_DEPTH: u8 = 3;
+const MAX_TEMPLATE_DEPTH: usize = 50;
 
 /// MCP tool execute function for template_context
 ///
@@ -611,4 +614,175 @@ fn find_struct_by_name(
     }
 
     Ok(None)
+}
+
+// ============================================================================
+// Template Support (Askama/Jinja2)
+// ============================================================================
+
+/// Template dependency info
+#[derive(Debug, serde::Serialize, Clone)]
+pub struct TemplateDependency {
+    pub path: String,
+    pub dependency_type: String, // "extends" or "include"
+    pub name: String,
+}
+
+/// Template file shape (when merge_templates=true)
+#[derive(Debug, serde::Serialize)]
+pub struct MergedTemplateShape {
+    pub path: String,
+    pub merged_content: String,
+    pub dependencies: Vec<TemplateDependency>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub template_structs: Option<Vec<TemplateStructInfo>>,
+}
+
+/// Find template dependencies (extends/includes) in a template file
+///
+/// Returns a list of template dependencies with their types and paths.
+pub fn find_template_dependencies(
+    source: &str,
+    templates_dir: &Path,
+) -> Result<Vec<TemplateDependency>, io::Error> {
+    let mut dependencies = Vec::new();
+
+    // Regex for {% extends "base.html" %}
+    let extends_re = Regex::new(r#"\{%\s*extends\s+["']([^"']+)["']\s*%\}"#).unwrap();
+    // Regex for {% include "partial.html" %}
+    let include_re = Regex::new(r#"\{%\s*include\s+["']([^"']+)["']\s*%\}"#).unwrap();
+
+    // Find extends
+    for cap in extends_re.captures_iter(source) {
+        let template_name = &cap[1];
+        let template_path = templates_dir.join(template_name);
+        // Only include if the template file exists
+        if template_path.exists() {
+            dependencies.push(TemplateDependency {
+                path: template_name.to_string(),
+                dependency_type: "extends".to_string(),
+                name: template_name.to_string(),
+            });
+        }
+    }
+
+    // Find includes
+    for cap in include_re.captures_iter(source) {
+        let template_name = &cap[1];
+        let template_path = templates_dir.join(template_name);
+        // Only include if the template file exists
+        if template_path.exists() {
+            dependencies.push(TemplateDependency {
+                path: template_name.to_string(),
+                dependency_type: "include".to_string(),
+                name: template_name.to_string(),
+            });
+        }
+    }
+
+    Ok(dependencies)
+}
+
+/// Recursively merge a template with its parent templates and includes
+///
+/// Handles {% extends %} and {% include %} directives, merging content appropriately.
+pub fn merge_template(
+    template_path: &Path,
+    templates_dir: &Path,
+    visited: &mut HashSet<PathBuf>,
+    recursion_stack: &mut Vec<PathBuf>,
+) -> Result<String, io::Error> {
+    // Check for circular dependencies
+    if recursion_stack.contains(&template_path.to_path_buf()) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "Circular template dependency detected: {}",
+                template_path.display()
+            ),
+        ));
+    }
+
+    // Check recursion depth
+    if recursion_stack.len() >= MAX_TEMPLATE_DEPTH {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("Template recursion depth exceeded (max: {MAX_TEMPLATE_DEPTH})"),
+        ));
+    }
+
+    recursion_stack.push(template_path.to_path_buf());
+    visited.insert(template_path.to_path_buf());
+
+    let source = std::fs::read_to_string(template_path)?;
+
+    // Check for {% extends "parent.html" %}
+    let extends_re = Regex::new(r#"\{%\s*extends\s+["']([^"']+)["']\s*%\}"#).unwrap();
+    if let Some(cap) = extends_re.captures(&source) {
+        let parent_name = &cap[1];
+        let parent_path = templates_dir.join(parent_name);
+
+        // Recursively merge parent
+        let parent_content = merge_template(&parent_path, templates_dir, visited, recursion_stack)?;
+
+        // Extract blocks from current template
+        let blocks = extract_blocks(&source)?;
+
+        // Replace blocks in parent
+        let merged = replace_blocks(&parent_content, &blocks)?;
+
+        recursion_stack.pop();
+        return Ok(merged);
+    }
+
+    // Handle {% include "partial.html" %}
+    let include_re = Regex::new(r#"\{%\s*include\s+["']([^"']+)["']\s*%\}"#).unwrap();
+    let mut result = source.clone();
+
+    for cap in include_re.captures_iter(&source) {
+        let include_name = &cap[1];
+        let include_path = templates_dir.join(include_name);
+
+        let include_content =
+            merge_template(&include_path, templates_dir, visited, recursion_stack)?;
+
+        // Replace the include directive with the content
+        let directive = &cap[0];
+        result = result.replace(directive, &include_content);
+    }
+
+    recursion_stack.pop();
+    Ok(result)
+}
+
+/// Extract {% block name %}...{% endblock %} sections from a template
+fn extract_blocks(source: &str) -> Result<HashMap<String, String>, io::Error> {
+    let mut blocks = HashMap::new();
+
+    let block_re = Regex::new(r#"\{%\s*block\s+(\w+)\s*%\}(.*?)\{%\s*endblock\s*%\}"#).unwrap();
+
+    for cap in block_re.captures_iter(source) {
+        let block_name = cap[1].to_string();
+        let block_content = cap[2].to_string();
+        blocks.insert(block_name, block_content);
+    }
+
+    Ok(blocks)
+}
+
+/// Replace {% block name %}...{% endblock %} sections in a template with provided blocks
+fn replace_blocks(template: &str, blocks: &HashMap<String, String>) -> Result<String, io::Error> {
+    let block_re = Regex::new(r#"\{%\s*block\s+(\w+)\s*%\}.*?\{%\s*endblock\s*%\}"#).unwrap();
+
+    let mut result = template.to_string();
+
+    for cap in block_re.captures_iter(template) {
+        let block_name = &cap[1];
+        if let Some(replacement) = blocks.get(block_name) {
+            let full_block = &cap[0];
+            result = result.replace(full_block, replacement);
+        }
+    }
+
+    Ok(result)
 }

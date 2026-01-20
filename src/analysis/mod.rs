@@ -2,7 +2,6 @@ pub mod askama;
 pub mod code_map;
 pub mod dependencies;
 pub mod diff;
-pub mod file_shape;
 pub mod find_usages;
 pub mod path_utils;
 pub mod query_pattern;

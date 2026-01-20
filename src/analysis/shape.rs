@@ -721,10 +721,10 @@ fn extract_swift_enhanced(
     include_code: bool,
 ) -> Result<EnhancedFileShape, io::Error> {
     let mut functions = Vec::new();
-    let mut structs = Vec::new();
     let mut classes = Vec::new();
-    let mut imports = Vec::new();
+    let mut structs = Vec::new();
     let mut traits = Vec::new();
+    let mut imports = Vec::new();
 
     // Use tree-sitter query API for efficient extraction (Swift grammar)
     let query = Query::new(
@@ -1395,7 +1395,7 @@ fn extract_go_enhanced(
     let mut functions = Vec::new();
     let mut structs = Vec::new();
     let mut imports = Vec::new();
-    let mut interfaces = Vec::new();
+    let mut traits = Vec::new();
 
     let query = Query::new(
         &tree_sitter_go::LANGUAGE.into(),
@@ -1463,7 +1463,9 @@ fn extract_go_enhanced(
                             let end_line = type_spec.end_position().row + 1;
                             let doc = extract_doc_comment(type_spec, source, Language::Go)?;
                             let code = if include_code {
-                                extract_code(type_spec, source)?
+                                // Extract from parent type_declaration to include 'type' keyword
+                                let code_node = type_spec.parent().unwrap_or(type_spec);
+                                extract_code(code_node, source)?
                             } else {
                                 None
                             };
@@ -1505,14 +1507,13 @@ fn extract_go_enhanced(
                                                         None
                                                     };
 
-                                                    methods.push(EnhancedFunctionInfo {
+                                                    methods.push(MethodInfo {
                                                         name: method_name.to_string(),
                                                         signature,
                                                         line: method_line,
                                                         end_line: method_end_line,
                                                         doc: method_doc,
                                                         code,
-                                                        annotations: vec![],
                                                     });
                                                 }
                                             }
@@ -1520,14 +1521,12 @@ fn extract_go_enhanced(
                                     }
                                 }
 
-                                interfaces.push(InterfaceInfo {
+                                traits.push(TraitInfo {
                                     name: name.to_string(),
                                     line,
                                     end_line,
                                     doc,
-                                    code,
                                     methods,
-                                    properties: vec![],
                                 });
                             } else {
                                 // Assume struct for other types
@@ -1563,8 +1562,8 @@ fn extract_go_enhanced(
         classes: vec![],
         imports,
         impl_blocks: vec![],
-        traits: vec![],
-        interfaces,
+        traits,
+        interfaces: vec![],
         properties: vec![],
         dependencies: vec![],
     })

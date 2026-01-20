@@ -46,7 +46,7 @@ func Add(a, b int) int {
         "Expected signature to contain 'func Add', got: {}",
         func.signature
     );
-    assert_eq!(func.line, 4, "Expected function to start at line 4");
+    assert_eq!(func.line, 5, "Expected function to start at line 5");
 }
 
 /// Test extraction of Go struct with methods

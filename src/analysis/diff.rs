@@ -1365,7 +1365,6 @@ fn get_result_text(result: &CallToolResult) -> String {
 }
 
 /// Find project root by walking up to the nearest directory containing Cargo.toml
-/// Duplicated from file_shape.rs since that function is private
 fn find_project_root(start: &Path) -> Option<std::path::PathBuf> {
     let mut current = if start.is_dir() {
         start.to_path_buf()
