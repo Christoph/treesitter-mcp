@@ -53,9 +53,7 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult> {
                 .then_with(|| a.name.cmp(&b.name))
         } else {
             // When not counting usages, sort by file path then line number for predictable output
-            a.file
-                .cmp(&b.file)
-                .then_with(|| a.line.cmp(&b.line))
+            a.file.cmp(&b.file).then_with(|| a.line.cmp(&b.line))
         }
     });
 

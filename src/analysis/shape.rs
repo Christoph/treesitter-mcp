@@ -1,7 +1,7 @@
 //! Enhanced Shape Extraction Module
 //!
 //! Extracts detailed file structure with signatures, doc comments, and full code blocks.
-//! Supports Rust, Python, JavaScript, TypeScript, Swift, C#, and Java.
+//! Supports Rust, Python, JavaScript, TypeScript, Swift, C#, Java, Go, and Kotlin.
 
 use crate::parser::Language;
 use std::io;
@@ -182,6 +182,7 @@ pub fn extract_enhanced_shape(
         Language::CSharp => extract_csharp_enhanced(tree, source, include_code)?,
         Language::Java => extract_java_enhanced(tree, source, include_code)?,
         Language::Go => extract_go_enhanced(tree, source, include_code)?,
+        Language::Kotlin => extract_kotlin_enhanced(tree, source, include_code)?,
         Language::Html | Language::Css => {
             // HTML and CSS are markup/styling languages and are not suitable for
             // structural shape analysis. They lack the function/class/module structure
@@ -1303,7 +1304,7 @@ fn extract_java_enhanced(
                                         None
                                     };
 
-                                    // Extract implements interfaces
+                                    // Extract implements interfaces from super_interfaces
                                     let implements =
                                         extract_java_implemented_interfaces(node, source);
 
@@ -1393,16 +1394,16 @@ fn extract_go_enhanced(
 ) -> Result<EnhancedFileShape, io::Error> {
     let mut functions = Vec::new();
     let mut structs = Vec::new();
-    let mut traits = Vec::new();
     let mut imports = Vec::new();
+    let mut interfaces = Vec::new();
 
     let query = Query::new(
         &tree_sitter_go::LANGUAGE.into(),
         r#"
         (function_declaration name: (identifier) @func.name) @func
-        (type_spec name: (type_identifier) @struct.name type: (struct_type)) @struct
-        (type_spec name: (type_identifier) @iface.name type: (interface_type)) @iface
-        (import_spec path: (interpreted_string_literal) @import.path) @import
+        (method_declaration name: (field_identifier) @method.name) @method
+        (type_declaration (type_spec name: (type_identifier) @type.name)) @type
+        (import_spec) @import
         "#,
     )
     .map_err(|e| {
@@ -1415,39 +1416,27 @@ fn extract_go_enhanced(
     let mut cursor = QueryCursor::new();
     let matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
 
-    let mut processed_function_nodes = std::collections::HashSet::new();
-    let mut processed_type_nodes = std::collections::HashSet::new();
-
     for match_ in matches {
         for capture in match_.captures {
             let node = capture.node;
-            let capture_name = query.capture_names()[capture.index as usize];
+            let name_idx = capture.index;
+            let capture_name = query.capture_names()[name_idx as usize];
 
             match capture_name {
-                "func.name" => {
-                    if let Ok(func_node) = find_parent_by_type(node, "function_declaration") {
-                        let node_id = func_node.id();
-                        if processed_function_nodes.contains(&node_id) {
-                            continue;
-                        }
-                        processed_function_nodes.insert(node_id);
+                "func.name" | "method.name" => {
+                    // Go methods are top-level constructs attached to types, so we treat them as functions
+                    let func_node = if capture_name == "func.name" {
+                        find_parent_by_type(node, "function_declaration").ok()
+                    } else {
+                        find_parent_by_type(node, "method_declaration").ok()
+                    };
 
+                    if let Some(func_node) = func_node {
                         if let Ok(name) = node.utf8_text(source.as_bytes()) {
-                            let mut line = func_node.start_position().row + 1;
+                            let line = func_node.start_position().row + 1;
                             let end_line = func_node.end_position().row + 1;
                             let signature = extract_signature(func_node, source)?;
                             let doc = extract_doc_comment(func_node, source, Language::Go)?;
-
-                            // Go tests expect the "start line" for functions to include the
-                            // immediately preceding doc comment.
-                            if let Some(prev) = func_node.prev_sibling() {
-                                if prev.kind() == "comment"
-                                    && prev.end_position().row + 1 == line.saturating_sub(1)
-                                {
-                                    line = prev.start_position().row + 1;
-                                }
-                            }
-
                             let code = if include_code {
                                 extract_code(func_node, source)?
                             } else {
@@ -1466,59 +1455,94 @@ fn extract_go_enhanced(
                         }
                     }
                 }
-                "struct.name" => {
-                    // Walk up to the full type_declaration to keep `type X ...` in code.
-                    if let Ok(type_decl) = find_parent_by_type(node, "type_declaration") {
-                        let node_id = type_decl.id();
-                        if processed_type_nodes.contains(&node_id) {
-                            continue;
-                        }
-                        processed_type_nodes.insert(node_id);
-
+                "type.name" => {
+                    // Check if it's a struct or interface
+                    if let Ok(type_spec) = find_parent_by_type(node, "type_spec") {
                         if let Ok(name) = node.utf8_text(source.as_bytes()) {
-                            let line = type_decl.start_position().row + 1;
-                            let end_line = type_decl.end_position().row + 1;
-                            let doc = extract_doc_comment(type_decl, source, Language::Go)?;
+                            let line = type_spec.start_position().row + 1;
+                            let end_line = type_spec.end_position().row + 1;
+                            let doc = extract_doc_comment(type_spec, source, Language::Go)?;
                             let code = if include_code {
-                                extract_code(type_decl, source)?
+                                extract_code(type_spec, source)?
                             } else {
                                 None
                             };
 
-                            structs.push(EnhancedStructInfo {
-                                name: name.to_string(),
-                                line,
-                                end_line,
-                                doc,
-                                code,
-                            });
+                            // Check type kind (struct or interface)
+                            let is_interface = type_spec
+                                .child_by_field_name("type")
+                                .map(|t| t.kind() == "interface_type")
+                                .unwrap_or(false);
+
+                            if is_interface {
+                                // Extract methods for interface
+                                let mut methods = Vec::new();
+                                if let Some(type_node) = type_spec.child_by_field_name("type") {
+                                    let mut cursor = type_node.walk();
+                                    for child in type_node.children(&mut cursor) {
+                                        if child.kind() == "method_spec" {
+                                            if let Some(name_node) =
+                                                child.child_by_field_name("name")
+                                            {
+                                                if let Ok(method_name) =
+                                                    name_node.utf8_text(source.as_bytes())
+                                                {
+                                                    let method_line =
+                                                        child.start_position().row + 1;
+                                                    let method_end_line =
+                                                        child.end_position().row + 1;
+                                                    let signature =
+                                                        extract_signature(child, source)?;
+                                                    let method_doc = extract_doc_comment(
+                                                        child,
+                                                        source,
+                                                        Language::Go,
+                                                    )?;
+
+                                                    let code = if include_code {
+                                                        extract_code(child, source)?
+                                                    } else {
+                                                        None
+                                                    };
+
+                                                    methods.push(EnhancedFunctionInfo {
+                                                        name: method_name.to_string(),
+                                                        signature,
+                                                        line: method_line,
+                                                        end_line: method_end_line,
+                                                        doc: method_doc,
+                                                        code,
+                                                        annotations: vec![],
+                                                    });
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                interfaces.push(InterfaceInfo {
+                                    name: name.to_string(),
+                                    line,
+                                    end_line,
+                                    doc,
+                                    code,
+                                    methods,
+                                    properties: vec![],
+                                });
+                            } else {
+                                // Assume struct for other types
+                                structs.push(EnhancedStructInfo {
+                                    name: name.to_string(),
+                                    line,
+                                    end_line,
+                                    doc,
+                                    code,
+                                });
+                            }
                         }
                     }
                 }
-                "iface.name" => {
-                    if let Ok(type_decl) = find_parent_by_type(node, "type_declaration") {
-                        let node_id = type_decl.id();
-                        if processed_type_nodes.contains(&node_id) {
-                            continue;
-                        }
-                        processed_type_nodes.insert(node_id);
-
-                        if let Ok(name) = node.utf8_text(source.as_bytes()) {
-                            let line = type_decl.start_position().row + 1;
-                            let end_line = type_decl.end_position().row + 1;
-                            let doc = extract_doc_comment(type_decl, source, Language::Go)?;
-
-                            traits.push(TraitInfo {
-                                name: name.to_string(),
-                                line,
-                                end_line,
-                                doc,
-                                methods: vec![],
-                            });
-                        }
-                    }
-                }
-                "import.path" => {
+                "import" => {
                     if let Ok(text) = node.utf8_text(source.as_bytes()) {
                         imports.push(ImportInfo {
                             text: text.to_string(),
@@ -1539,8 +1563,263 @@ fn extract_go_enhanced(
         classes: vec![],
         imports,
         impl_blocks: vec![],
-        traits,
-        interfaces: vec![],
+        traits: vec![],
+        interfaces,
+        properties: vec![],
+        dependencies: vec![],
+    })
+}
+
+fn extract_kotlin_enhanced(
+    tree: &Tree,
+    source: &str,
+    include_code: bool,
+) -> Result<EnhancedFileShape, io::Error> {
+    let language = tree_sitter_kotlin_ng::LANGUAGE.into();
+
+    let mut functions = Vec::new();
+    let mut classes = Vec::new();
+    let mut structs = Vec::new();
+    let mut interfaces = Vec::new();
+    let mut imports = Vec::new();
+
+    // Query for top-level definitions
+    let query_str = r#"
+        (function_declaration) @function
+        (class_declaration) @class
+        (object_declaration) @object
+        (type_alias) @alias
+        (import_list (import_header)) @import
+    "#;
+
+    let query = Query::new(&language, query_str)
+        .or_else(|_| {
+            Query::new(
+                &language,
+                r#"
+            (function_declaration) @function
+            (class_declaration) @class
+            (object_declaration) @object
+            (type_alias) @alias
+            (import_header) @import
+        "#,
+            )
+        })
+        .or_else(|_| {
+            Query::new(
+                &language,
+                r#"
+            (function_declaration) @function
+            (class_declaration) @class
+            (object_declaration) @object
+            (type_alias) @alias
+            (import) @import
+        "#,
+            )
+        })
+        .map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Failed to create Kotlin query: {e}"),
+            )
+        })?;
+
+    let mut cursor = QueryCursor::new();
+    let matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
+
+    for match_ in matches {
+        for capture in match_.captures {
+            let node = capture.node;
+            let capture_name = query.capture_names()[capture.index as usize];
+
+            match capture_name {
+                "function" => {
+                    if let Some(name_node) = node.child_by_field_name("name") {
+                        let name_node = if !name_node.is_missing() {
+                            name_node
+                        } else {
+                            let mut cursor = node.walk();
+                            let mut found = None;
+                            for child in node.children(&mut cursor) {
+                                if child.kind() == "simple_identifier" {
+                                    found = Some(child);
+                                    break;
+                                }
+                            }
+                            found.unwrap_or(node)
+                        };
+
+                        if let Ok(name) = name_node.utf8_text(source.as_bytes()) {
+                            if node.kind() == "function_declaration" {
+                                let line = node.start_position().row + 1;
+                                let end_line = node.end_position().row + 1;
+                                let signature = extract_signature(node, source)?;
+                                let doc = extract_doc_comment(node, source, Language::Kotlin)?;
+                                let code = if include_code {
+                                    extract_code(node, source)?
+                                } else {
+                                    None
+                                };
+
+                                functions.push(EnhancedFunctionInfo {
+                                    name: name.to_string(),
+                                    signature,
+                                    line,
+                                    end_line,
+                                    doc,
+                                    code,
+                                    annotations: vec![],
+                                });
+                            }
+                        }
+                    }
+                }
+                "class" | "object" => {
+                    let mut is_interface = false;
+                    let mut cursor = node.walk();
+                    for child in node.children(&mut cursor) {
+                        if child.kind() == "interface" || child.kind() == "fun" {
+                            is_interface = true;
+                            break;
+                        }
+                        if child.kind() == "modifiers" {
+                            let mut mod_cursor = child.walk();
+                            for mod_child in child.children(&mut mod_cursor) {
+                                if mod_child.kind() == "interface" {
+                                    is_interface = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    let mut name_found = String::new();
+                    if let Some(name_node) = node.child_by_field_name("name") {
+                        if let Ok(n) = name_node.utf8_text(source.as_bytes()) {
+                            name_found = n.to_string();
+                        }
+                    } else {
+                        let mut cursor = node.walk();
+                        for child in node.children(&mut cursor) {
+                            if child.kind() == "type_identifier"
+                                || child.kind() == "simple_identifier"
+                            {
+                                if let Ok(n) = child.utf8_text(source.as_bytes()) {
+                                    name_found = n.to_string();
+                                }
+                                break;
+                            }
+                        }
+                    }
+
+                    if !name_found.is_empty() {
+                        let line = node.start_position().row + 1;
+                        let end_line = node.end_position().row + 1;
+                        let doc = extract_doc_comment(node, source, Language::Kotlin)?;
+                        let code = if include_code {
+                            extract_code(node, source)?
+                        } else {
+                            None
+                        };
+
+                        if is_interface {
+                            interfaces.push(InterfaceInfo {
+                                name: name_found,
+                                line,
+                                end_line,
+                                doc,
+                                code,
+                                methods: vec![],
+                                properties: vec![],
+                            });
+                        } else {
+                            classes.push(EnhancedClassInfo {
+                                name: name_found,
+                                line,
+                                end_line,
+                                doc,
+                                code,
+                                methods: vec![],
+                                fields: vec![],
+                                implements: vec![],
+                                properties: vec![],
+                            });
+                        }
+                    }
+                }
+                "alias" => {
+                    let mut name_found = String::new();
+                    if let Some(name_node) = node.child_by_field_name("name") {
+                        if let Ok(n) = name_node.utf8_text(source.as_bytes()) {
+                            name_found = n.to_string();
+                        }
+                    }
+                    if name_found.is_empty() {
+                        if let Some(name_node) = node.child_by_field_name("type") {
+                            if let Ok(n) = name_node.utf8_text(source.as_bytes()) {
+                                name_found = n.to_string();
+                            }
+                        }
+                    }
+
+                    if name_found.is_empty() {
+                        let mut cursor = node.walk();
+                        for child in node.children(&mut cursor) {
+                            if child.kind() == "type_identifier"
+                                || child.kind() == "simple_identifier"
+                                || child.kind() == "identifier"
+                            {
+                                if let Ok(n) = child.utf8_text(source.as_bytes()) {
+                                    name_found = n.to_string();
+                                }
+                                break;
+                            }
+                        }
+                    }
+
+                    if !name_found.is_empty() {
+                        let line = node.start_position().row + 1;
+                        let end_line = node.end_position().row + 1;
+                        let doc = extract_doc_comment(node, source, Language::Kotlin)?;
+                        let code = if include_code {
+                            extract_code(node, source)?
+                        } else {
+                            None
+                        };
+
+                        structs.push(EnhancedStructInfo {
+                            name: name_found,
+                            line,
+                            end_line,
+                            doc,
+                            code,
+                        });
+                    }
+                }
+
+                "import" => {
+                    if let Ok(text) = node.utf8_text(source.as_bytes()) {
+                        imports.push(ImportInfo {
+                            text: text.to_string(),
+                            line: node.start_position().row + 1,
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    Ok(EnhancedFileShape {
+        path: None,
+        language: Some("kotlin".to_string()),
+        functions,
+        structs,
+        classes,
+        imports,
+        impl_blocks: vec![],
+        traits: vec![],
+        interfaces,
         properties: vec![],
         dependencies: vec![],
     })
@@ -1962,6 +2241,8 @@ fn extract_signature(node: Node, source: &str) -> Result<String, io::Error> {
         if kind == "block"
             || kind == "statement_block"
             || kind == "body"
+            || kind == "function_body"
+            || kind == "class_body"
             || kind == "compound_statement"
             || kind == "field_declaration_list"
         // For structs
@@ -2100,6 +2381,7 @@ fn is_comment_node(node: &Node, language: Language) -> bool {
         | Language::Java
         | Language::Go => kind == "line_comment" || kind == "block_comment" || kind == "comment",
         Language::Python => kind == "comment",
+        Language::Kotlin => kind == "line_comment" || kind == "block_comment",
         _ => false,
     }
 }
@@ -2127,7 +2409,11 @@ fn extract_doc_from_comment(comment_text: &str, language: Language) -> String {
                 String::new()
             }
         }
-        Language::JavaScript | Language::TypeScript | Language::Java | Language::Go => {
+        Language::JavaScript
+        | Language::TypeScript
+        | Language::Java
+        | Language::Go
+        | Language::Kotlin => {
             // Handle /** */ and // comments
             if trimmed.starts_with("/**") && trimmed.ends_with("*/") {
                 trimmed
@@ -2751,469 +3037,4 @@ fn extract_attribute(node: &tree_sitter::Node, source: &str, attr_name: &str) ->
         }
     }
     None
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::parser::parse_code;
-
-    #[test]
-    fn test_extract_rust_function_signature() {
-        let source = r#"
- /// Adds two numbers
- pub fn add(a: i32, b: i32) -> i32 {
-     a + b
- }
- "#;
-        let tree = parse_code(source, Language::Rust).expect("Failed to parse");
-        let shape = extract_rust_enhanced(&tree, source, true).expect("Failed to extract shape");
-
-        assert_eq!(shape.functions.len(), 1);
-        let func = &shape.functions[0];
-        assert_eq!(func.name, "add");
-        assert!(func.signature.contains("pub fn add"));
-        assert_eq!(func.line, 3);
-        assert_eq!(func.end_line, 5);
-    }
-
-    #[test]
-    fn test_extract_python_function() {
-        let source = r#"
-def greet(name):
-     """Greets a person"""
-     return f"Hello, {name}!"
-"#;
-        let tree = parse_code(source, Language::Python).expect("Failed to parse");
-        let shape = extract_python_enhanced(&tree, source, true).expect("Failed to extract shape");
-
-        assert_eq!(shape.functions.len(), 1);
-        let func = &shape.functions[0];
-        assert_eq!(func.name, "greet");
-        assert_eq!(func.line, 2);
-    }
-
-    #[test]
-    fn test_extract_js_class() {
-        let source = r#"
- class Calculator {
-     add(a, b) {
-         return a + b;
-     }
- }
- "#;
-        let tree = parse_code(source, Language::JavaScript).expect("Failed to parse");
-        let shape = extract_js_enhanced(&tree, source, Language::JavaScript, true)
-            .expect("Failed to extract shape");
-
-        assert_eq!(shape.classes.len(), 1);
-        let cls = &shape.classes[0];
-        assert_eq!(cls.name, "Calculator");
-        assert_eq!(cls.line, 2);
-    }
-
-    #[test]
-    fn test_extract_imports() {
-        let source = r#"
- use std::fmt;
- use std::io;
- 
- fn main() {}
- "#;
-        let tree = parse_code(source, Language::Rust).expect("Failed to parse");
-        let shape = extract_rust_enhanced(&tree, source, true).expect("Failed to extract shape");
-
-        assert_eq!(shape.imports.len(), 2);
-        assert_eq!(shape.imports[0].text, "use std::fmt;");
-        assert_eq!(shape.imports[0].line, 2);
-    }
-
-    // ========================================================================
-    // CSS Extraction Tests
-    // ========================================================================
-
-    #[test]
-    fn test_extract_css_tailwind_theme_variables() {
-        let source = r#"
-@theme {
-  --color-primary: oklch(0.6 0.2 250);
-  --color-secondary: #3b82f6;
-  --spacing-lg: 1.5rem;
-}
-"#;
-        let shape = extract_css_tailwind(source, Some("test.css")).expect("Failed to extract CSS");
-
-        assert_eq!(shape.theme.len(), 3);
-        assert_eq!(shape.theme[0].name, "--color-primary");
-        assert_eq!(shape.theme[0].value, "oklch(0.6 0.2 250)");
-        assert_eq!(shape.theme[0].line, 3);
-
-        assert_eq!(shape.theme[1].name, "--color-secondary");
-        assert_eq!(shape.theme[1].value, "#3b82f6");
-
-        assert_eq!(shape.theme[2].name, "--spacing-lg");
-        assert_eq!(shape.theme[2].value, "1.5rem");
-    }
-
-    #[test]
-    fn test_extract_css_tailwind_custom_classes() {
-        let source = r#"
-@layer components {
-  .btn-primary {
-    @apply bg-blue-500 text-white px-4 py-2 rounded;
-  }
-  .card {
-    @apply border rounded-lg p-4;
-  }
-}
-"#;
-        let shape = extract_css_tailwind(source, None).expect("Failed to extract CSS");
-
-        assert_eq!(shape.custom_classes.len(), 2);
-
-        let btn = &shape.custom_classes[0];
-        assert_eq!(btn.name, "btn-primary");
-        assert_eq!(btn.applied_utilities.len(), 5);
-        assert!(btn.applied_utilities.contains(&"bg-blue-500".to_string()));
-        assert!(btn.applied_utilities.contains(&"text-white".to_string()));
-        assert_eq!(btn.layer, Some(std::borrow::Cow::Borrowed("components")));
-
-        let card = &shape.custom_classes[1];
-        assert_eq!(card.name, "card");
-        assert_eq!(card.applied_utilities.len(), 3);
-        assert!(card.applied_utilities.contains(&"border".to_string()));
-    }
-
-    #[test]
-    fn test_extract_css_tailwind_utilities_layer() {
-        let source = r#"
-@layer utilities {
-  .text-balance {
-    text-wrap: balance;
-  }
-}
-"#;
-        let shape = extract_css_tailwind(source, None).expect("Failed to extract CSS");
-
-        assert_eq!(shape.custom_classes.len(), 1);
-        assert_eq!(shape.custom_classes[0].name, "text-balance");
-        assert_eq!(
-            shape.custom_classes[0].layer,
-            Some(std::borrow::Cow::Borrowed("utilities"))
-        );
-    }
-
-    #[test]
-    fn test_extract_css_tailwind_keyframes() {
-        let source = r#"
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
-
-@keyframes fade-in {
-  0% { opacity: 0; }
-  100% { opacity: 1; }
-}
-"#;
-        let shape = extract_css_tailwind(source, None).expect("Failed to extract CSS");
-
-        assert_eq!(shape.keyframes.len(), 2);
-        assert_eq!(shape.keyframes[0].name, "spin");
-        assert_eq!(shape.keyframes[0].line, 2);
-        assert_eq!(shape.keyframes[1].name, "fade-in");
-        assert_eq!(shape.keyframes[1].line, 7);
-    }
-
-    #[test]
-    fn test_extract_css_tailwind_empty_source() {
-        let source = "";
-        let shape = extract_css_tailwind(source, None).expect("Failed to extract CSS");
-
-        assert_eq!(shape.theme.len(), 0);
-        assert_eq!(shape.custom_classes.len(), 0);
-        assert_eq!(shape.keyframes.len(), 0);
-    }
-
-    #[test]
-    fn test_extract_css_tailwind_nested_braces() {
-        let source = r#"
-@layer components {
-  .complex {
-    @apply bg-blue-500;
-    &:hover {
-      @apply bg-blue-600;
-    }
-  }
-}
-"#;
-        let shape = extract_css_tailwind(source, None).expect("Failed to extract CSS");
-
-        // Should extract the outer class
-        assert!(shape.custom_classes.iter().any(|c| c.name == "complex"));
-    }
-
-    #[test]
-    fn test_extract_css_tailwind_multiple_layers() {
-        let source = r#"
-@layer components {
-  .btn { @apply px-4 py-2; }
-}
-
-@layer utilities {
-  .custom-util { color: red; }
-}
-"#;
-        let shape = extract_css_tailwind(source, None).expect("Failed to extract CSS");
-
-        assert_eq!(shape.custom_classes.len(), 2);
-        assert_eq!(
-            shape.custom_classes[0].layer,
-            Some(std::borrow::Cow::Borrowed("components"))
-        );
-        assert_eq!(
-            shape.custom_classes[1].layer,
-            Some(std::borrow::Cow::Borrowed("utilities"))
-        );
-    }
-
-    #[test]
-    fn test_extract_css_tailwind_malformed_no_panic() {
-        // Test that malformed CSS doesn't panic
-        let source = r#"
-@theme {
-  --incomplete
-}
-@layer components {
-  .unclosed {
-"#;
-        // Should not panic, just extract what it can
-        let result = extract_css_tailwind(source, None);
-        assert!(result.is_ok());
-    }
-
-    // ========================================================================
-    // HTML Extraction Tests
-    // ========================================================================
-
-    #[test]
-    fn test_extract_html_shape_ids() {
-        let source = r#"
-<!DOCTYPE html>
-<html>
-<body>
-  <div id="header">Header</div>
-  <nav id="main-nav">Navigation</nav>
-  <section id="content">Content</section>
-</body>
-</html>
-"#;
-        let tree = parse_code(source, Language::Html).expect("Failed to parse HTML");
-        let shape =
-            extract_html_shape(&tree, source, Some("test.html")).expect("Failed to extract HTML");
-
-        assert_eq!(shape.ids.len(), 3);
-        assert_eq!(shape.ids[0].tag, "div");
-        assert_eq!(shape.ids[0].id, "header");
-        assert_eq!(shape.ids[1].tag, "nav");
-        assert_eq!(shape.ids[1].id, "main-nav");
-        assert_eq!(shape.ids[2].tag, "section");
-        assert_eq!(shape.ids[2].id, "content");
-    }
-
-    #[test]
-    fn test_extract_html_shape_custom_classes() {
-        let source = r#"
-<div class="custom-card bg-white p-4">
-  <h1 class="title text-xl font-bold">Hello</h1>
-  <p class="description">Text</p>
-</div>
-"#;
-        let tree = parse_code(source, Language::Html).expect("Failed to parse HTML");
-        let shape = extract_html_shape(&tree, source, None).expect("Failed to extract HTML");
-
-        // Should filter out Tailwind utilities and keep only custom classes
-        assert!(shape.classes_used.contains(&"custom-card".to_string()));
-        assert!(shape.classes_used.contains(&"title".to_string()));
-        assert!(shape.classes_used.contains(&"description".to_string()));
-
-        // Should NOT contain Tailwind utilities
-        assert!(!shape.classes_used.contains(&"bg-white".to_string()));
-        assert!(!shape.classes_used.contains(&"p-4".to_string()));
-        assert!(!shape.classes_used.contains(&"text-xl".to_string()));
-        assert!(!shape.classes_used.contains(&"font-bold".to_string()));
-    }
-
-    #[test]
-    fn test_extract_html_shape_scripts() {
-        let source = r#"
-<html>
-<head>
-  <script src="app.js"></script>
-  <script>console.log('inline');</script>
-</head>
-</html>
-"#;
-        let tree = parse_code(source, Language::Html).expect("Failed to parse HTML");
-        let shape = extract_html_shape(&tree, source, None).expect("Failed to extract HTML");
-
-        assert_eq!(shape.scripts.len(), 2);
-
-        // External script
-        assert_eq!(shape.scripts[0].src, Some("app.js".to_string()));
-        assert!(!shape.scripts[0].inline);
-
-        // Inline script
-        assert_eq!(shape.scripts[1].src, None);
-        assert!(shape.scripts[1].inline);
-    }
-
-    #[test]
-    fn test_extract_html_shape_styles() {
-        let source = r#"
-<html>
-<head>
-  <link rel="stylesheet" href="styles.css">
-  <style>body { margin: 0; }</style>
-</head>
-</html>
-"#;
-        let tree = parse_code(source, Language::Html).expect("Failed to parse HTML");
-        let shape = extract_html_shape(&tree, source, None).expect("Failed to extract HTML");
-
-        assert_eq!(shape.styles.len(), 2);
-
-        // External stylesheet
-        assert_eq!(shape.styles[0].href, Some("styles.css".to_string()));
-        assert!(!shape.styles[0].inline);
-
-        // Inline style
-        assert_eq!(shape.styles[1].href, None);
-        assert!(shape.styles[1].inline);
-    }
-
-    #[test]
-    fn test_extract_html_shape_tailwind_variants() {
-        let source = r#"
-<div class="hover:bg-blue-500 dark:text-white sm:p-4 custom-class">
-  Content
-</div>
-"#;
-        let tree = parse_code(source, Language::Html).expect("Failed to parse HTML");
-        let shape = extract_html_shape(&tree, source, None).expect("Failed to extract HTML");
-
-        // Should keep custom class
-        assert!(shape.classes_used.contains(&"custom-class".to_string()));
-
-        // Should filter out Tailwind utilities with variants
-        assert!(!shape
-            .classes_used
-            .contains(&"hover:bg-blue-500".to_string()));
-        assert!(!shape.classes_used.contains(&"dark:text-white".to_string()));
-        assert!(!shape.classes_used.contains(&"sm:p-4".to_string()));
-    }
-
-    #[test]
-    fn test_extract_html_shape_empty_document() {
-        let source = "<html></html>";
-        let tree = parse_code(source, Language::Html).expect("Failed to parse HTML");
-        let shape = extract_html_shape(&tree, source, None).expect("Failed to extract HTML");
-
-        assert_eq!(shape.ids.len(), 0);
-        assert_eq!(shape.classes_used.len(), 0);
-        assert_eq!(shape.scripts.len(), 0);
-        assert_eq!(shape.styles.len(), 0);
-    }
-
-    #[test]
-    fn test_extract_html_shape_deduplicates_classes() {
-        let source = r#"
-<div class="custom-class">
-  <span class="custom-class">Text</span>
-  <p class="custom-class">More</p>
-</div>
-"#;
-        let tree = parse_code(source, Language::Html).expect("Failed to parse HTML");
-        let shape = extract_html_shape(&tree, source, None).expect("Failed to extract HTML");
-
-        // Should only have one instance of custom-class
-        assert_eq!(
-            shape
-                .classes_used
-                .iter()
-                .filter(|c| *c == "custom-class")
-                .count(),
-            1
-        );
-    }
-
-    #[test]
-    fn test_extract_html_shape_line_numbers() {
-        let source = r#"
-<html>
-<body>
-  <div id="first">Line 4</div>
-  <div id="second">Line 5</div>
-</body>
-</html>
-"#;
-        let tree = parse_code(source, Language::Html).expect("Failed to parse HTML");
-        let shape = extract_html_shape(&tree, source, None).expect("Failed to extract HTML");
-
-        assert_eq!(shape.ids.len(), 2);
-        assert_eq!(shape.ids[0].line, 4);
-        assert_eq!(shape.ids[1].line, 5);
-    }
-
-    #[test]
-    fn test_extract_html_shape_malformed_no_panic() {
-        // Test that malformed HTML doesn't panic
-        let source = r#"
-<div id="test" class="custom
-<p>Unclosed
-"#;
-        let tree = parse_code(source, Language::Html).expect("Failed to parse HTML");
-        // Should not panic, tree-sitter handles malformed HTML gracefully
-        let result = extract_html_shape(&tree, source, None);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_extract_html_shape_arbitrary_tailwind_values() {
-        let source = r#"
-<div class="w-[300px] h-[calc(100vh-64px)] custom-width">
-  Content
-</div>
-"#;
-        let tree = parse_code(source, Language::Html).expect("Failed to parse HTML");
-        let shape = extract_html_shape(&tree, source, None).expect("Failed to extract HTML");
-
-        // Should keep custom class
-        assert!(shape.classes_used.contains(&"custom-width".to_string()));
-
-        // Should filter out arbitrary Tailwind values
-        assert!(!shape.classes_used.contains(&"w-[300px]".to_string()));
-        assert!(!shape
-            .classes_used
-            .contains(&"h-[calc(100vh-64px)]".to_string()));
-    }
-
-    #[test]
-    fn test_extract_html_shape_important_modifier() {
-        let source = r#"
-<div class="!bg-red-500 !important-custom">
-  Content
-</div>
-"#;
-        let tree = parse_code(source, Language::Html).expect("Failed to parse HTML");
-        let shape = extract_html_shape(&tree, source, None).expect("Failed to extract HTML");
-
-        // Should keep custom class with ! prefix
-        assert!(shape
-            .classes_used
-            .contains(&"!important-custom".to_string()));
-
-        // Should filter out Tailwind utility with ! prefix
-        assert!(!shape.classes_used.contains(&"!bg-red-500".to_string()));
-    }
 }

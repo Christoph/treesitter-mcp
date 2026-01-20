@@ -257,6 +257,7 @@ fn extract_symbols(
         Language::JavaScript => extract_js_symbols(tree, source, &mut symbols)?,
         Language::TypeScript => extract_ts_symbols(tree, source, &mut symbols)?,
         Language::Go => extract_go_symbols(tree, source, &mut symbols)?,
+        Language::Kotlin => extract_kotlin_symbols(tree, source, &mut symbols)?,
         Language::Html | Language::Css | Language::Swift | Language::CSharp | Language::Java => {
             // These languages don't have structural-diff extraction implemented yet.
             // Return empty - structural diff not applicable.
@@ -547,6 +548,110 @@ fn extract_go_symbols(
                     format!("{:?}::{}", symbol_type, name),
                     ExtractedSymbol {
                         symbol_type,
+                        name: name.to_string(),
+                        line: node.start_position().row + 1,
+                        signature,
+                        body_hash,
+                    },
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn extract_kotlin_symbols(
+    tree: &tree_sitter::Tree,
+    source: &str,
+    symbols: &mut HashMap<String, ExtractedSymbol>,
+) -> Result<(), io::Error> {
+    use tree_sitter::{Node, Query, QueryCursor};
+
+    fn find_parent_by_kind<'a>(mut node: Node<'a>, kind: &str) -> Option<Node<'a>> {
+        loop {
+            if node.kind() == kind {
+                return Some(node);
+            }
+            node = node.parent()?;
+        }
+    }
+
+    let query = Query::new(
+        &tree_sitter_kotlin_ng::LANGUAGE.into(),
+        r#"
+        (function_declaration name: (simple_identifier) @func.name) @func
+        (class_declaration name: (type_identifier) @class.name) @class
+        (object_declaration name: (type_identifier) @object.name) @object
+        (type_alias name: (type_identifier) @alias.name) @alias
+        "#,
+    )
+    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("Query error: {e}")))?;
+
+    let mut cursor = QueryCursor::new();
+    let matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
+
+    for match_ in matches {
+        for capture in match_.captures {
+            let capture_name = query.capture_names()[capture.index as usize];
+            let node = capture.node;
+
+            let (symbol_type, full_node) = match capture_name {
+                "func.name" => (
+                    SymbolType::Function,
+                    find_parent_by_kind(node, "function_declaration"),
+                ),
+                "class.name" => (
+                    SymbolType::Class,
+                    find_parent_by_kind(node, "class_declaration"),
+                ),
+                "object.name" => (
+                    SymbolType::Class,
+                    find_parent_by_kind(node, "object_declaration"),
+                ),
+                "alias.name" => (
+                    SymbolType::Struct, // Treat type alias as Struct
+                    find_parent_by_kind(node, "type_alias"),
+                ),
+                _ => continue,
+            };
+
+            if let (Ok(name), Some(full_node)) = (node.utf8_text(source.as_bytes()), full_node) {
+                // For class/object, check if it's an interface
+                let actual_symbol_type = if symbol_type == SymbolType::Class {
+                    let mut is_interface = false;
+                    let mut cursor = full_node.walk();
+                    for child in full_node.children(&mut cursor) {
+                        if child.kind() == "interface" || child.kind() == "fun" {
+                            is_interface = true;
+                            break;
+                        }
+                        if child.kind() == "modifiers" {
+                            let mut mod_cursor = child.walk();
+                            for mod_child in child.children(&mut mod_cursor) {
+                                if mod_child.kind() == "interface" {
+                                    is_interface = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    if is_interface {
+                        SymbolType::Interface
+                    } else {
+                        SymbolType::Class
+                    }
+                } else {
+                    symbol_type
+                };
+
+                let signature = extract_signature_from_node(&full_node, source);
+                let body_hash = hash_node_body(&full_node, source);
+
+                symbols.insert(
+                    format!("{:?}::{}", actual_symbol_type, name),
+                    ExtractedSymbol {
+                        symbol_type: actual_symbol_type,
                         name: name.to_string(),
                         line: node.start_position().row + 1,
                         signature,

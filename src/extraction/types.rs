@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::fs;
+use std::io; // Added
 use std::path::{Path, PathBuf};
 
 use eyre::{bail, Result, WrapErr};
@@ -134,6 +135,7 @@ pub struct TypeDefinition {
 ///
 /// Set `count_usages` to true to also count usages during extraction (single-pass).
 /// This is more efficient than calling `count_all_usages` separately.
+#[allow(dead_code)]
 pub fn extract_types(
     path: impl AsRef<Path>,
     pattern: Option<&str>,
@@ -178,7 +180,14 @@ pub fn extract_types_with_options(
     let mut result = TypeExtractionResult::new();
 
     if path.is_file() {
-        process_single_file(path, &root_dir, &matcher, effective_limit, count_usages, &mut result)?;
+        process_single_file(
+            path,
+            &root_dir,
+            &matcher,
+            effective_limit,
+            count_usages,
+            &mut result,
+        )?;
     } else {
         let walker = WalkDir::new(path).into_iter().filter_entry(should_descend);
         for entry in walker {
@@ -223,9 +232,13 @@ pub fn extract_types_with_options(
 
             // Extract types from supported languages
             if let Some(language) = detect_language(file_path) {
-                if let Err(err) =
-                    process_file_with_source(&content, &rel_path, language, effective_limit, &mut result)
-                {
+                if let Err(err) = process_file_with_source(
+                    &content,
+                    &rel_path,
+                    language,
+                    effective_limit,
+                    &mut result,
+                ) {
                     debug!("Skipping file {}: {err}", file_path.display());
                 }
             }
@@ -268,8 +281,8 @@ fn process_single_file(
     }
 
     // Read file once for both extraction and counting
-    let source = fs::read_to_string(path)
-        .wrap_err_with(|| format!("Failed to read {}", path.display()))?;
+    let source =
+        fs::read_to_string(path).wrap_err_with(|| format!("Failed to read {}", path.display()))?;
 
     // Count words if requested
     if count_usages {
@@ -298,6 +311,7 @@ fn process_file_with_source(
         SupportedLanguage::Java => extract_java_types(source, relative_path)?,
         SupportedLanguage::CSharp => extract_csharp_types(source, relative_path)?,
         SupportedLanguage::Go => extract_go_types(source, relative_path)?,
+        SupportedLanguage::Kotlin => extract_kotlin_types(source, relative_path)?,
     };
 
     for ty in file_types {
@@ -379,6 +393,7 @@ enum SupportedLanguage {
     Java,
     CSharp,
     Go,
+    Kotlin,
 }
 
 fn detect_language(path: &Path) -> Option<SupportedLanguage> {
@@ -391,6 +406,7 @@ fn detect_language(path: &Path) -> Option<SupportedLanguage> {
         "java" => Some(SupportedLanguage::Java),
         "cs" => Some(SupportedLanguage::CSharp),
         "go" => Some(SupportedLanguage::Go),
+        "kt" | "kts" => Some(SupportedLanguage::Kotlin),
         _ => None,
     }
 }
@@ -1782,6 +1798,103 @@ fn extract_csharp_types(source: &str, relative_path: &Path) -> Result<Vec<TypeDe
     Ok(definitions)
 }
 
+pub(crate) fn extract_kotlin_types(
+    source: &str,
+    relative_path: &Path,
+) -> Result<Vec<TypeDefinition>> {
+    let mut types = Vec::new();
+    let language = tree_sitter_kotlin_ng::LANGUAGE.into();
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(&language).map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Failed to set Kotlin language: {e}"),
+        )
+    })?;
+
+    let tree = parser
+        .parse(source, None)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Failed to parse Kotlin code"))?;
+
+    // Kotlin query for types
+    // Note: Kotlin structure is flat or nested; standard query covers top level and nested
+    let query_str = r#"
+        (class_declaration
+            (type_identifier) @class.name) @class
+        (object_declaration
+            (type_identifier) @object.name) @object
+        (type_alias
+            name: (type_identifier) @alias.name) @alias
+        (class_declaration
+            "interface"
+            (type_identifier) @interface.name) @interface
+    "#;
+
+    let query = Query::new(&language, query_str)
+        .or_else(|_| {
+            // Fallback or alternative structure if grammar differs
+            Query::new(
+                &language,
+                r#"
+            (class_declaration (type_identifier) @class.name) @class
+            (object_declaration (type_identifier) @object.name) @object
+            (type_alias (type_identifier) @alias.name) @alias
+            "#,
+            )
+        })
+        .map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Failed to create Kotlin query: {e}"),
+            )
+        })?;
+
+    let mut cursor = QueryCursor::new();
+    let matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
+
+    for match_ in matches {
+        for capture in match_.captures {
+            let node = capture.node;
+            let capture_name = query.capture_names()[capture.index as usize];
+
+            let (kind, name_node) = match capture_name {
+                "class.name" => (TypeKind::Class, node),
+                "object.name" => (TypeKind::Class, node),
+                "interface.name" => (TypeKind::Interface, node),
+                "alias.name" => (TypeKind::TypeAlias, node),
+                _ => continue,
+            };
+
+            if let Ok(name) = name_node.utf8_text(source.as_bytes()) {
+                // Find definition node
+                let def_node = match capture_name {
+                    "class.name" | "interface.name" => {
+                        find_parent_by_type(node, "class_declaration")
+                    }
+                    "object.name" => find_parent_by_type(node, "object_declaration"),
+                    "alias.name" => find_parent_by_type(node, "type_alias"),
+                    _ => Ok(node),
+                }
+                .unwrap_or(node);
+
+                types.push(TypeDefinition {
+                    name: name.to_string(),
+                    kind,
+                    file: relative_path.to_path_buf(),
+                    line: def_node.start_position().row + 1,
+                    signature: signature_for(def_node, source.as_bytes()),
+                    usage_count: 0,
+                    fields: None,
+                    variants: None,
+                    members: None,
+                });
+            }
+        }
+    }
+
+    Ok(types)
+}
+
 fn signature_for(node: Node, source: &[u8]) -> String {
     if let Ok(text) = node.utf8_text(source) {
         text.lines().next().unwrap_or("").trim().to_string()
@@ -1797,4 +1910,18 @@ fn clean_type_annotation(text: &str) -> String {
         .trim_end_matches(';')
         .trim()
         .to_string()
+}
+
+/// Find a parent node of a given type
+fn find_parent_by_type<'a>(mut node: Node<'a>, target_type: &str) -> Result<Node<'a>, io::Error> {
+    while let Some(parent) = node.parent() {
+        if parent.kind() == target_type {
+            return Ok(parent);
+        }
+        node = parent;
+    }
+    Err(io::Error::new(
+        io::ErrorKind::NotFound,
+        format!("Parent node of type '{}' not found", target_type),
+    ))
 }

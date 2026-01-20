@@ -7,6 +7,7 @@ use walkdir::WalkDir;
 
 use crate::extraction::types::TypeDefinition;
 
+#[allow(dead_code)]
 pub fn count_all_usages(types: &mut [TypeDefinition], project_path: &Path) -> Result<()> {
     if types.is_empty() {
         return Ok(());
@@ -85,7 +86,9 @@ pub fn language_for_path(path: &Path) -> CountLanguage {
         "rs" => CountLanguage::Rust,
         "py" => CountLanguage::Python,
         "js" | "jsx" | "mjs" | "cjs" | "ts" | "tsx" => CountLanguage::JavaScript,
-        "go" | "java" | "cs" | "c" | "h" | "cpp" | "hpp" | "cc" => CountLanguage::CLike,
+        "go" | "java" | "cs" | "c" | "h" | "cpp" | "hpp" | "cc" | "kt" | "kts" => {
+            CountLanguage::CLike
+        }
         _ => CountLanguage::Plain,
     }
 }
@@ -444,6 +447,7 @@ fn ends_rust_raw_string(bytes: &[u8], quote_index: usize, hashes: usize) -> bool
     true
 }
 
+#[allow(dead_code)]
 fn is_rel_path_ignored(path: &Path) -> bool {
     path.components().any(|c| {
         let s = c.as_os_str().to_string_lossy();

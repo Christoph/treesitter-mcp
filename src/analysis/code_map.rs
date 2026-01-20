@@ -130,7 +130,9 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
         }
     } else if path.is_dir() {
         collect_files_combined(path, &mut result, &options, pattern)?;
-        result.files.sort_by_key(|entry| Reverse(symbol_count(entry)));
+        result
+            .files
+            .sort_by_key(|entry| Reverse(symbol_count(entry)));
     }
 
     // Apply usage counts to types if requested
@@ -144,11 +146,9 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
         });
     } else if with_types {
         // Sort by file then line when not counting usages
-        result.types.sort_by(|a, b| {
-            a.file
-                .cmp(&b.file)
-                .then_with(|| a.line.cmp(&b.line))
-        });
+        result
+            .types
+            .sort_by(|a, b| a.file.cmp(&b.file).then_with(|| a.line.cmp(&b.line)));
     }
 
     // Convert all file paths to relative paths
@@ -156,7 +156,8 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
         entry.path = path_utils::to_relative_path(&entry.path);
     }
 
-    let (result_map, _truncated) = build_compact_output_combined(&result, detail_level, max_tokens, with_types)?;
+    let (result_map, _truncated) =
+        build_compact_output_combined(&result, detail_level, max_tokens, with_types)?;
 
     let json_text = serde_json::to_string(&Value::Object(result_map)).map_err(|e| {
         io::Error::new(
@@ -182,6 +183,7 @@ fn apply_usage_counts(types: &mut [TypeDefinition], word_counts: &HashMap<String
     }
 }
 
+#[allow(dead_code)]
 fn build_compact_output(
     files: &[FileSymbols],
     detail_level: DetailLevel,
@@ -608,6 +610,7 @@ fn symbols_to_rows(symbols: &[Value], detail_level: DetailLevel, kind: SymbolKin
         .join("\n")
 }
 
+#[allow(dead_code)]
 fn collect_files(
     dir: &Path,
     files: &mut Vec<FileSymbols>,
@@ -657,6 +660,7 @@ fn symbol_count(entry: &FileSymbols) -> usize {
     entry.functions.len() + entry.structs.len() + entry.classes.len()
 }
 
+#[allow(dead_code)]
 fn process_file(path: &Path, detail_level: DetailLevel) -> Result<FileSymbols, io::Error> {
     let source = fs::read_to_string(path).map_err(|e| {
         io::Error::new(
@@ -868,10 +872,8 @@ fn extract_types_from_source(
     use crate::parser::Language;
 
     let types = match language {
-        Language::Rust => {
-            crate::extraction::types::extract_rust_types(source, path)
-                .map_err(|e| io::Error::other(e.to_string()))?
-        }
+        Language::Rust => crate::extraction::types::extract_rust_types(source, path)
+            .map_err(|e| io::Error::other(e.to_string()))?,
         Language::TypeScript => {
             crate::extraction::types::extract_typescript_types(source, path, true)
                 .map_err(|e| io::Error::other(e.to_string()))?
@@ -880,10 +882,10 @@ fn extract_types_from_source(
             crate::extraction::types::extract_typescript_types(source, path, false)
                 .map_err(|e| io::Error::other(e.to_string()))?
         }
-        Language::Python => {
-            crate::extraction::types::extract_python_types(source, path)
-                .map_err(|e| io::Error::other(e.to_string()))?
-        }
+        Language::Python => crate::extraction::types::extract_python_types(source, path)
+            .map_err(|e| io::Error::other(e.to_string()))?,
+        Language::Kotlin => crate::extraction::types::extract_kotlin_types(source, path)
+            .map_err(|e| io::Error::other(e.to_string()))?,
         Language::Java | Language::Go | Language::CSharp => {
             // Type extraction for these languages uses different extractors
             Vec::new()

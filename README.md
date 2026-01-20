@@ -24,6 +24,7 @@ Tree-sitter MCP Server exposes powerful code analysis tools through the MCP prot
 - **C#** (.cs)
 - **Java** (.java)
 - **Go** (.go)
+- **Kotlin** (.kt, .kts)
 
 ## Installation
 

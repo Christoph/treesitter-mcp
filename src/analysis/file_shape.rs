@@ -4,7 +4,7 @@
 //! without the implementation details.
 //!
 //! **DEPRECATED**: This module is deprecated. Use `view_code` module instead.
-//! `file_shape` only supports Rust/Swift/Python, while `view_code` supports all 9 languages.
+//! `file_shape` only supports Rust/Swift/Python, while `view_code` supports all supported languages.
 
 #![allow(deprecated)]
 
@@ -56,7 +56,7 @@ pub struct FileShape {
 
 #[deprecated(
     since = "0.2.0",
-    note = "Use shape::extract_enhanced_shape instead. extract_shape only supports Rust/Swift/Python, while extract_enhanced_shape supports all 9 languages."
+    note = "Use shape::extract_enhanced_shape instead. extract_shape only supports Rust/Swift/Python, while extract_enhanced_shape supports all supported languages."
 )]
 pub fn extract_shape(
     tree: &Tree,
