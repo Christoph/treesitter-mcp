@@ -196,3 +196,36 @@ fn test_find_usages_max_context_lines_enforced() {
         assert!(context.lines().count() <= 1);
     }
 }
+
+#[test]
+fn test_find_usages_max_tokens_enforced() {
+    let dir_path = common::fixture_dir("rust");
+    let unbounded_args = json!({
+        "symbol": "Calculator",
+        "path": dir_path.join("src").to_str().unwrap()
+    });
+    // Set a very small token limit that should force truncation
+    let bounded_args = json!({
+        "symbol": "Calculator",
+        "path": dir_path.join("src").to_str().unwrap(),
+        "max_tokens": 10
+    });
+
+    let unbounded = treesitter_mcp::analysis::find_usages::execute(&unbounded_args).unwrap();
+    let bounded = treesitter_mcp::analysis::find_usages::execute(&bounded_args).unwrap();
+
+    let unbounded_text = common::get_result_text(&unbounded);
+    let bounded_text = common::get_result_text(&bounded);
+
+    // Bounded text should be shorter than unbounded text
+    assert!(bounded_text.len() < unbounded_text.len());
+
+    // Verify it's still valid JSON
+    let bounded_json: serde_json::Value = serde_json::from_str(&bounded_text).unwrap();
+
+    // Check for truncation indicator in metadata if implemented, or just check that we got results
+    // The implementation might drop rows or truncate content
+    let rows = common::helpers::find_usages_rows(&bounded_json);
+    // Depending on how aggressive 10 tokens is, we might get 0 rows or partial rows
+    // Main thing is that it didn't crash and output is smaller
+}

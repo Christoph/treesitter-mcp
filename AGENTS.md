@@ -24,11 +24,11 @@
 ## treesitter-mcp Tools
 Use treesitter-mcp to understand code structure before making changes:
 - **Exploring codebase?** → `code_map` on the directory
-- **Before editing a file?** → `parse_file` to understand it fully
+- **Before editing a file?** → `view_code` to understand it fully
 - **Refactoring or renaming?** → `find_usages` to check impact
 - **After making changes?** → `parse_diff` to verify what changed at symbol level
 - **Before running tests?** → `affected_by_diff` to see what might break
-- **Got a line number?** → `get_context` to understand scope
-- **Need quick file overview?** → `file_shape` for skeleton only
+- **Got a line number?** → `symbol_at_line` to understand scope
+- **Need quick file overview?** → `view_code` with `detail="signatures"` for skeleton only
 
 Prefer treesitter-mcp over grep for structural queries (finding functions, classes, usages).

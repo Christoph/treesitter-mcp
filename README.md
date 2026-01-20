@@ -389,6 +389,7 @@ Find ALL usages of a symbol (function, variable, class, type) across files. Sema
 - `path` (string, required): File or directory path to search in
 - `context_lines` (integer, optional, default: 3): Lines of context around each usage
 - `max_context_lines` (integer, optional): Cap total context to prevent token explosion
+- `max_tokens` (integer, optional): Maximum tokens for output (truncates results if exceeded)
 
 **Example**:
 ```json
