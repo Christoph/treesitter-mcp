@@ -4,466 +4,537 @@ Updated: 2026-04-17
 
 ## Purpose
 
-The repo already does two things well:
+This MCP server already does two things well:
 
-- it extracts useful structure from source with tree-sitter
-- it delivers that structure in a compact, token-aware format
+- extracts useful structure from source with tree-sitter
+- delivers that structure in a compact, token-aware format
 
-The next step is to make the context not just smaller, but more reliable.
-This plan focuses on the gaps found in review: lexical matching where semantic
-signals are claimed, weak relevance ranking, noisy dependency expansion, and
-some repository hygiene drift.
+The next step is to make the context not just smaller, but more reliable --
+and to make it work *with* LSP rather than trying to replace it.
 
-The product direction is stricter than "better code analysis":
+### Design position: MCP + LSP, not MCP vs LSP
 
-- an LLM should be able to understand and navigate a codebase primarily through
-  this MCP surface
-- the server should behave like a precision knife, returning the smallest useful
-  slice of structure, ownership, impact, and code
-- large raw file reads, huge git diffs, and broad context dumps should be the
-  fallback path rather than the normal path
+Tree-sitter gives fast, reliable, language-agnostic syntax. LSP gives
+precise, compiler-backed semantics. Trying to build a symbol index from
+tree-sitter alone produces a mediocre middle ground: worse resolution than
+LSP, more complexity than syntax-aware grep, unstable across languages.
 
-## What "better context" should mean
+The right split:
 
-For this project, "better context" should mean:
+| Capability | Owner | Why |
+|---|---|---|
+| Compact structural overviews | MCP | LSP has no equivalent |
+| Token-budgeted context slicing | MCP | LSP returns full text |
+| Structural diffs and impact summaries | MCP | LSP has no equivalent |
+| Type maps with usage ranking | MCP | LSP doesn't rank by project relevance |
+| Scope-qualified syntax search | MCP | Faster than LSP for broad sweeps |
+| Precise symbol resolution | LSP | Compiler-backed, handles imports/generics/traits |
+| Go-to-definition | LSP | Authoritative |
+| Find-references (precise) | LSP | Authoritative |
+| Diagnostics, completions | LSP | Compiler-backed |
 
-1. The tool returns the right symbol or type more often when names collide.
-2. The tool is explicit when it is guessing.
-3. Relevance ranking prefers semantically related context over cheap lexical hits.
-4. Compact encoding remains a feature, not the main goal.
-5. Outputs stay deterministic and easy for LLMs and clients to parse.
-6. Agents can navigate most codebases without needing large unstructured file
-   reads or repository-wide diffs.
-7. Every precision improvement is evaluated against token cost, with a bias
-   toward the smallest output that still preserves the right answer.
+The MCP should:
+- accept LSP results as input where useful (resolved references, definition locations)
+- format them compactly for LLM consumption
+- provide structural context that LSP cannot
+- be honest about confidence when operating without LSP
+
+An LLM with both MCP and LSP should be able to navigate, understand, and
+change a codebase primarily through tool responses, using raw file reads
+only as a last resort.
 
 ## Current Assessment
 
 ### Strengths
 
-- Compact row-based output is already in place across the main tool surface.
-- Relative paths and token budgeting are treated consistently.
-- The repo has broad language coverage and a healthy test suite.
-- `cargo test` currently passes.
+- Compact row-based output across the main tool surface
+- Relative paths and token budgeting treated consistently
+- Broad language coverage and healthy test suite
+- `cargo test` passes
 
 ### Current Shortcomings
 
-1. `find_usages` is lexical, not symbol-aware.
-2. Type usage ranking is keyed by bare name, so unrelated types with the same
-   name are merged.
-3. `view_code` dependency selection uses weak heuristics and fallback padding,
-   which can inject irrelevant context.
-4. `cargo clippy -- -D warnings` fails because migration leftovers remain.
-5. Tests currently prove format stability and token savings better than they
-   prove semantic precision.
+1. `find_usages` is lexical (bare name matching), not scope-aware.
+2. Type usage ranking keys by bare name, conflating unrelated types with
+   the same name across files and modules.
+3. `view_code` dependency selection uses a capitalized-token heuristic and
+   falls back to padding with arbitrary exported types.
+4. `cargo clippy -- -D warnings` fails (3 dead functions in `code_map.rs`).
+5. README and tool descriptions claim "semantic search" where only lexical
+   matching exists.
+6. Directory traversal hardcodes skip patterns instead of respecting
+   `.gitignore`.
+7. No confidence or ambiguity signals in any tool output.
+8. No LSP integration points: agents must choose between precise-but-verbose
+   LSP results and compact-but-imprecise MCP results.
 
 ## Success Criteria
 
-The work in this plan is done when the repo satisfies all of the following:
+The work in this plan is done when:
 
 - `cargo test` passes
 - `cargo clippy -- -D warnings` passes
 - README and tool descriptions do not overclaim semantic guarantees
-- duplicate-name and overload fixtures are handled correctly or marked
-  explicitly ambiguous
-- `affected_by_diff` is materially less noisy on rename/signature-change flows
-- `type_map` and `code_map(with_types=true,count_usages=true)` stop conflating
-  unrelated types with the same name
-- `view_code` dependency context is relevant by default and does not inject
-  arbitrary filler types
-- token budgets remain within current rough envelopes for the default modes
-- common navigation and review tasks can be completed through MCP responses
-  without relying on large raw file dumps or broad git diffs
+- same-name types in different files get separate usage counters
+- `find_usages` results include scope context so homonyms are distinguishable
+- `affected_by_diff` uses scope-qualified matching and is less noisy on
+  rename/signature-change flows
+- `view_code` dependency context comes from AST-position type extraction,
+  not capitalized-token scanning
+- directory traversal respects `.gitignore`
+- results include confidence markers where resolution is heuristic
+- at least one LSP integration point exists (accept resolved references,
+  format compactly)
+- `minimal_edit_context` returns focused context at least 3x smaller than
+  `view_code(focus_symbol=X)` on files with 10+ symbols
+- `call_graph` returns correct callers and callees for depth=1
+- token budgets remain within current rough envelopes
 
 ## Guiding Principles
 
-- Precision before compression
+- Do not reinvent what LSP does; complement it
+- Scope-qualified syntax over bare-name matching
+- AST-backed signals over string heuristics
+- Honest confidence markers over silent guessing
 - Precision per token, not precision at any cost
-- AST-backed signals before string heuristics
-- Language-specific queries where they materially improve quality
-- Deterministic output over clever but unstable ranking
-- Explicit fallback paths with confidence/ambiguity markers
-- MCP-first navigation over raw file reads
-- narrow slices over large diffs
+- Independently shippable milestones
+- Each improvement testable with targeted fixtures
 
 ## Workstreams
 
-### 0. Repo Hygiene And Truthfulness
+### 0. Repo Hygiene and Truthfulness
 
-Goal: get the repo back into a clean, honest state before deeper behavior work.
+Goal: clean, honest state before behavior changes.
 
 Tasks:
 
-- Remove or wire up dead `code_map` helpers so `cargo clippy -- -D warnings`
-  passes again.
-- Fix broken or accidentally nested tests, especially in
-  `tests/askama_template_context_test.rs`.
-- Audit README and tool descriptions for claims like "semantic search" and
-  either implement them or downgrade the wording until they are true.
-- Add a short "precision vs heuristic" note to the docs so users know which
-  tools are strong guarantees and which are best-effort.
+- Remove or wire up dead `code_map` helpers (`build_compact_output`,
+  `collect_files`, `process_file`) so `cargo clippy -- -D warnings` passes.
+- Fix any broken or accidentally nested tests.
+- Change "Semantic search, not text search" to "Syntax-aware search" in
+  README and tool descriptions.
+- Remove the "semantic search with usage types" claim from `find_usages`
+  description.
+- Add a short "precision vs heuristic" note to the docs explaining which
+  tools provide strong guarantees and which are best-effort.
 
 Acceptance criteria:
 
 - zero-warning clippy run
-- no inert tests hidden inside other tests
 - no public documentation claiming semantic resolution where only lexical
-  matching exists
+  or syntax-aware matching exists
 
-### 1. `find_usages` And `affected_by_diff`: Move From Lexical To Symbol-Aware
+### 1. Scope-Qualified Usage Matching
 
-Goal: make rename/refactor workflows trustworthy enough to guide LLM edits.
+Goal: make `find_usages` and `affected_by_diff` distinguish homonyms without
+building a symbol index.
 
-#### Phase 1: Stop Overclaiming, Add Guardrails
+The key insight: tree-sitter already gives scope context via AST parent
+traversal. The infrastructure exists in `symbol_at_line.rs`
+(`collect_scope_chain`). Use it.
 
-- Reclassify the current implementation as heuristic in docs and descriptions.
-- Add ambiguity metadata to results where the engine cannot disambiguate.
-- Consider adding a compact confidence field for each row or at the result
-  level, for example `conf=high|medium|low`.
-- Ensure `affected_by_diff` can skip or down-rank low-confidence hits instead
-  of treating them as equally risky.
+#### Phase 1: Add scope context to `find_usages` results
 
-#### Phase 2: Build A Symbol Index
+- For each found identifier, walk up the AST to extract the enclosing scope
+  chain (function -> class/impl/trait -> module).
+- Add `scope` as a column in the output:
+  `file|line|col|type|scope|context`
+- When a user searches for `add`, results distinguish `Calculator::add` vs
+  `math::add` vs local variable `add`.
 
-- For each supported language, extract definitions into a project-local index:
-  - name
-  - kind
-  - file
-  - line
-  - enclosing scope / owner
-  - import/export identity where available
-  - signature anchor for overloaded members where the grammar supports it
-- Introduce an internal symbol identity instead of bare-name matching.
+#### Phase 2: Use scope context in `affected_by_diff`
 
-Suggested shape:
+- When a diff changes `Calculator::add`, search for usages of `add` but
+  filter or deprioritize results where the scope chain doesn't match.
+- Separate "same text, matching scope" (high confidence) from "same text,
+  different scope" (low confidence).
 
-```text
-symbol_id := language + file + owner_path + kind + name + signature_key?
-```
+#### Phase 3: Confidence field
 
-#### Phase 3: Resolve References Against The Index
-
-- Use AST positions to classify:
-  - definition
-  - call
-  - type reference
-  - import/export reference
-  - value reference
-- Match references against in-scope symbols instead of any identifier with the
-  same text.
-- Where a language cannot support full resolution cheaply, return an explicit
-  ambiguous result instead of pretending the match is definitive.
-
-#### Phase 4: Improve `affected_by_diff`
-
-- Feed it resolved symbol identities instead of bare names.
-- When a diff changes a method, search usages of that specific owner+method pair.
-- Separate "same text, likely unrelated" from "definitely affected".
-- Include risk logic that uses confidence as an input, not just change type.
+- Add a `conf` column or result-level field: `high|medium|low`.
+  - `high`: definition site, or usage where scope chain matches
+    unambiguously.
+  - `medium`: usage in same file/module as a definition.
+  - `low`: bare name match across files with no scope alignment.
+- `affected_by_diff` uses confidence to weight risk: low-confidence matches
+  get `risk=low` regardless of change type.
 
 Tests to add:
 
 - same-name local variable vs function
 - top-level function vs class method with same name
 - duplicate type names in different modules
-- import aliasing
-- overloaded methods where supported by the language
-- same symbol text used as both value and type
+- `affected_by_diff` on a rename where unrelated same-name symbols exist
 
 Acceptance criteria:
 
-- new fixtures prove that unrelated same-name symbols are not merged together
-- `affected_by_diff` precision improves on targeted rename/signature fixtures
-- output stays compact
+- `find_usages` output includes scope context
+- `affected_by_diff` does not flag unrelated same-name symbols as high risk
+- confidence field is present and reflects scope alignment
 
-### 2. Semantic Type Ranking For `type_map` And `code_map`
+### 2. File-Qualified Type Ranking
 
-Goal: rank types by actual project relevance, not bare word frequency.
+Goal: stop conflating unrelated types with the same name in `type_map` and
+`code_map(with_types=true, count_usages=true)`.
 
-Current issue:
+Current problem: `usage_counter.rs` keys counts by bare type name. Two
+`Config` structs in different modules share one counter.
 
-- usage counts are derived from stripped source text and keyed only by type name
-- this conflates unrelated `Config`, `Error`, `Options`, `Manager`, and similar
-  names across files and modules
+Fix:
 
-Plan:
+- Key usage counts by `(name, file)` instead of just `name`.
+- When the same name appears in multiple files, each gets its own counter.
+- This is a small change to `count_all_usages` and `apply_usage_counts`.
+- No semantic type-reference graph needed.
 
-- Replace global lexical word counts with a semantic type-reference graph.
-- Count references from AST positions such as:
-  - type annotations
-  - field types
-  - generic arguments
-  - return types
-  - inheritance / implementation clauses
-  - constructor / literal sites where they are syntactically clear
-- Track counts by resolved definition identity, not just by type name.
+Optional enhancement:
 
-Ranking ideas:
-
-- primary score: resolved reference count
-- tie-breaker: number of distinct files referencing the type
-- optional small bonus for public/exported types
-- optional penalty for unresolved lexical-only references
-
-Compatibility:
-
-- keep `usage_count` in the output for schema stability
-- change its meaning from lexical hits to resolved references
-- if needed, add a future optional metadata field describing the ranking mode
+- Count only references from AST positions (type annotations, field types,
+  generic arguments, return types) instead of all word occurrences. This
+  is a per-language tree-sitter query, not a symbol index. Implement for
+  Rust and TypeScript first; fall back to word counting for other languages.
 
 Tests to add:
 
-- two `Config` structs in different modules
-- two `Error` enums with different consumers
-- generic wrapper types and nested references
-- cross-file imports that should rank one type but not its same-name sibling
+- two `Config` structs in different files: separate counters
+- two `Error` enums with different consumers: separate counters
+- cross-file import that references one but not the other
 
 Acceptance criteria:
 
-- duplicate-name fixtures no longer share one combined counter
-- ranking is deterministic and explainable
-- performance remains acceptable for medium-size projects
+- same-name types in different files get separate usage counters
+- ranking is deterministic
+- performance remains acceptable
 
-### 3. `view_code` Dependency Context: Prefer Relevant Over Merely Available
+### 3. AST-Position Dependency Extraction for `view_code`
 
-Goal: keep dependency context useful during focused reads without polluting the
-output with unrelated types.
+Goal: replace the capitalized-token heuristic in `view_code` dependency
+selection with actual type references from AST positions.
 
-Current issue:
+Current problem: `extract_referenced_type_names` in `view_code.rs` scans
+raw text for tokens starting with uppercase. The fallback pads with
+arbitrary exported types when fewer than 3 matches are found.
 
-- dependency relevance comes from capitalized-token scanning over raw source
-- when too few hits are found, the tool pads output with early exported types
+Fix:
 
-Plan:
-
-- Replace token scanning with AST-derived type extraction from:
+- Replace `collect_type_like_tokens` with language-specific tree-sitter
+  queries that extract types from:
   - parameter types
   - return types
-  - field and property types
-  - extends / implements clauses
+  - field types
   - generic arguments
-  - typed constructor or literal sites where supported
-- Build dependency candidates from import resolution plus project-local
-  dependency analysis, not raw text alone.
-- Remove default fallback padding with arbitrary exported types.
-- If fallback remains useful, gate it behind an explicit mode rather than
-  default behavior.
-
-Suggested modes:
-
-- `deps_mode=strict`: only resolved or high-confidence referenced types
-- `deps_mode=related`: include a small number of nearby related exports when
-  strict mode yields nothing
-- default should bias toward `strict`
-
-Potential output improvements:
-
-- compact dependency metadata for why a type was included:
-  - `imported`
-  - `signature_ref`
-  - `field_ref`
-  - `implements_ref`
-  - `fallback`
+  - extends / implements clauses
+- Implement for Rust, TypeScript, Python, Go. Each query is ~10-20 lines.
+- Fall back to the current heuristic for unsupported languages, but mark
+  those results as `fallback`.
+- Remove the fallback padding that injects arbitrary exported types. If no
+  relevant dependencies are found, return no deps rather than noise.
 
 Tests to add:
 
-- file with many capitalized identifiers in comments or strings
-- file mentioning unrelated types by name but not actually referencing them
+- file with many capitalized identifiers in comments/strings: should not
+  appear as dependencies
+- file mentioning unrelated types by name but not referencing them
+  syntactically
 - focused read where only one dependency is truly relevant
-- project with several exports where fallback previously introduced noise
 
 Acceptance criteria:
 
-- default dependency output contains only relevant or explicitly marked fallback
-  types
-- focused reads are smaller or equally sized and more on-topic
+- default dependency output contains only AST-referenced types or explicitly
+  marked fallback types
+- no arbitrary padding with unrelated exports
+- focused reads are more on-topic
 
-### 4. Evaluation Harness For Context Quality
+### 4. `.gitignore`-Aware Directory Traversal
 
-Goal: stop validating mainly formatting and token size; start validating signal
-quality.
+Goal: respect `.gitignore` instead of hardcoding skip patterns.
 
-Add a dedicated evaluation suite:
+Current problem: `find_usages`, `usage_counter`, and type extraction all
+hardcode skip lists (`target`, `node_modules`, `vendor`, `dist`, `build`).
+This misses project-specific ignores and processes files that git ignores.
 
-- `semantic_usage_precision` fixtures
-- `duplicate_name_ranking` fixtures
-- `dependency_relevance` fixtures
-- `workflow_noise` fixtures for rename and focused-read workflows
+Fix:
 
-Metrics to track:
-
-- precision for `find_usages`
-- ambiguity rate for unresolved cases
-- false-positive rate for `affected_by_diff`
-- ranking quality for top N results in `type_map`
-- dependency precision for `view_code`
-- token size before/after each improvement
-
-Suggested process:
-
-1. Add golden fixtures with expected compact output rows.
-2. Add scenario-level assertions, not just "row count > 0".
-3. Keep token-efficiency tests, but pair them with quality assertions.
+- Replace hardcoded skip logic with the `ignore` crate, which implements
+  `.gitignore` semantics efficiently.
+- Apply consistently across `find_usages`, `usage_counter`, type
+  extraction, and `code_map`.
 
 Acceptance criteria:
 
-- at least one adversarial fixture per supported language family
+- files matched by `.gitignore` are skipped
+- existing hardcoded skips still work (they're covered by `.gitignore` in
+  most projects)
+
+### 5. LSP Integration Points
+
+Goal: let agents combine LSP precision with MCP compactness.
+
+#### Phase 1: Accept resolved references
+
+- Add a tool (or parameter on `find_usages`) that accepts a list of
+  locations from LSP `textDocument/references` and formats them in the
+  compact MCP schema with scope context and confidence=high.
+- This lets an agent: call LSP for precise references, then pass them
+  through MCP for compact formatting and risk assessment.
+
+#### Phase 2: Accept definition location
+
+- Add a parameter on `view_code` that accepts a definition location from
+  LSP `textDocument/definition` and uses it to resolve the correct
+  dependency type, avoiding the heuristic entirely.
+
+#### Phase 3: Compact LSP diagnostics
+
+- Accept LSP `textDocument/diagnostics` and return a compact, token-
+  efficient summary grouped by severity and file, with structural context
+  (which function/class owns each diagnostic).
+
+Suggested tool shape:
+
+```
+format_references:
+  input: [{file, line, col}, ...], symbol_name
+  output: compact MCP schema with scope, usage type, confidence=high
+
+format_diagnostics:
+  input: [{file, line, severity, message}, ...]
+  output: compact grouped summary with structural owners
+```
+
+Acceptance criteria:
+
+- at least `format_references` exists and produces compact output from
+  LSP-provided locations
+- output is indistinguishable in schema from native `find_usages` output
+  but with confidence=high
+
+### 6. Minimal Edit Context
+
+Goal: return the absolute minimum context needed to correctly edit one
+symbol, saving 10-40x tokens compared to reading the full file.
+
+Current problem: `view_code(focus_symbol=X)` returns the full file with
+other symbols collapsed to signatures. That still includes unrelated
+functions, structs, and imports. An agent editing a 20-line function in a
+500-line file pays for all 500 lines of structure.
+
+New tool: `minimal_edit_context`
+
+Input:
+
+- `file_path`: path to the source file
+- `symbol_name`: the symbol to edit
+
+Output:
+
+- `target`: full code of the target symbol
+- `deps`: signatures of symbols it calls or references (same file or
+  project), extracted from AST call sites and type annotations
+- `types`: compact definitions of types referenced in its signature and
+  body (parameter types, return type, field types)
+- `imports`: only the import lines relevant to this symbol
+- `scope`: enclosing scope chain for orientation
+
+Implementation:
+
+1. Parse the file, locate the target symbol.
+2. Walk the symbol's AST subtree to collect:
+   - identifiers in call expressions (outgoing calls)
+   - type identifiers in annotations, parameters, return types
+   - identifiers that match import bindings
+3. For each collected reference, resolve to a signature within the same
+   file or from project dependencies (reuse `view_code` dependency
+   infrastructure).
+4. Filter imports to only those that bind names used in the target symbol.
+5. Assemble into compact output with token budget enforcement.
+
+Relationship to existing tools:
+
+- Reuses `extract_enhanced_shape` for symbol extraction.
+- Reuses `resolve_dependencies` and AST-position type extraction from
+  Workstream 3 for dependency signatures.
+- Reuses scope chain from Workstream 1 for the `scope` field.
+
+Tests to add:
+
+- function that calls 2 of 10 functions in the file: only those 2 appear
+  in deps
+- function that uses 1 of 5 imported types: only that import appears
+- function with no external dependencies: output contains only the target
+- compare token count vs `view_code(focus_symbol=X)` on a large file:
+  must be materially smaller
+
+Acceptance criteria:
+
+- `minimal_edit_context` returns only context relevant to the target symbol
+- token count is at least 3x smaller than `view_code(focus_symbol=X)` on
+  files with 10+ symbols
+- output includes enough context that an LLM can make a correct edit
+  without reading the full file
+
+### 7. Call Graph Extraction
+
+Goal: answer "what calls this?" and "what does this call?" in one compact
+tool call, replacing multi-file reads and manual filtering.
+
+New tool: `call_graph`
+
+Input:
+
+- `file_path`: path to the source file containing the symbol
+- `symbol_name`: the function/method to analyze
+- `direction`: `callers` | `callees` | `both` (default: `both`)
+- `depth`: how many levels to traverse (default: 1, max: 3)
+- `max_tokens`: token budget (default: 2000)
+
+Output:
+
+- `sym`: the target symbol
+- `h`: header for edge rows
+- `edges`: compact rows of call relationships
+
+```
+h: "direction|symbol|file|line|scope"
+edges: "callee|validate|src/lib.rs|18|process\ncaller|main|src/main.rs|42|"
+```
+
+Implementation:
+
+Callees (outgoing edges):
+
+1. Parse the file, locate the target symbol's AST node.
+2. Query for `call_expression` and `method_call_expression` nodes within
+   the symbol's subtree.
+3. Extract the called function/method name from each call site.
+4. For each callee, resolve file and line from project-local definitions
+   (best-effort: search same file first, then project).
+5. Depth > 1: recursively extract callees of callees, up to depth limit.
+
+Callers (incoming edges):
+
+1. Run `find_usages` for the symbol, filtered to `type=call`.
+2. For each caller, extract scope chain to identify the enclosing function.
+3. Depth > 1: recursively find callers of callers.
+
+Language support:
+
+- Rust: `call_expression`, `method_call_expression`
+- TypeScript/JavaScript: `call_expression`, `member_expression` in call
+  position
+- Python: `call` node type
+- Go: `call_expression`
+
+Relationship to existing tools:
+
+- Callers reuse `find_usages` filtered to calls.
+- Scope chain reuse from Workstream 1.
+- Callee extraction is new AST query work but follows the same pattern
+  as type extraction in Workstream 3.
+
+Tests to add:
+
+- function that calls 3 helpers: all 3 appear as callees
+- function called from 2 sites: both appear as callers
+- depth=2: transitive callees appear with correct depth indicator
+- method call on a known type: callee is resolved with scope
+- recursive function: does not infinite-loop
+
+Acceptance criteria:
+
+- `call_graph` returns correct callers and callees for depth=1
+- depth > 1 works without infinite loops (visited set)
+- output stays within token budget
+- callers match `find_usages(type=call)` results but with less noise
+  (scope-qualified, no non-call usages)
+
+### 8. Targeted Quality Fixtures
+
+Goal: prove precision improvements with adversarial test cases.
+
+Add fixtures alongside each workstream, not as a separate evaluation
+framework:
+
+- **Scope qualification**: same-name symbols in different scopes, verify
+  scope column distinguishes them.
+- **Type ranking**: duplicate-name types in different files, verify
+  separate counters.
+- **Dependency extraction**: files with misleading capitalized tokens in
+  comments, verify AST extraction ignores them.
+- **Affected-by-diff**: rename fixture where unrelated same-name symbols
+  exist, verify they are not flagged as high risk.
+
+Each fixture should assert both correctness and token efficiency (output
+does not grow unreasonably).
+
+Acceptance criteria:
+
+- at least one adversarial fixture per workstream
 - quality regressions fail CI
 
-### 5. MCP-First Navigation And Precision Slicing
+## Execution Order
 
-Goal: make the server sufficient for understanding and navigating a codebase
-without forcing the LLM to fall back to large file reads or broad git diffs.
+### Milestone 1: Cleanup and Truthfulness (Workstream 0)
 
-Plan:
+- Fix clippy dead code
+- Honest docs
+- Ship immediately
 
-- audit the existing tool surface against common agent tasks:
-  - "what owns this line?"
-  - "what are the important types here?"
-  - "what changed structurally?"
-  - "what depends on this?"
-  - "what is the minimum code I need to inspect next?"
-- prefer adding small, high-precision outputs over returning more raw code
-- ensure diff-related flows return symbol-level and impact-level slices before
-  any line-level or repository-level output
-- define a "last resort" policy for when larger context is allowed
+### Milestone 2: Scope-Qualified Matching (Workstream 1)
 
-Potential acceptance tests:
+- Phase 1: scope column in `find_usages`
+- Phase 2: scope-qualified `affected_by_diff`
+- Phase 3: confidence markers
+- Fixtures for scope disambiguation
 
-- an agent identifies the right function to edit in a large file without reading
-  the full file
-- an agent reviews a signature change using `parse_diff` and
-  `affected_by_diff` without needing a full git diff
-- an agent understands a multi-file feature from `code_map`, `type_map`,
-  `symbol_at_line`, `view_code`, and focused dependency context alone
+### Milestone 3: Relevance Upgrades (Workstreams 2 + 3)
 
-Acceptance criteria:
+- File-qualified type ranking
+- AST-position dependency extraction
+- Fixtures for type ranking and dependency relevance
 
-- common navigation tasks have an MCP-first workflow documented and tested
-- diff-related workflows stay symbol-first by default
-- token use for navigation remains materially below raw-file and raw-diff
-  fallbacks
+### Milestone 4: Infrastructure (Workstream 4)
 
-## Recommended Execution Order
+- `.gitignore`-aware traversal across all tools
 
-### Milestone 1: Cleanup And Truthfulness
+### Milestone 5: Precision Tools (Workstreams 6 + 7)
 
-- workstream 0
-- doc wording corrections
-- clippy cleanup
+- `minimal_edit_context` tool (depends on Workstreams 1 + 3)
+- `call_graph` tool (depends on Workstream 1)
+- Fixtures for both
 
-### Milestone 2: Safer Symbol Workflows
+### Milestone 6: LSP Bridge (Workstream 5)
 
-- workstream 1 phase 1
-- workstream 1 phase 2 groundwork
-- new fixtures for ambiguity and same-name collisions
+- `format_references` tool
+- LSP-aware `view_code` dependency resolution
+- Compact diagnostics formatting
 
-### Milestone 3: Relevance Upgrades
+### Milestone 7: Prove It (Workstream 8)
 
-- workstream 2
-- workstream 3
+- Adversarial fixtures for all workstreams
+- Token efficiency assertions
 
-### Milestone 4: Prove It
+## What This Plan Does Not Do
 
-- workstream 4
-- quality metrics in CI
+- Build a project-wide symbol index from tree-sitter. LSP does this better.
+- Attempt compiler-grade name resolution. LSP does this better.
+- Replace LSP for precise go-to-definition or find-references.
+- Broaden language support before precision improves on existing languages.
+- Replace compact schemas with verbose JSON.
 
-### Milestone 5: MCP-First Agent Workflows
-
-- workstream 5
-- document and benchmark MCP-only navigation flows
-
-## Additional Ideas Beyond The Review Findings
-
-These are not blockers, but they would make the project stronger.
-
-### A. Add Confidence And Ambiguity To The Compact Schemas
-
-LLMs do better when the tool says "I am unsure" instead of returning confident
-noise. A small compact field is cheap and valuable.
-
-Examples:
-
-- result-level: `{"conf":"low"}`
-- row-level column: `...|confidence`
-- ambiguity marker: `{"amb":true}`
-
-### B. Offer Explicit Precision Modes
-
-Not every user needs the same trade-off.
-
-Suggested modes:
-
-- `fast`: current heuristic-heavy behavior with tight token budget
-- `balanced`: AST-backed relevance where available
-- `strict`: only high-confidence symbol/type matches
-
-### C. Add Symbol Provenance
-
-For top-level outputs, consider compact provenance fields such as owner scope or
-module path. That would help LLMs distinguish homonyms without reading more
-files.
-
-Examples:
-
-- `owner`
-- `module`
-- `def_path`
-
-### D. Language Capability Matrix
-
-Some languages will support stronger resolution than others. Document that
-honestly so the tool can expose capabilities instead of pretending everything is
-equally precise.
-
-Suggested matrix:
-
-- definition extraction quality
-- usage resolution quality
-- type extraction quality
-- dependency resolution quality
-
-### E. Add Workflow-Level Tools Built On The Better Core
-
-Once symbol identity is stronger, the repo could support higher-level tools that
-are directly useful to coding LLMs:
-
-- `related_symbols`
-- `focused_slice`
-- `implementation_summary`
-- `safe_rename_preview`
-
-### F. Evaluate Context Quality Against Real Agent Tasks
-
-Create a small benchmark of tasks like:
-
-- rename a method safely
-- update a type used across modules
-- modify a template context struct
-- inspect a large file and identify the right dependency
-
-Measure:
-
-- correctness of the downstream edit
-- tool-call count
-- token cost
-- rate of unnecessary file reads
-
-## Non-Goals For The First Iteration
-
-- full compiler-grade name resolution for every supported language
-- perfect interprocedural analysis
-- replacing compact schemas with verbose JSON
-- broadening language support before precision improves on existing languages
-
-## Definition Of Done
+## Definition of Done
 
 This plan is complete when:
 
 - the repo is lint-clean
-- the docs are honest
-- semantic precision tests exist and pass
-- the main tools are materially less noisy on collision-heavy fixtures
+- the docs are honest about what is syntax-aware vs semantic
+- `find_usages` returns scope context and confidence
+- same-name types get separate usage counters
+- `view_code` deps come from AST positions, not capitalized-token scanning
+- `affected_by_diff` is less noisy on collision-heavy fixtures
+- `minimal_edit_context` exists and produces focused output
+- `call_graph` exists and returns callers/callees
+- at least one LSP integration point exists
 - compact output is preserved
-- the project can credibly claim it gives LLMs cleaner context, not only
-  smaller context
+- agents with MCP + LSP can navigate codebases primarily through tool
+  responses

@@ -5,377 +5,487 @@ Updated: 2026-04-17
 ## Purpose
 
 This file collects ideas that could make `treesitter-mcp` more useful for
-coding LLMs beyond the core remediation work in [PLAN.md](./PLAN.md).
+coding LLMs beyond the core work in [PLAN.md](./PLAN.md).
 
-These are not all immediate commitments. The goal is to capture directions that
-could improve context quality, trustworthiness, and downstream agent outcomes.
-
-The core design tension for this project is now explicit:
+The core design tension:
 
 - improve coding capability
 - minimize token usage
 
-The ideal outcome is not "more analysis output". It is an MCP surface that lets
-an LLM understand, navigate, review, and change a codebase while reading as
-little raw code as possible.
+The ideal outcome: an MCP surface that lets an LLM understand, navigate,
+review, and change a codebase while reading as little raw code as possible,
+using LSP for precision where available.
 
-## 1. Confidence And Ambiguity Markers
-
-### Idea
-
-Add explicit confidence or ambiguity signals to tool outputs when symbol or type
-resolution is heuristic rather than definitive.
-
-Possible shapes:
-
-- result-level metadata: `{"conf":"low"}`
-- row-level column: `...|confidence`
-- ambiguity marker: `{"amb":true}`
-
-### Expected Benefits
-
-- Makes the tool more honest. An LLM can treat low-confidence results as hints
-  instead of facts.
-- Reduces bad follow-on edits caused by confidently presented noise.
-- Helps clients and higher-level tools decide whether to ask follow-up
-  questions, read more files, or switch to a stricter mode.
-- Improves `affected_by_diff` risk scoring, because low-confidence matches can
-  be down-ranked or separated from likely breakage.
-
-### Cost / Tradeoffs
-
-- Slightly wider schemas.
-- Some client prompts and parsers may need updates to make use of the metadata.
-
-## 2. Precision Modes
+## 1. Minimal Edit Context
 
 ### Idea
 
-Expose explicit trade-off modes so users can choose between speed and precision.
+Given a symbol to edit, return the absolute minimum context needed to make
+a correct edit: the symbol's code, its signature dependencies, its callers'
+expectations, and nothing else.
 
-Suggested modes:
+This is different from `view_code(focus_symbol=X)` which returns the whole
+file with other symbols as signatures. Minimal edit context would return
+only:
 
-- `fast`: cheap heuristics, low latency, optimized for exploration
-- `balanced`: AST-backed relevance and moderate validation
-- `strict`: only high-confidence matches, even if coverage is lower
+- the target symbol's full code
+- signatures of symbols it calls or references
+- type definitions for its parameters, return type, and field types
+- import context needed to understand the code
+- nothing from unrelated parts of the file
 
-### Expected Benefits
+```
+minimal_edit_context:
+  input: file_path, symbol_name
+  output:
+    target: full code of the symbol
+    deps: signatures of referenced symbols (from same file or project)
+    types: definitions of referenced types (compact)
+    imports: relevant import lines only
+```
 
-- Prevents one default from trying to satisfy incompatible use cases.
-- Keeps lightweight browsing cheap while giving refactor workflows a safer mode.
-- Makes performance expectations easier to document and test.
-- Lets downstream agents select the right behavior for the task:
-  - exploration
-  - debugging
-  - rename/refactor
-  - impact analysis
+### Why this matters for LLMs
+
+LLMs waste the most tokens on context they don't need for the current edit.
+A 500-line file where the agent needs to change one 20-line function still
+costs full-file tokens today. This tool would return ~50-80 tokens of
+focused context instead of ~2000.
 
 ### Cost / Tradeoffs
 
-- More testing matrix surface.
-- Tool descriptions and examples need to explain the modes clearly.
+- Needs reliable extraction of what a symbol references (tree-sitter can
+  handle this for call sites and type annotations).
+- Risk of missing context the LLM actually needs. Must be paired with
+  confidence markers so the LLM knows when to request more.
 
-## 3. Symbol Provenance In Compact Outputs
+## 2. Call Graph Extraction
 
 ### Idea
 
-Attach lightweight provenance to symbols and types so homonyms can be
-distinguished without opening more files.
+For a given function, extract:
 
-Examples:
+- what it calls (outgoing edges)
+- what calls it (incoming edges)
+- depth-limited transitive closure in either direction
 
-- owner scope
-- module path
-- import source
-- definition path
-- enclosing type or trait
+Return as compact rows: `caller|callee|file|line`
 
-### Expected Benefits
+Tree-sitter can extract call sites reliably from AST positions
+(`call_expression`, `method_call_expression`). Combining outgoing calls
+from AST with incoming calls from `find_usages` (filtered to `type=call`)
+gives a practical call graph without LSP.
 
-- Helps LLMs distinguish `Config` from `Config`, `add` from `Calculator::add`,
-  and similar same-name cases.
-- Improves ranking and grouping without needing a full verbose payload.
-- Makes outputs more composable across tools, because `view_code`,
-  `find_usages`, `type_map`, and `affected_by_diff` could speak about the same
-  symbol identity more consistently.
-- Lowers the number of follow-up reads required to understand what a result
-  actually refers to.
+### Why this matters for LLMs
+
+"What calls this?" and "What does this call?" are the two most common
+questions during refactoring. Currently agents either:
+- call `find_usages` and manually filter to calls (expensive, noisy)
+- read multiple files to trace control flow (very expensive)
+
+A dedicated call graph tool answers both questions in one compact response.
+
+### Potential shape
+
+```
+call_graph:
+  input: file_path, symbol_name, direction=both|callers|callees, depth=1
+  output:
+    h: "direction|symbol|file|line|scope"
+    edges: "callers|main|src/main.rs|42|main\ncallees|validate|src/lib.rs|18|process"
+```
 
 ### Cost / Tradeoffs
 
-- Slight token overhead.
-- Needs a stable compact representation to avoid creating another parsing burden.
+- Outgoing edges are cheap (AST query on one function).
+- Incoming edges require `find_usages` which is a project scan.
+- Depth > 1 multiplies cost. Default depth=1, let agent request more.
 
-## 4. Language Capability Matrix
+## 3. Change Impact Preview
 
 ### Idea
 
-Document and possibly expose which languages support which quality level for:
+Given a *planned* change (not yet made), predict what will need to change
+downstream. This is `affected_by_diff` but *before* the edit.
 
-- definition extraction
-- usage resolution
-- type extraction
-- dependency relevance
-- diff impact analysis
+Input: a symbol name and a description of the planned change (e.g.,
+"add parameter `timeout: Duration` to `fetch_data`").
 
-### Expected Benefits
+Output: list of call sites that would need updating, with current code
+snippets and suggested scope of change.
 
-- Keeps the repo honest about where the strongest guarantees exist.
-- Helps prioritize engineering effort on the weakest language paths first.
-- Gives agent authors a principled way to adjust prompts and fallback behavior.
-- Makes regressions easier to spot because improvements can be tracked per
-  language instead of only globally.
+Alternatively, simpler version: just accept a new signature string and
+diff it against the current signature to produce the impact analysis.
+
+```
+preview_impact:
+  input: file_path, symbol_name, new_signature
+  output: same schema as affected_by_diff but without needing actual changes
+```
+
+### Why this matters for LLMs
+
+Agents currently have to: make the change -> run `affected_by_diff` ->
+discover it broke 15 call sites -> fix them all. With preview, the agent
+can see the blast radius *before* committing to the change, potentially
+choosing a less disruptive approach.
 
 ### Cost / Tradeoffs
 
-- Requires ongoing maintenance as capabilities improve.
-- Some users may initially see weaker support than they assumed, but that is
-  better than silent overclaiming.
+- Essentially a virtual diff: parse the new signature, compare to current,
+  run the impact analysis without modifying the file.
+- Implementation is mostly reusing `affected_by_diff` internals with a
+  synthetic old/new comparison.
 
-## 5. Higher-Level Workflow Tools
+## 4. Test Relevance Mapping
 
 ### Idea
 
-Once the symbol and relevance core improves, add tools that map more directly to
-what coding LLMs actually need.
+Given a changed symbol, identify which test files and test functions are
+most likely to exercise it.
 
-Examples:
+Approach:
+- find test files (files matching `*test*`, `*spec*`, or in `tests/` dirs)
+- search for usages of the changed symbol within test files only
+- rank by: direct call > transitive reference > same module
 
-- `related_symbols`
-- `focused_slice`
-- `implementation_summary`
-- `safe_rename_preview`
-- `relevant_types_for_symbol`
+```
+relevant_tests:
+  input: file_path, symbol_name
+  output:
+    h: "test_file|test_fn|line|relevance"
+    tests: "tests/calc_test.rs|test_add|15|direct_call\n..."
+```
 
-### Expected Benefits
+### Why this matters for LLMs
 
-- Reduces multi-step tool choreography in prompts.
-- Lets the server combine several internal analyses into one better-targeted
-  response instead of forcing the LLM to stitch them together.
-- Lowers token waste by returning only the information needed for a specific
-  coding action.
-- Makes the repo feel less like a bag of primitives and more like an LLM-native
-  coding context engine.
+After making a change, agents often run the entire test suite or guess
+which tests to run. A targeted test list saves time and tokens (no need
+to read test output for irrelevant tests).
 
 ### Cost / Tradeoffs
 
-- Higher design burden: these tools need strong contracts to avoid becoming
-  vague convenience wrappers.
-- They should be built on top of stronger symbol identity first, otherwise they
-  risk packaging the same noise in a nicer API.
+- Simple implementation: `find_usages` scoped to test directories.
+- Heuristic test file detection may miss unconventional test layouts.
 
-## 6. Real Agent Task Benchmarks
+## 5. Structural Similarity Search
 
 ### Idea
 
-Evaluate the repo on realistic coding-agent tasks instead of mainly on output
-format and token size.
+Find functions/methods that are structurally similar to a given one.
+Useful for: finding duplicate logic, identifying extraction candidates,
+understanding patterns.
 
-Possible scenarios:
+Compare by:
+- parameter count and types
+- return type
+- called functions
+- AST shape (depth, node type distribution)
 
-- rename a method safely
-- update a type used across modules
-- inspect a large file and choose the right dependency
-- modify an Askama template with the correct context struct
-- estimate blast radius after a signature change
+### Why this matters for LLMs
 
-Track:
-
-- correctness of the downstream edit
-- number of tool calls
-- total tokens used
-- unnecessary file reads
-- false positives and false negatives
-
-### Expected Benefits
-
-- Measures what actually matters: whether the context helps an agent do the
-  right work.
-- Prevents local optimizations that make outputs smaller but less useful.
-- Creates a durable benchmark for future algorithm changes.
-- Makes it easier to justify more sophisticated semantic work with evidence.
+When an agent is asked to "add a function like X but for Y", finding
+existing similar functions gives a concrete template. When refactoring,
+finding near-duplicates identifies extraction opportunities.
 
 ### Cost / Tradeoffs
 
-- Requires more setup than unit-style fixture tests.
-- End-to-end scenarios can be noisier and need careful design to stay stable.
+- AST shape comparison is cheap per-function but expensive across a whole
+  project. Needs a pre-filtering step (same parameter count, similar size).
+- Similarity threshold tuning to avoid noise.
 
-## 7. Relevance Explanations
+## 6. Progressive Context Disclosure
 
 ### Idea
 
-For ranked or filtered outputs, include compact reasons for inclusion.
+Instead of returning full context in one call, support a "drill-down"
+pattern where the first response is extremely compact and the agent
+requests more detail on specific items.
 
-Examples:
+Level 0: names and line numbers only (~10 tokens per symbol)
+Level 1: add signatures (~30 tokens per symbol)
+Level 2: add doc comments (~50 tokens per symbol)
+Level 3: full code (~200+ tokens per symbol)
 
-- `imported`
-- `signature_ref`
-- `field_ref`
-- `implements_ref`
-- `fallback`
-- `same_module`
+The agent starts at level 0, identifies the 2-3 symbols it cares about,
+and requests level 3 only for those.
 
-### Expected Benefits
+This is partially supported today via `detail="minimal"|"signatures"|"full"`
+and `focus_symbol`, but could be made more systematic with a single
+progressive-disclosure API.
 
-- Makes ranking easier to debug and trust.
-- Helps LLMs decide which result to inspect first.
-- Gives maintainers a way to see why a bad result appeared without re-reading
-  the full implementation.
-- Useful for future evaluation metrics, because precision can be inspected by
-  reason category.
+### Why this matters for LLMs
+
+Current workflow: `view_code(detail=signatures)` -> identify target ->
+`view_code(focus_symbol=X)`. Two tool calls. A progressive API could
+combine this into one round-trip with a continuation token.
 
 ### Cost / Tradeoffs
 
-- More schema surface and some extra tokens.
-- The reason taxonomy needs to stay small or it becomes noisy.
+- Needs stateful session or continuation tokens (adds complexity).
+- May not be worth it if the two-call pattern is fast enough.
+- Alternative: just make the two-call pattern cheaper (already mostly is).
 
-## 8. Incremental Symbol Graph / Caching
+## 7. Multi-File Batch Operations
 
 ### Idea
 
-Build a reusable project-level symbol graph that can be updated incrementally
-rather than recomputed independently for each tool call.
+Accept multiple file paths or symbol names in a single tool call and
+return combined results.
 
-### Expected Benefits
+```
+batch_view_code:
+  input: [{file_path, focus_symbol?}, ...]
+  output: combined compact schema, one entry per file
 
-- Improves latency for multi-step workflows such as `find_usages` ->
-  `affected_by_diff` -> `view_code`.
-- Makes richer semantic analysis more practical without blowing up cost.
-- Encourages consistency across tools because they share one underlying symbol
-  model instead of each rebuilding partial views.
-- Could enable future tools like workspace-level related symbol search and
-  project-wide focused slices.
+batch_find_usages:
+  input: [symbol1, symbol2, ...], path
+  output: combined usage rows, grouped by symbol
+```
+
+### Why this matters for LLMs
+
+Agents working on multi-file changes currently make N sequential tool
+calls. If an agent knows it needs to view 3 files, one batched call saves
+2 round-trips and reduces prompt overhead (no repeated instructions).
 
 ### Cost / Tradeoffs
 
-- More architectural complexity.
-- Cache invalidation and filesystem change tracking need careful handling.
+- Simple to implement: loop over inputs, merge outputs.
+- Token budget needs to be shared across all inputs (sum of individual
+  budgets, or a global budget that gets split).
+- Risk of returning too much in one response. Needs good truncation.
 
-## 9. Better Dependency Modes For `view_code`
+## 8. Ownership and Module Boundary Detection
 
 ### Idea
 
-Expose dependency inclusion as an explicit policy instead of one mostly hidden
-heuristic.
+Detect and expose module/package boundaries so agents understand
+architectural structure.
 
-Suggested modes:
+- Rust: crate and module hierarchy from `mod` declarations
+- Python: package structure from `__init__.py` files
+- TypeScript: barrel exports from `index.ts` files
+- Go: package declarations
 
-- `none`
-- `strict`
-- `related`
-- `broad`
+Output: a tree of modules with their public API surface.
 
-### Expected Benefits
+```
+module_map:
+  input: path
+  output:
+    h: "module|exports|file"
+    modules: "api|[handlers, routes, middleware]|src/api/mod.rs\n..."
+```
 
-- Lets users and agents ask for the right amount of context deliberately.
-- Makes focused reads safer by default while still supporting exploratory
-  dependency expansion when needed.
-- Gives tests a clearer contract, because output differences become intentional
-  mode differences rather than emergent heuristics.
+### Why this matters for LLMs
+
+Agents making changes often violate module boundaries because they don't
+see them. A module map tells the agent "this function is internal to this
+module, don't call it from outside" without the agent having to infer
+visibility rules from code.
 
 ### Cost / Tradeoffs
 
-- Another user-facing control to document.
-- Needs strong defaults so most users do not have to think about it.
+- Language-specific implementation, but mostly parsing import/export
+  patterns that tree-sitter handles well.
+- Visibility rules vary significantly across languages.
 
-## 10. MCP-Only Codebase Navigation
+## 9. Compact Contextual Errors
 
 ### Idea
 
-Design the tool surface so an LLM can understand and navigate most repositories
-through MCP responses alone, using raw file reads only as an exception path.
+When a tool encounters an issue (file not found, parse error, ambiguous
+symbol), return structured error context that helps the agent self-correct
+instead of a bare error message.
 
-That means the MCP should answer questions like:
+Current: `"Path does not exist: /foo/bar.rs"`
+Better:
 
-- what matters in this directory?
-- what owns this line?
-- what are the important types and symbols here?
-- what should I inspect next?
-- what code slice is sufficient for this task?
+```json
+{
+  "error": "file_not_found",
+  "path": "/foo/bar.rs",
+  "suggestions": ["src/foo/bar.rs", "src/bar.rs"],
+  "hint": "did you mean a relative path?"
+}
+```
 
-### Expected Benefits
+For ambiguous symbols:
 
-- Strongly reduces token waste from large file dumps.
-- Gives LLMs a consistent navigation workflow instead of ad hoc exploration.
-- Makes the project more valuable as infrastructure, not just as a collection of
-  helper tools.
-- Encourages tool outputs to be shaped around actual agent decisions rather than
-  around internal implementation convenience.
+```json
+{
+  "error": "ambiguous_symbol",
+  "symbol": "Config",
+  "candidates": [
+    {"file": "src/api/config.rs", "line": 5, "kind": "struct"},
+    {"file": "src/db/config.rs", "line": 12, "kind": "struct"}
+  ],
+  "hint": "specify file_path to disambiguate"
+}
+```
+
+### Why this matters for LLMs
+
+Bare error messages cause agents to retry blindly or ask the user. Rich
+error context lets agents self-correct in one step: "file not found, but
+similar file exists at X, retrying with X".
 
 ### Cost / Tradeoffs
 
-- Raises the bar for the tool surface: gaps become more visible because agents
-  depend on it end to end.
-- Some tasks will still require raw code, so fallbacks need to stay available
-  and clearly defined.
+- Needs fuzzy path matching for suggestions (cheap with `walkdir`).
+- Slightly larger error responses, but they replace a retry round-trip.
 
-## 11. Symbol-First Diff And Change Slicing
+## 10. Diff-Scoped Context Assembly
 
 ### Idea
 
-Lean harder into structural and semantic change views so the default workflow is
-not "read a huge git diff", but "inspect the minimum relevant change slice".
+Given a git diff (or a set of changed files), automatically assemble the
+minimum context an agent needs to review the change:
 
-Examples:
+- changed symbols (from `parse_diff`)
+- signatures of affected callers (from `affected_by_diff`)
+- type definitions referenced by changed signatures
+- test functions that exercise changed code
 
-- changed symbols only
-- impacted call sites only
-- signature deltas only
-- ownership and blast-radius summaries
-- targeted before/after snippets for one symbol
+One tool call that answers: "here is everything you need to understand and
+review this change."
 
-### Expected Benefits
+```
+review_context:
+  input: compare_to="HEAD~1", scope="src/"
+  output:
+    changes: compact structural diff
+    affected: risk-sorted usage rows
+    types: referenced type definitions
+    tests: relevant test functions
+    tokens_saved: estimate vs reading all changed files
+```
 
-- Saves a large number of tokens during review and refactoring tasks.
-- Better matches how coding LLMs reason: they usually need "what changed and why
-  does it matter", not every edited line in the repository.
-- Reduces noise from formatting churn, generated code, and unrelated hunks.
-- Makes `parse_diff` and `affected_by_diff` more central to the product vision.
+### Why this matters for LLMs
+
+Code review is the highest-value use case for coding LLMs, and it's
+currently the most token-expensive. An agent reviewing a PR typically
+reads every changed file in full. A `review_context` tool could reduce
+that to 20-30% of the tokens while preserving all the signal.
 
 ### Cost / Tradeoffs
 
-- Harder than displaying raw diffs, because the slicing must be trustworthy.
-- Some low-level review tasks still need line-level detail, so this should be a
-  first stop, not the only possible view.
+- Composition of existing tools, but the assembly logic needs to be smart
+  about what to include and what to skip.
+- Token budget allocation across the sub-components is tricky.
 
-## 12. Next-Step Recommendation Tooling
+## 11. Symbol Rename Dry-Run
 
 ### Idea
 
-Add lightweight guidance about the smallest next read or next tool call that is
-likely to resolve the current uncertainty.
+Given a symbol and a new name, show exactly what would change across the
+project without making any edits:
 
-Examples:
+- all usage locations
+- the edits that would be applied at each location
+- confidence that each edit is correct
+- files that would be modified
 
-- "inspect symbol X next"
-- "read focused slice from file Y"
-- "resolve dependency type Z before editing"
-- "review affected usage rows before renaming"
+```
+rename_preview:
+  input: file_path, symbol_name, new_name
+  output:
+    h: "file|line|col|old_text|new_text|confidence"
+    edits: "src/main.rs|42|10|add(|add_numbers(|high\n..."
+    files_modified: 3
+    total_edits: 7
+```
 
-### Expected Benefits
+### Why this matters for LLMs
 
-- Cuts down exploratory thrashing.
-- Helps agents stay on an MCP-first path instead of falling back to big raw
-  reads too early.
-- Can lower total tool-call count and total token cost across multi-step tasks.
+Rename is the most common refactoring operation and the one most likely
+to cause subtle breakage. LSP can do precise renames, but this tool
+provides a preview that the agent (and user) can review before applying.
+Combined with LSP rename, it gives a verify-then-apply workflow.
 
 ### Cost / Tradeoffs
 
-- Recommendation quality must be good enough to be trusted.
-- Adds another layer of ranking logic that must stay deterministic.
+- Essentially `find_usages` with edit preview formatting.
+- Confidence comes from scope-qualified matching (Workstream 1 in PLAN.md).
+- Without LSP, can't guarantee correctness for imports, re-exports, or
+  string references.
+
+## 12. Context Budget Advisor
+
+### Idea
+
+A meta-tool that, given a task description and a token budget, recommends
+which tools to call and with what parameters to stay within budget.
+
+```
+plan_context:
+  input: task="rename calculate to compute in src/math/", budget=3000
+  output:
+    steps:
+      - find_usages(symbol="calculate", path="src/math/", max_tokens=1000)
+      - view_code(file_path="src/math/calc.rs", focus_symbol="calculate")
+    estimated_tokens: 2400
+    note: "budget allows full context; no truncation needed"
+```
+
+### Why this matters for LLMs
+
+Agent frameworks often have fixed context windows. A budget advisor helps
+agents make optimal tool call sequences instead of over-fetching or
+under-fetching context.
+
+### Cost / Tradeoffs
+
+- Needs token estimation for each tool (already exists via tiktoken).
+- Task understanding is hard; may need to be a simple heuristic rather
+  than full planning.
+- Risk of the meta-tool itself costing tokens. Keep output minimal.
+
+## 13. Structural Invariant Checking
+
+### Idea
+
+After an edit, verify that the file still parses correctly and that
+structural invariants hold:
+
+- all functions that existed before still exist (unless intentionally removed)
+- no new parse errors
+- signature contracts are maintained (parameter count, return type present)
+- import statements are consistent with usage
+
+```
+verify_edit:
+  input: file_path, compare_to="HEAD"
+  output:
+    parses: true
+    issues: []
+    # or
+    parses: true
+    issues: ["function 'validate' lost return type annotation"]
+```
+
+### Why this matters for LLMs
+
+LLMs make subtle structural errors: accidentally deleting a function while
+editing a neighbor, dropping return type annotations, breaking indentation
+in Python. A fast structural check catches these before the agent moves on.
+
+### Cost / Tradeoffs
+
+- Cheap: just parse old and new, compare symbol sets.
+- Limited to structural issues; can't catch logic errors.
+- Complements (but doesn't replace) running tests or LSP diagnostics.
 
 ## How To Use This File
 
 Use this file for:
 
-- strategic ideas
-- optional enhancements
-- future tool concepts
-- evaluation ideas
+- strategic ideas and future directions
+- optional enhancements beyond PLAN.md
+- evaluation of new tool concepts
 
 Use [PLAN.md](./PLAN.md) for:
 
-- committed remediation work
-- milestones
+- committed work with milestones
 - acceptance criteria
 - execution order
