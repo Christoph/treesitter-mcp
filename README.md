@@ -102,7 +102,7 @@ Choose the right tool for your task:
 - **Know the specific function?** → `view_code` with `focus_symbol` (focused view, optimized tokens)
 
 #### "I need to find something"
-- **Where is symbol X used?** → `find_usages` (semantic search with usage types)
+- **Where is symbol X used?** → `find_usages` (syntax-aware search with usage types)
 - **Complex pattern matching?** → `query_pattern` (advanced, requires tree-sitter syntax)
 - **What function is at line N?** → `symbol_at_line` (symbol info with scope hierarchy)
 - **What data is available in a template?** → `template_context` (Askama template variables)
@@ -129,6 +129,23 @@ Choose the right tool for your task:
 | `symbol_at_line` | Single file | Low | Fast | Error debugging, scope lookup |
 | `query_pattern` | Single file | Medium | Medium | Complex patterns (advanced) |
 | `template_context` | Single file | Low-Medium | Fast | Askama template editing |
+
+### Precision vs. Heuristic
+
+These tools provide strong guarantees based on AST structure:
+- `view_code`: exact code extraction from parsed AST
+- `parse_diff`: structural diff between file revisions
+- `query_pattern`: precise tree-sitter AST queries
+- `symbol_at_line`: scope chain from AST traversal
+- `template_context`: Askama struct resolution
+
+These tools use syntax-aware matching (best-effort, not compiler-grade):
+- `find_usages`: identifier matching via tree-sitter, may match homonyms in different scopes
+- `affected_by_diff`: relies on `find_usages` for impact analysis
+- `code_map`: structural overview, scope-aware but not semantically resolved
+- `type_map`: type identification via AST, usage counts are approximate
+
+For compiler-grade symbol resolution (go-to-definition, precise find-references), use an LSP server alongside this MCP server.
 
 ### Common Workflow Patterns
 
@@ -367,7 +384,7 @@ Generate hierarchical map of a DIRECTORY (not single file). Returns structure ov
 
 ### 4. find_usages
 
-Find ALL usages of a symbol (function, variable, class, type) across files. Semantic search, not text search.
+Find ALL usages of a symbol (function, variable, class, type) across files. Syntax-aware search, not text search.
 
 **Use When:**
 - ✅ Refactoring: need to see all places that call a function

@@ -1,6 +1,6 @@
 # Context Quality Improvement Plan
 
-Updated: 2026-04-17
+Updated: 2026-04-20
 
 ## Purpose
 
@@ -51,44 +51,68 @@ only as a last resort.
 - Relative paths and token budgeting treated consistently
 - Broad language coverage and healthy test suite
 - `cargo test` passes
+- `cargo clippy -- -D warnings` passes
+- `find_usages` now includes scope, confidence, and owner metadata
+- `affected_by_diff` now deprioritizes unrelated same-name symbols
+- Main directory scanners now share Git-aware traversal for ignored files
 
-### Current Shortcomings
+### Remaining Shortcomings
 
-1. `find_usages` is lexical (bare name matching), not scope-aware.
-2. Type usage ranking keys by bare name, conflating unrelated types with
+1. Type usage ranking keys by bare name, conflating unrelated types with
    the same name across files and modules.
-3. `view_code` dependency selection uses a capitalized-token heuristic and
+2. `view_code` dependency selection uses a capitalized-token heuristic and
    falls back to padding with arbitrary exported types.
-4. `cargo clippy -- -D warnings` fails (3 dead functions in `code_map.rs`).
-5. README and tool descriptions claim "semantic search" where only lexical
-   matching exists.
-6. Directory traversal hardcodes skip patterns instead of respecting
-   `.gitignore`.
-7. No confidence or ambiguity signals in any tool output.
-8. No LSP integration points: agents must choose between precise-but-verbose
+3. No LSP integration points: agents must choose between precise-but-verbose
    LSP results and compact-but-imprecise MCP results.
+4. No `minimal_edit_context` tool exists yet.
+5. No `call_graph` tool exists yet.
+6. Token-efficiency proof still needs to be added for the remaining roadmap
+   items.
+
+## Status Update
+
+Completed in the current worktree:
+
+- **Workstream 0**: repo hygiene and truthfulness work is done; the current
+  tree is doc-correct and clippy-clean.
+- **Workstream 1**: `find_usages` now emits scope-qualified rows with
+  confidence markers, and `affected_by_diff` uses that signal to lower the
+  risk of unrelated homonyms.
+- **Workstream 4**: `find_usages`, `code_map`, `usage_counter`, and type
+  extraction now share Git-aware traversal that skips ignored files in git
+  repos, while preserving legacy skip behavior for common build directories.
+- **Workstream 8 (partial)**: adversarial fixtures now cover scope
+  disambiguation, homonym suppression in `affected_by_diff`, and ignored-file
+  traversal.
+
+Next recommended slice:
+
+- **Workstreams 2 + 3**: file-qualified type ranking and AST-backed
+  dependency extraction in `view_code`.
 
 ## Success Criteria
 
 The work in this plan is done when:
 
-- `cargo test` passes
-- `cargo clippy -- -D warnings` passes
-- README and tool descriptions do not overclaim semantic guarantees
-- same-name types in different files get separate usage counters
-- `find_usages` results include scope context so homonyms are distinguishable
-- `affected_by_diff` uses scope-qualified matching and is less noisy on
-  rename/signature-change flows
-- `view_code` dependency context comes from AST-position type extraction,
+- [x] `cargo test` passes
+- [x] `cargo clippy -- -D warnings` passes
+- [x] README and tool descriptions do not overclaim semantic guarantees
+- [ ] same-name types in different files get separate usage counters
+- [x] `find_usages` results include scope context so homonyms are distinguishable
+- [x] `affected_by_diff` uses scope-qualified/confidence-aware matching and is
+  less noisy on rename/signature-change flows
+- [ ] `view_code` dependency context comes from AST-position type extraction,
   not capitalized-token scanning
-- directory traversal respects `.gitignore`
-- results include confidence markers where resolution is heuristic
-- at least one LSP integration point exists (accept resolved references,
+- [x] directory traversal respects `.gitignore` in git repos for the main
+  directory-scanning tools
+- [x] results include confidence markers where resolution is heuristic
+- [ ] at least one LSP integration point exists (accept resolved references,
   format compactly)
-- `minimal_edit_context` returns focused context at least 3x smaller than
+- [ ] `minimal_edit_context` returns focused context at least 3x smaller than
   `view_code(focus_symbol=X)` on files with 10+ symbols
-- `call_graph` returns correct callers and callees for depth=1
-- token budgets remain within current rough envelopes
+- [ ] `call_graph` returns correct callers and callees for depth=1
+- [ ] token budgets remain within current rough envelopes for the remaining
+  roadmap items
 
 ## Guiding Principles
 
@@ -102,9 +126,13 @@ The work in this plan is done when:
 
 ## Workstreams
 
-### 0. Repo Hygiene and Truthfulness
+### 0. Repo Hygiene and Truthfulness [Complete in current worktree]
 
 Goal: clean, honest state before behavior changes.
+
+Status:
+
+- Completed on 2026-04-20 in the current worktree.
 
 Tasks:
 
@@ -124,7 +152,7 @@ Acceptance criteria:
 - no public documentation claiming semantic resolution where only lexical
   or syntax-aware matching exists
 
-### 1. Scope-Qualified Usage Matching
+### 1. Scope-Qualified Usage Matching [Complete in current worktree]
 
 Goal: make `find_usages` and `affected_by_diff` distinguish homonyms without
 building a symbol index.
@@ -132,6 +160,12 @@ building a symbol index.
 The key insight: tree-sitter already gives scope context via AST parent
 traversal. The infrastructure exists in `symbol_at_line.rs`
 (`collect_scope_chain`). Use it.
+
+Status:
+
+- Completed on 2026-04-20 in the current worktree.
+- Current compact row shape is:
+  `file|line|col|type|context|scope|conf|owner`
 
 #### Phase 1: Add scope context to `find_usages` results
 
@@ -245,7 +279,7 @@ Acceptance criteria:
 - no arbitrary padding with unrelated exports
 - focused reads are more on-topic
 
-### 4. `.gitignore`-Aware Directory Traversal
+### 4. `.gitignore`-Aware Directory Traversal [Complete for git repos in current worktree]
 
 Goal: respect `.gitignore` instead of hardcoding skip patterns.
 
@@ -253,16 +287,23 @@ Current problem: `find_usages`, `usage_counter`, and type extraction all
 hardcode skip lists (`target`, `node_modules`, `vendor`, `dist`, `build`).
 This misses project-specific ignores and processes files that git ignores.
 
+Status:
+
+- Completed on 2026-04-20 for git repos in the current worktree.
+- Implemented via a shared project file walker rather than the originally
+  proposed `ignore` crate refactor.
+
 Fix:
 
-- Replace hardcoded skip logic with the `ignore` crate, which implements
-  `.gitignore` semantics efficiently.
+- Replace hardcoded skip logic with shared traversal that consults Git's
+  ignore state in git repos and preserves legacy skip behavior for common
+  build directories.
 - Apply consistently across `find_usages`, `usage_counter`, type
   extraction, and `code_map`.
 
 Acceptance criteria:
 
-- files matched by `.gitignore` are skipped
+- files matched by `.gitignore` are skipped in git repos
 - existing hardcoded skips still work (they're covered by `.gitignore` in
   most projects)
 
@@ -448,9 +489,18 @@ Acceptance criteria:
 - callers match `find_usages(type=call)` results but with less noise
   (scope-qualified, no non-call usages)
 
-### 8. Targeted Quality Fixtures
+### 8. Targeted Quality Fixtures [Partial]
 
 Goal: prove precision improvements with adversarial test cases.
+
+Status:
+
+- Partial as of 2026-04-20.
+- Fixtures exist for scope qualification, homonym suppression in
+  `affected_by_diff`, and ignored-file traversal.
+- Remaining work should add adversarial fixtures for type ranking,
+  dependency extraction, `minimal_edit_context`, `call_graph`, and LSP
+  bridge formatting.
 
 Add fixtures alongside each workstream, not as a separate evaluation
 framework:
@@ -474,26 +524,26 @@ Acceptance criteria:
 
 ## Execution Order
 
-### Milestone 1: Cleanup and Truthfulness (Workstream 0)
+### Milestone 1: Cleanup and Truthfulness (Workstream 0) [Complete]
 
 - Fix clippy dead code
 - Honest docs
 - Ship immediately
 
-### Milestone 2: Scope-Qualified Matching (Workstream 1)
+### Milestone 2: Scope-Qualified Matching (Workstream 1) [Complete]
 
 - Phase 1: scope column in `find_usages`
 - Phase 2: scope-qualified `affected_by_diff`
 - Phase 3: confidence markers
 - Fixtures for scope disambiguation
 
-### Milestone 3: Relevance Upgrades (Workstreams 2 + 3)
+### Milestone 3: Relevance Upgrades (Workstreams 2 + 3) [Next]
 
 - File-qualified type ranking
 - AST-position dependency extraction
 - Fixtures for type ranking and dependency relevance
 
-### Milestone 4: Infrastructure (Workstream 4)
+### Milestone 4: Infrastructure (Workstream 4) [Complete for git repos]
 
 - `.gitignore`-aware traversal across all tools
 
@@ -509,7 +559,7 @@ Acceptance criteria:
 - LSP-aware `view_code` dependency resolution
 - Compact diagnostics formatting
 
-### Milestone 7: Prove It (Workstream 8)
+### Milestone 7: Prove It (Workstream 8) [Partial]
 
 - Adversarial fixtures for all workstreams
 - Token efficiency assertions

@@ -1,11 +1,39 @@
 mod common;
 
-use treesitter_mcp::extraction::types::{extract_types, LimitHit, TypeKind};
+use std::fs;
+use std::process::Command;
+use tempfile::TempDir;
+use treesitter_mcp::extraction::types::{extract_types_with_options, LimitHit, TypeKind};
+
+fn setup_git_repo() -> TempDir {
+    let dir = TempDir::new().unwrap();
+
+    Command::new("git")
+        .args(["init"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    Command::new("git")
+        .args(["config", "user.email", "test@test.com"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    Command::new("git")
+        .args(["config", "user.name", "Test"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    dir
+}
 
 #[test]
 fn extracts_typescript_interfaces_and_aliases() {
     let file_path = common::fixture_path("typescript", "types/models.ts");
-    let result = extract_types(&file_path, None, 1000).expect("type extraction should succeed");
+    let result = extract_types_with_options(&file_path, None, 1000, false)
+        .expect("type extraction should succeed");
 
     let point = result
         .types
@@ -31,7 +59,8 @@ fn extracts_typescript_interfaces_and_aliases() {
 #[test]
 fn extracts_rust_struct_with_fields_and_methods() {
     let file_path = common::fixture_path("rust", "src/models/mod.rs");
-    let result = extract_types(&file_path, None, 1000).expect("type extraction should succeed");
+    let result = extract_types_with_options(&file_path, None, 1000, false)
+        .expect("type extraction should succeed");
 
     let point = result
         .types
@@ -56,7 +85,8 @@ fn extracts_rust_struct_with_fields_and_methods() {
 #[test]
 fn extracts_go_structs_and_interfaces() {
     let file_path = common::fixture_path("go", "types/models.go");
-    let result = extract_types(&file_path, None, 1000).expect("type extraction should succeed");
+    let result = extract_types_with_options(&file_path, None, 1000, false)
+        .expect("type extraction should succeed");
 
     let point = result
         .types
@@ -91,9 +121,24 @@ fn extracts_go_structs_and_interfaces() {
 #[test]
 fn directory_scan_respects_pattern_and_limit() {
     let dir_path = common::fixture_dir("typescript");
-    let result =
-        extract_types(&dir_path, Some("**/*.ts"), 1).expect("type extraction should succeed");
+    let result = extract_types_with_options(&dir_path, Some("**/*.ts"), 1, false)
+        .expect("type extraction should succeed");
 
     assert!(result.types.len() <= 1);
     assert_eq!(result.limit_hit, Some(LimitHit::TypeLimit));
+}
+
+#[test]
+fn directory_scan_respects_gitignore() {
+    let dir = setup_git_repo();
+
+    fs::write(dir.path().join(".gitignore"), "ignored.rs\n").unwrap();
+    fs::write(dir.path().join("visible.rs"), "pub struct Visible;\n").unwrap();
+    fs::write(dir.path().join("ignored.rs"), "pub struct Hidden;\n").unwrap();
+
+    let result = extract_types_with_options(dir.path(), Some("**/*.rs"), 100, false)
+        .expect("type extraction should succeed");
+
+    assert!(result.types.iter().any(|ty| ty.name == "Visible"));
+    assert!(result.types.iter().all(|ty| ty.name != "Hidden"));
 }

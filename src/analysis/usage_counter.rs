@@ -3,10 +3,12 @@ use std::fs;
 use std::path::Path;
 
 use eyre::Result;
-use walkdir::WalkDir;
 
+use crate::common::project_files::collect_project_files;
 use crate::extraction::types::TypeDefinition;
 
+/// Compatibility two-pass usage counter retained for library callers.
+#[allow(dead_code)]
 pub fn count_all_usages(types: &mut [TypeDefinition], project_path: &Path) -> Result<()> {
     if types.is_empty() {
         return Ok(());
@@ -21,32 +23,13 @@ pub fn count_all_usages(types: &mut [TypeDefinition], project_path: &Path) -> Re
         *definition_counts.entry(type_def.name.clone()).or_insert(0) += 1;
     }
 
-    // Single pass through all files
-    let project_path_abs = project_path
-        .canonicalize()
-        .unwrap_or_else(|_| project_path.to_path_buf());
-
-    for entry in WalkDir::new(&project_path_abs)
-        .into_iter()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().is_file())
-    {
-        let file_path = entry.path();
-
-        // Skip hidden files/dirs and common ignore dirs
-        // Only check components relative to project_path to avoid skipping due to hidden parent dirs
-        if let Ok(rel_path) = file_path.strip_prefix(&project_path_abs) {
-            if is_rel_path_ignored(rel_path) {
-                continue;
-            }
-        }
-
-        let content = match fs::read_to_string(file_path) {
+    for file_path in collect_project_files(project_path)? {
+        let content = match fs::read_to_string(&file_path) {
             Ok(c) => c,
             Err(_) => continue,
         };
 
-        let stripped = strip_comments_and_strings(&content, language_for_path(file_path));
+        let stripped = strip_comments_and_strings(&content, language_for_path(&file_path));
 
         // Count all type names in this file
         for word in stripped.split(|c: char| !c.is_alphanumeric() && c != '_') {
@@ -442,16 +425,4 @@ fn ends_rust_raw_string(bytes: &[u8], quote_index: usize, hashes: usize) -> bool
     }
 
     true
-}
-
-fn is_rel_path_ignored(path: &Path) -> bool {
-    path.components().any(|c| {
-        let s = c.as_os_str().to_string_lossy();
-        s.starts_with('.')
-            || s == "target"
-            || s == "node_modules"
-            || s == "vendor"
-            || s == "build"
-            || s == "dist"
-    })
 }

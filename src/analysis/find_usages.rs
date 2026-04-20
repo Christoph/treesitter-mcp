@@ -6,8 +6,8 @@
 //! ```json
 //! {
 //!   "sym": "parse",
-//!   "h": "file|line|col|type|context",
-//!   "u": "src/main.rs|42|10|call|let x = parse(input)\n..."
+//!   "h": "file|line|col|type|context|scope|conf|owner",
+//!   "u": "src/main.rs|42|10|call|let x = parse(input)|main|low|\n..."
 //! }
 //! ```
 
@@ -24,8 +24,9 @@ use crate::analysis::path_utils;
 use crate::common::budget;
 use crate::common::budget::BudgetTracker;
 use crate::common::compact::CompactOutput;
+use crate::common::project_files::collect_project_files;
 use crate::mcp_types::{CallToolResult, CallToolResultExt};
-use crate::parser::{detect_language, parse_code};
+use crate::parser::{detect_language, parse_code, Language};
 
 #[derive(Debug, Clone)]
 struct UsageRow {
@@ -34,6 +35,18 @@ struct UsageRow {
     column: usize,
     usage_type: String,
     context: String,
+    scope: String,
+    confidence: String,
+    owner_hint: Option<String>,
+}
+
+#[derive(Clone, Copy)]
+struct SearchTarget<'a> {
+    source: &'a str,
+    symbol: &'a str,
+    language: Language,
+    path: &'a Path,
+    context_lines: u32,
 }
 
 pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
@@ -90,12 +103,22 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
         )?;
     }
 
+    assign_confidence(&mut usages);
+    usages.sort_by(|a, b| {
+        a.file
+            .cmp(&b.file)
+            .then_with(|| a.line.cmp(&b.line))
+            .then_with(|| a.column.cmp(&b.column))
+            .then_with(|| a.usage_type.cmp(&b.usage_type))
+            .then_with(|| a.scope.cmp(&b.scope))
+    });
+
     // Convert all file paths to relative paths
     for usage in &mut usages {
         usage.file = path_utils::to_relative_path(&usage.file);
     }
 
-    let header = "file|line|col|type|context";
+    let header = "file|line|col|type|context|scope|conf|owner";
 
     let (rows, truncated_by_budget) = build_rows_with_budget(
         &usages,
@@ -150,7 +173,10 @@ fn build_rows_with_budget(
             + column.len()
             + usage.usage_type.len()
             + usage.context.len()
-            + 4;
+            + usage.scope.len()
+            + usage.confidence.len()
+            + usage.owner_hint.as_deref().unwrap_or("").len()
+            + 7;
 
         let estimated = budget::estimate_symbol_tokens(total_chars);
         if !tracker.add(estimated) {
@@ -200,6 +226,9 @@ fn usages_to_rows(usages: &[UsageRow], header: &str) -> String {
             &column,
             &usage.usage_type,
             &usage.context,
+            &usage.scope,
+            &usage.confidence,
+            usage.owner_hint.as_deref().unwrap_or(""),
         ]);
     }
 
@@ -247,31 +276,9 @@ fn search_directory(
     budget: &mut ContextBudget,
     usages: &mut Vec<UsageRow>,
 ) -> Result<bool, io::Error> {
-    let entries = fs::read_dir(dir).map_err(|e| {
-        io::Error::new(
-            io::ErrorKind::NotFound,
-            format!("Failed to read directory {}: {e}", dir.display()),
-        )
-    })?;
-
-    for entry in entries {
-        let entry = entry?;
-        let path = entry.path();
-
-        if let Some(name) = path.file_name() {
-            let name_str = name.to_string_lossy();
-            if name_str.starts_with('.') || name_str == "target" || name_str == "node_modules" {
-                continue;
-            }
-        }
-
-        if path.is_file() {
-            if detect_language(&path).is_ok()
-                && !search_file(&path, symbol, context_lines, budget, usages)?
-            {
-                return Ok(false);
-            }
-        } else if path.is_dir() && !search_directory(&path, symbol, context_lines, budget, usages)?
+    for path in collect_project_files(dir)? {
+        if detect_language(&path).is_ok()
+            && !search_file(&path, symbol, context_lines, budget, usages)?
         {
             return Ok(false);
         }
@@ -308,60 +315,46 @@ fn search_file(
         )
     })?;
 
-    Ok(find_identifiers(
-        &tree,
-        &source,
+    let search = SearchTarget {
+        source: &source,
         symbol,
+        language,
         path,
         context_lines,
-        budget,
-        usages,
-    ))
+    };
+
+    Ok(find_identifiers(&tree, search, budget, usages))
 }
 
 fn find_identifiers(
     tree: &Tree,
-    source: &str,
-    symbol: &str,
-    path: &Path,
-    context_lines: u32,
+    search: SearchTarget<'_>,
     budget: &mut ContextBudget,
     usages: &mut Vec<UsageRow>,
 ) -> bool {
     let root = tree.root_node();
     let mut cursor = root.walk();
-    visit_node(
-        &mut cursor,
-        source,
-        symbol,
-        path,
-        context_lines,
-        budget,
-        usages,
-    )
+    visit_node(&mut cursor, search, budget, usages)
 }
 
 fn visit_node(
     cursor: &mut tree_sitter::TreeCursor,
-    source: &str,
-    symbol: &str,
-    path: &Path,
-    context_lines: u32,
+    search: SearchTarget<'_>,
     budget: &mut ContextBudget,
     usages: &mut Vec<UsageRow>,
 ) -> bool {
     let node = cursor.node();
 
     if node.kind() == "identifier" || node.kind().ends_with("_identifier") {
-        if let Ok(text) = node.utf8_text(source.as_bytes()) {
-            if text == symbol {
+        if let Ok(text) = node.utf8_text(search.source.as_bytes()) {
+            if text == search.symbol {
                 let start_pos = node.start_position();
                 let usage_type = classify_usage_type(&node);
 
                 let context = if budget.max_is_zero() {
                     String::new()
                 } else {
-                    extract_code_with_context(source, start_pos.row, context_lines)
+                    extract_code_with_context(search.source, start_pos.row, search.context_lines)
                 };
 
                 let context_line_count = if budget.max_is_zero() {
@@ -375,11 +368,14 @@ fn visit_node(
                 }
 
                 usages.push(UsageRow {
-                    file: path.to_string_lossy().to_string(),
+                    file: search.path.to_string_lossy().to_string(),
                     line: start_pos.row + 1,
                     column: start_pos.column + 1,
                     usage_type,
                     context,
+                    scope: scope_for_node(node, search.source, search.language),
+                    confidence: "low".to_string(),
+                    owner_hint: owner_hint(node, search.source),
                 });
             }
         }
@@ -387,7 +383,7 @@ fn visit_node(
 
     if cursor.goto_first_child() {
         loop {
-            if !visit_node(cursor, source, symbol, path, context_lines, budget, usages) {
+            if !visit_node(cursor, search, budget, usages) {
                 cursor.goto_parent();
                 return false;
             }
@@ -488,6 +484,307 @@ fn classify_usage_type(node: &Node) -> String {
     }
 
     "reference".to_string()
+}
+
+fn scope_for_node(node: Node, source: &str, language: Language) -> String {
+    let mut parts = Vec::new();
+    let mut current = Some(node);
+
+    while let Some(candidate) = current {
+        if is_context_node(candidate.kind(), language) {
+            if let Some(name) = extract_scope_name(candidate, source) {
+                parts.push(name);
+            }
+        }
+        current = candidate.parent();
+    }
+
+    parts.reverse();
+    parts.join("::")
+}
+
+fn is_context_node(node_type: &str, language: Language) -> bool {
+    match language {
+        Language::Rust => matches!(
+            node_type,
+            "function_item" | "impl_item" | "trait_item" | "struct_item" | "enum_item" | "mod_item"
+        ),
+        Language::Python => matches!(node_type, "function_definition" | "class_definition"),
+        Language::JavaScript | Language::TypeScript => matches!(
+            node_type,
+            "function_declaration"
+                | "method_definition"
+                | "class_declaration"
+                | "arrow_function"
+                | "function_expression"
+        ),
+        Language::Go => matches!(
+            node_type,
+            "function_declaration" | "method_declaration" | "type_spec"
+        ),
+        Language::CSharp => matches!(
+            node_type,
+            "method_declaration"
+                | "constructor_declaration"
+                | "property_declaration"
+                | "class_declaration"
+                | "interface_declaration"
+                | "struct_declaration"
+                | "namespace_declaration"
+        ),
+        Language::Java => matches!(
+            node_type,
+            "method_declaration"
+                | "constructor_declaration"
+                | "class_declaration"
+                | "interface_declaration"
+                | "enum_declaration"
+        ),
+        Language::Html | Language::Css | Language::Swift => false,
+    }
+}
+
+fn extract_scope_name(node: Node, source: &str) -> Option<String> {
+    match node.kind() {
+        "impl_item" => extract_impl_scope_name(node, source),
+        "method_declaration" | "method_definition" => extract_method_name(node, source),
+        _ => extract_named_field(node, source),
+    }
+}
+
+fn extract_impl_scope_name(node: Node, source: &str) -> Option<String> {
+    if let Some(type_node) = node.child_by_field_name("type") {
+        return type_node
+            .utf8_text(source.as_bytes())
+            .ok()
+            .map(normalize_scope_token);
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind().contains("type_identifier") || child.kind() == "scoped_type_identifier" {
+            if let Ok(text) = child.utf8_text(source.as_bytes()) {
+                return Some(normalize_scope_token(text));
+            }
+        }
+    }
+
+    None
+}
+
+fn extract_method_name(node: Node, source: &str) -> Option<String> {
+    node.child_by_field_name("name")
+        .or_else(|| node.child_by_field_name("property"))
+        .or_else(|| node.child_by_field_name("field"))
+        .and_then(|child| child.utf8_text(source.as_bytes()).ok())
+        .map(ToOwned::to_owned)
+        .or_else(|| extract_named_field(node, source))
+}
+
+fn extract_named_field(node: Node, source: &str) -> Option<String> {
+    for field_name in ["name", "property", "field"] {
+        if let Some(name_node) = node.child_by_field_name(field_name) {
+            if let Ok(text) = name_node.utf8_text(source.as_bytes()) {
+                return Some(normalize_scope_token(text));
+            }
+        }
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind().contains("identifier") {
+            if let Ok(text) = child.utf8_text(source.as_bytes()) {
+                return Some(normalize_scope_token(text));
+            }
+        }
+    }
+
+    None
+}
+
+fn owner_hint(node: Node, source: &str) -> Option<String> {
+    let parent = node.parent()?;
+
+    for field_name in [
+        "function", "receiver", "object", "value", "argument", "module", "scope",
+    ] {
+        if let Some(candidate) = parent.child_by_field_name(field_name) {
+            if candidate.id() == node.id() {
+                continue;
+            }
+            if let Ok(text) = candidate.utf8_text(source.as_bytes()) {
+                if let Some(owner) = normalize_owner_hint(text) {
+                    return Some(owner);
+                }
+            }
+        }
+    }
+
+    let mut cursor = parent.walk();
+    let named_children: Vec<Node> = parent
+        .children(&mut cursor)
+        .filter(|child| child.is_named())
+        .collect();
+    let position = named_children
+        .iter()
+        .position(|child| child.id() == node.id())?;
+    let previous = named_children.get(position.checked_sub(1)?)?;
+    previous
+        .utf8_text(source.as_bytes())
+        .ok()
+        .and_then(normalize_owner_hint)
+}
+
+fn normalize_owner_hint(text: &str) -> Option<String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let without_generics = trimmed
+        .split('<')
+        .next()
+        .unwrap_or(trimmed)
+        .split('(')
+        .next()
+        .unwrap_or(trimmed)
+        .trim();
+
+    without_generics
+        .rsplit([':', '.'])
+        .find(|segment| !segment.is_empty())
+        .map(normalize_scope_token)
+}
+
+fn normalize_scope_token(text: &str) -> String {
+    text.trim().trim_matches('&').trim().to_string()
+}
+
+fn assign_confidence(usages: &mut [UsageRow]) {
+    let definitions: Vec<DefinitionSite> = usages
+        .iter()
+        .filter(|usage| usage.usage_type == "definition")
+        .map(DefinitionSite::from)
+        .collect();
+
+    for usage in usages.iter_mut() {
+        usage.confidence = confidence_for_usage(usage, &definitions).to_string();
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Confidence {
+    High,
+    Medium,
+    Low,
+}
+
+impl Confidence {
+    fn as_str(self) -> &'static str {
+        match self {
+            Confidence::High => "high",
+            Confidence::Medium => "medium",
+            Confidence::Low => "low",
+        }
+    }
+}
+
+impl std::fmt::Display for Confidence {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+struct DefinitionSite {
+    file: String,
+    scope: String,
+    owner: Option<String>,
+}
+
+impl DefinitionSite {
+    fn from(usage: &UsageRow) -> Self {
+        Self {
+            file: usage.file.clone(),
+            scope: usage.scope.clone(),
+            owner: definition_owner(usage),
+        }
+    }
+}
+
+fn confidence_for_usage(usage: &UsageRow, definitions: &[DefinitionSite]) -> Confidence {
+    if usage.usage_type == "definition" {
+        return Confidence::High;
+    }
+
+    if definitions.is_empty() {
+        return Confidence::Low;
+    }
+
+    if let Some(owner_hint) = usage.owner_hint.as_deref() {
+        let owner_matches = definitions
+            .iter()
+            .filter(|definition| {
+                owner_matches(definition.owner.as_deref(), owner_hint, &usage.scope)
+            })
+            .count();
+        if owner_matches == 1 {
+            return Confidence::High;
+        }
+    }
+
+    let same_scope_matches = definitions
+        .iter()
+        .filter(|definition| scope_aligns(&definition.scope, &usage.scope))
+        .count();
+    if same_scope_matches == 1 {
+        return Confidence::High;
+    }
+
+    if definitions
+        .iter()
+        .any(|definition| definition.file == usage.file)
+    {
+        return Confidence::Medium;
+    }
+
+    Confidence::Low
+}
+
+fn owner_matches(definition_owner: Option<&str>, owner_hint: &str, usage_scope: &str) -> bool {
+    if owner_hint.eq_ignore_ascii_case("self") || owner_hint.eq_ignore_ascii_case("this") {
+        return definition_owner
+            .map(|owner| usage_scope.split("::").any(|segment| segment == owner))
+            .unwrap_or(false);
+    }
+
+    definition_owner
+        .map(|owner| owner == owner_hint)
+        .unwrap_or(false)
+}
+
+fn scope_aligns(definition_scope: &str, usage_scope: &str) -> bool {
+    let Some(definition_owner) = scope_owner(definition_scope) else {
+        return false;
+    };
+
+    usage_scope
+        .split("::")
+        .any(|segment| segment == definition_owner)
+}
+
+fn scope_owner(scope: &str) -> Option<&str> {
+    scope.rsplit("::").nth(1)
+}
+
+fn definition_owner(usage: &UsageRow) -> Option<String> {
+    scope_owner(&usage.scope)
+        .map(ToOwned::to_owned)
+        .or_else(|| {
+            Path::new(&usage.file)
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .map(ToOwned::to_owned)
+        })
 }
 
 fn extract_code_with_context(source: &str, line: usize, context_lines: u32) -> String {

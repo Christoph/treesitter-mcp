@@ -1,6 +1,33 @@
 mod common;
 
 use serde_json::json;
+use std::fs;
+use std::process::Command;
+use tempfile::TempDir;
+
+fn setup_git_repo() -> TempDir {
+    let dir = TempDir::new().unwrap();
+
+    Command::new("git")
+        .args(["init"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    Command::new("git")
+        .args(["config", "user.email", "test@test.com"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    Command::new("git")
+        .args(["config", "user.name", "Test"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    dir
+}
 
 // ============================================================================
 // Rust Tests
@@ -21,7 +48,7 @@ fn test_find_usages_locates_function_definition() {
     let usages: serde_json::Value = serde_json::from_str(&text).unwrap();
 
     assert_eq!(usages["sym"], "add");
-    assert_eq!(usages["h"], "file|line|col|type|context");
+    assert_eq!(usages["h"], "file|line|col|type|context|scope|conf|owner");
 
     let rows = common::helpers::find_usages_rows(&usages);
     assert!(rows.len() >= 1);
@@ -195,4 +222,82 @@ fn test_find_usages_max_context_lines_enforced() {
         let context = &first[4];
         assert!(context.lines().count() <= 1);
     }
+}
+
+#[test]
+fn test_find_usages_distinguishes_homonyms_with_scope_and_confidence() {
+    let dir = TempDir::new().unwrap();
+    let file_path = dir.path().join("lib.rs");
+    fs::write(
+        &file_path,
+        r#"
+mod math {
+    pub fn add(a: i32, b: i32) -> i32 { a + b }
+
+    pub fn use_add() -> i32 {
+        add(1, 2)
+    }
+}
+
+struct Calculator;
+
+impl Calculator {
+    fn add(&self, a: i32, b: i32) -> i32 { a + b }
+
+    fn compute(&self) -> i32 {
+        self.add(1, 2)
+    }
+}
+
+fn main() {
+    let add = 1;
+    let _ = math::add(1, 2) + add;
+}
+"#,
+    )
+    .unwrap();
+
+    let arguments = json!({
+        "symbol": "add",
+        "path": file_path.to_str().unwrap(),
+        "context_lines": 0
+    });
+
+    let result = treesitter_mcp::analysis::find_usages::execute(&arguments).unwrap();
+    let text = common::get_result_text(&result);
+    let usages: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let rows = common::helpers::find_usages_rows(&usages);
+
+    assert!(rows.iter().all(|row| row.len() == 8));
+    assert!(rows
+        .iter()
+        .any(|row| row[5] == "math::add" && row[6] == "high"));
+    assert!(rows
+        .iter()
+        .any(|row| row[5] == "Calculator::add" && row[6] == "high"));
+    assert!(rows
+        .iter()
+        .any(|row| row[3] == "call" && row[5] == "Calculator::compute" && row[6] == "high"));
+}
+
+#[test]
+fn test_find_usages_respects_gitignore() {
+    let dir = setup_git_repo();
+
+    fs::write(dir.path().join(".gitignore"), "ignored.rs\n").unwrap();
+    fs::write(dir.path().join("visible.rs"), "fn target() {}\n").unwrap();
+    fs::write(dir.path().join("ignored.rs"), "fn target() {}\n").unwrap();
+
+    let arguments = json!({
+        "symbol": "target",
+        "path": dir.path().to_str().unwrap(),
+        "context_lines": 0
+    });
+
+    let result = treesitter_mcp::analysis::find_usages::execute(&arguments).unwrap();
+    let text = common::get_result_text(&result);
+    let usages: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let rows = common::helpers::find_usages_rows(&usages);
+
+    assert!(rows.iter().all(|row| row[0] == "visible.rs"));
 }

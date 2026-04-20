@@ -1,7 +1,34 @@
 mod common;
 
 use serde_json::json;
+use std::fs;
 use std::path::PathBuf;
+use std::process::Command;
+use tempfile::TempDir;
+
+fn setup_git_repo() -> TempDir {
+    let dir = TempDir::new().unwrap();
+
+    Command::new("git")
+        .args(["init"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    Command::new("git")
+        .args(["config", "user.email", "test@test.com"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    Command::new("git")
+        .args(["config", "user.name", "Test"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    dir
+}
 
 fn count_symbols(file: &serde_json::Value) -> usize {
     let f = file
@@ -260,6 +287,28 @@ fn test_code_map_skips_hidden_and_vendor() {
         assert!(!path.contains("/.git/"));
         assert!(!path.contains("/node_modules/"));
     }
+}
+
+#[test]
+fn test_code_map_respects_gitignore() {
+    let dir = setup_git_repo();
+
+    fs::write(dir.path().join(".gitignore"), "ignored.rs\n").unwrap();
+    fs::write(dir.path().join("visible.rs"), "fn visible() {}\n").unwrap();
+    fs::write(dir.path().join("ignored.rs"), "fn hidden() {}\n").unwrap();
+
+    let arguments = json!({
+        "path": dir.path().to_str().unwrap(),
+        "detail": "signatures"
+    });
+
+    let result = treesitter_mcp::analysis::code_map::execute(&arguments).unwrap();
+    let text = common::get_result_text(&result);
+    let map: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let files = common::helpers::code_map_files(&map);
+
+    assert!(files.iter().any(|(path, _)| *path == "visible.rs"));
+    assert!(files.iter().all(|(path, _)| *path != "ignored.rs"));
 }
 
 // ============================================================================

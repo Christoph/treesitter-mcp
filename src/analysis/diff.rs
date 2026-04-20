@@ -111,6 +111,7 @@ pub struct AffectedUsage {
     pub column: usize,
     pub usage_type: String,
     pub code: String,
+    pub confidence: MatchConfidence,
     pub risk: RiskLevel,
     pub reason: String,
 }
@@ -118,6 +119,14 @@ pub struct AffectedUsage {
 #[derive(Debug, Serialize, Clone, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum RiskLevel {
+    High,
+    Medium,
+    Low,
+}
+
+#[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MatchConfidence {
     High,
     Medium,
     Low,
@@ -946,6 +955,7 @@ pub fn execute_affected_by_diff(arguments: &Value) -> Result<CallToolResult, io:
         })?;
 
         let rel_changed_file = path_utils::to_relative_path(file_path_str);
+        let change_owner = resolve_change_owner(file_path, change.line);
         let usage_rows = usages
             .get("u")
             .and_then(serde_json::Value::as_str)
@@ -968,6 +978,9 @@ pub fn execute_affected_by_diff(arguments: &Value) -> Result<CallToolResult, io:
                 .unwrap_or(0);
             let usage_type = fields.get(3).map(String::as_str).unwrap_or("reference");
             let context = fields.get(4).map(String::as_str).unwrap_or("");
+            let usage_scope = fields.get(5).map(String::as_str).unwrap_or("");
+            let confidence = parse_confidence(fields.get(6).map(String::as_str).unwrap_or("low"));
+            let owner_hint = fields.get(7).map(String::as_str).unwrap_or("");
 
             // Skip the definition itself
             if usage_type == "definition" {
@@ -979,7 +992,15 @@ pub fn execute_affected_by_diff(arguments: &Value) -> Result<CallToolResult, io:
                 continue;
             }
 
-            let (risk, reason) = assess_risk(change, usage_type);
+            let match_confidence = reclassify_confidence_for_change(
+                confidence,
+                change_owner.as_deref(),
+                owner_hint,
+                usage_scope,
+                usage_file,
+                &rel_changed_file,
+            );
+            let (risk, reason) = assess_risk(change, usage_type, match_confidence);
 
             potentially_affected.push(AffectedUsage {
                 file: usage_file.to_string(),
@@ -987,6 +1008,7 @@ pub fn execute_affected_by_diff(arguments: &Value) -> Result<CallToolResult, io:
                 column: usage_column,
                 usage_type: usage_type.to_string(),
                 code: context.to_string(),
+                confidence: match_confidence,
                 risk,
                 reason,
             });
@@ -1201,8 +1223,63 @@ fn parse_compact_row(row: &str) -> Vec<String> {
 ///
 /// Future enhancement: Consider file proximity (same module = higher risk)
 /// and whether usage is in test code (typically lower risk for production).
-fn assess_risk(change: &StructuralChange, usage_type: &str) -> (RiskLevel, String) {
-    match (&change.change_type, usage_type) {
+fn parse_confidence(value: &str) -> MatchConfidence {
+    match value {
+        "high" => MatchConfidence::High,
+        "medium" => MatchConfidence::Medium,
+        _ => MatchConfidence::Low,
+    }
+}
+
+fn reclassify_confidence_for_change(
+    inherited: MatchConfidence,
+    change_owner: Option<&str>,
+    owner_hint: &str,
+    usage_scope: &str,
+    usage_file: &str,
+    changed_file: &str,
+) -> MatchConfidence {
+    let normalized_owner = owner_hint.trim();
+
+    if let Some(change_owner) = change_owner {
+        if normalized_owner.eq_ignore_ascii_case(change_owner) {
+            return MatchConfidence::High;
+        }
+
+        if (normalized_owner.eq_ignore_ascii_case("self")
+            || normalized_owner.eq_ignore_ascii_case("this"))
+            && usage_scope
+                .split("::")
+                .any(|segment| segment == change_owner)
+        {
+            return MatchConfidence::High;
+        }
+
+        if !normalized_owner.is_empty() {
+            return MatchConfidence::Low;
+        }
+    }
+
+    if usage_file == changed_file {
+        return MatchConfidence::Medium;
+    }
+
+    inherited
+}
+
+fn assess_risk(
+    change: &StructuralChange,
+    usage_type: &str,
+    confidence: MatchConfidence,
+) -> (RiskLevel, String) {
+    if confidence == MatchConfidence::Low {
+        return (
+            RiskLevel::Low,
+            "Low-confidence lexical match; verify the symbol identity before acting".to_string(),
+        );
+    }
+
+    let (base_risk, reason) = match (&change.change_type, usage_type) {
         // Signature changes are high risk for calls
         (ChangeType::SignatureChanged, "call") => {
             let reason = if change.details.iter().any(|d| d.kind == "parameter_count") {
@@ -1240,6 +1317,15 @@ fn assess_risk(change: &StructuralChange, usage_type: &str) -> (RiskLevel, Strin
             RiskLevel::Medium,
             "Symbol changed - verify usage is still valid".to_string(),
         ),
+    };
+
+    if confidence == MatchConfidence::Medium && base_risk == RiskLevel::High {
+        (
+            RiskLevel::Medium,
+            format!("{reason} (medium-confidence match)"),
+        )
+    } else {
+        (base_risk, reason)
     }
 }
 
@@ -1257,6 +1343,30 @@ fn get_result_text(result: &CallToolResult) -> String {
         }
     }
     String::new()
+}
+
+fn resolve_change_owner(file_path: &Path, line: usize) -> Option<String> {
+    let args = json!({
+        "file_path": file_path.to_str()?,
+        "line": line,
+        "column": 1
+    });
+
+    let result = crate::analysis::symbol_at_line::execute(&args).ok()?;
+    let text = get_result_text(&result);
+    let parsed: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let scope = parsed.get("scope")?.as_str()?;
+
+    scope
+        .rsplit("::")
+        .nth(1)
+        .map(ToOwned::to_owned)
+        .or_else(|| {
+            file_path
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .map(ToOwned::to_owned)
+        })
 }
 
 /// Find project root by walking up to the nearest directory containing Cargo.toml
