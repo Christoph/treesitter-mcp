@@ -19,9 +19,6 @@ pub struct TypeExtractionResult {
     pub types_included: usize,
     pub limit_hit: Option<LimitHit>,
     pub truncated: bool,
-    /// Word frequency map built during extraction (when count_usages=true)
-    #[serde(skip)]
-    word_counts: HashMap<String, usize>,
 }
 
 impl TypeExtractionResult {
@@ -32,30 +29,12 @@ impl TypeExtractionResult {
             types_included: 0,
             limit_hit: None,
             truncated: false,
-            word_counts: HashMap::new(),
         }
     }
 
     fn finalize(&mut self) {
         self.types_included = self.types.len();
         self.truncated = self.limit_hit.is_some();
-    }
-
-    /// Apply word counts to populate usage_count for each type
-    fn apply_usage_counts(&mut self) {
-        // Count how many times each type name is defined (to subtract from usage)
-        let mut definition_counts: HashMap<String, usize> = HashMap::new();
-        for ty in &self.types {
-            *definition_counts.entry(ty.name.clone()).or_insert(0) += 1;
-        }
-
-        // Apply counts
-        for ty in &mut self.types {
-            if let Some(&count) = self.word_counts.get(&ty.name) {
-                let def_count = definition_counts.get(&ty.name).copied().unwrap_or(1);
-                ty.usage_count = count.saturating_sub(def_count);
-            }
-        }
     }
 }
 
@@ -137,8 +116,6 @@ pub fn extract_types_with_options(
     max_types: usize,
     count_usages: bool,
 ) -> Result<TypeExtractionResult> {
-    use crate::analysis::usage_counter::{count_words_in_content, language_for_path};
-
     let path = path.as_ref();
     if !path.exists() {
         bail!("Path does not exist: {}", path.display());
@@ -166,14 +143,7 @@ pub fn extract_types_with_options(
     let mut result = TypeExtractionResult::new();
 
     if path.is_file() {
-        process_single_file(
-            path,
-            &root_dir,
-            &matcher,
-            effective_limit,
-            count_usages,
-            &mut result,
-        )?;
+        process_single_file(path, &root_dir, &matcher, effective_limit, &mut result)?;
     } else {
         let files = collect_project_files(path)
             .map_err(|err| eyre::eyre!("Failed to walk {}: {err}", path.display()))?;
@@ -193,12 +163,6 @@ pub fn extract_types_with_options(
                     continue;
                 }
             };
-
-            // Count words for usage tracking (works on all file types)
-            if count_usages {
-                let lang = language_for_path(&file_path);
-                count_words_in_content(&content, lang, &mut result.word_counts);
-            }
 
             // Extract types from supported languages
             if let Some(language) = detect_language(&file_path) {
@@ -221,9 +185,8 @@ pub fn extract_types_with_options(
 
     result.finalize();
 
-    // Apply usage counts after all files are processed
     if count_usages {
-        result.apply_usage_counts();
+        crate::analysis::usage_counter::count_all_usages(&mut result.types, &root_dir)?;
     }
 
     Ok(result)
@@ -234,11 +197,8 @@ fn process_single_file(
     root_dir: &Path,
     matcher: &Option<GlobSet>,
     limit: usize,
-    count_usages: bool,
     result: &mut TypeExtractionResult,
 ) -> Result<()> {
-    use crate::analysis::usage_counter::{count_words_in_content, language_for_path};
-
     if is_hidden(path) {
         return Ok(());
     }
@@ -253,12 +213,6 @@ fn process_single_file(
     // Read file once for both extraction and counting
     let source =
         fs::read_to_string(path).wrap_err_with(|| format!("Failed to read {}", path.display()))?;
-
-    // Count words if requested
-    if count_usages {
-        let lang = language_for_path(path);
-        count_words_in_content(&source, lang, &mut result.word_counts);
-    }
 
     if let Some(language) = detect_language(path) {
         process_file_with_source(&source, &rel_path, language, limit, result)?;

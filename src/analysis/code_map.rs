@@ -13,7 +13,6 @@
 //! - When `with_types=true`, also includes `types` key with type definitions.
 
 use std::cmp::Reverse;
-use std::collections::HashMap;
 use std::fs;
 use std::io;
 use std::path::Path;
@@ -26,7 +25,6 @@ use tiktoken_rs::cl100k_base;
 
 use crate::analysis::path_utils;
 use crate::analysis::shape::{EnhancedClassInfo, EnhancedFunctionInfo, EnhancedStructInfo};
-use crate::analysis::usage_counter::{count_words_in_content, language_for_path};
 use crate::common::budget;
 use crate::common::budget::BudgetTracker;
 use crate::common::format;
@@ -74,14 +72,12 @@ struct FileSymbols {
 struct ExtractionOptions {
     detail_level: DetailLevel,
     with_types: bool,
-    count_usages: bool,
 }
 
 /// Result of combined extraction
 struct ExtractionResult {
     files: Vec<FileSymbols>,
     types: Vec<TypeDefinition>,
-    word_counts: HashMap<String, usize>,
 }
 
 pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
@@ -114,13 +110,11 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
     let options = ExtractionOptions {
         detail_level,
         with_types,
-        count_usages,
     };
 
     let mut result = ExtractionResult {
         files: Vec::new(),
         types: Vec::new(),
-        word_counts: HashMap::new(),
     };
 
     if path.is_file() {
@@ -136,12 +130,20 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
 
     // Apply usage counts to types if requested
     if with_types && count_usages {
-        apply_usage_counts(&mut result.types, &result.word_counts);
-        // Sort types by usage count
+        let usage_root = if path.is_file() {
+            path.parent().unwrap_or(path)
+        } else {
+            path
+        };
+        crate::analysis::usage_counter::count_all_usages(&mut result.types, usage_root)
+            .map_err(|e| io::Error::other(e.to_string()))?;
+
         result.types.sort_by(|a, b| {
             b.usage_count
                 .cmp(&a.usage_count)
                 .then_with(|| a.name.cmp(&b.name))
+                .then_with(|| a.file.cmp(&b.file))
+                .then_with(|| a.line.cmp(&b.line))
         });
     } else if with_types {
         // Sort by file then line when not counting usages
@@ -167,21 +169,6 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
 
     Ok(CallToolResult::success(json_text))
 }
-
-fn apply_usage_counts(types: &mut [TypeDefinition], word_counts: &HashMap<String, usize>) {
-    let mut definition_counts: HashMap<String, usize> = HashMap::new();
-    for ty in types.iter() {
-        *definition_counts.entry(ty.name.clone()).or_insert(0) += 1;
-    }
-
-    for ty in types.iter_mut() {
-        if let Some(&count) = word_counts.get(&ty.name) {
-            let def_count = definition_counts.get(&ty.name).copied().unwrap_or(1);
-            ty.usage_count = count.saturating_sub(def_count);
-        }
-    }
-}
-
 fn build_compact_output_combined(
     result: &ExtractionResult,
     detail_level: DetailLevel,
@@ -529,13 +516,6 @@ fn collect_files_combined(
     pattern: Option<&str>,
 ) -> Result<(), io::Error> {
     for path in collect_project_files(dir)? {
-        if options.count_usages {
-            if let Ok(content) = fs::read_to_string(&path) {
-                let lang = language_for_path(&path);
-                count_words_in_content(&content, lang, &mut result.word_counts);
-            }
-        }
-
         if detect_language(&path).is_ok() {
             if let Some(pat) = pattern {
                 if !matches_pattern(&path, pat) {

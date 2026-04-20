@@ -3,6 +3,8 @@
 mod common;
 
 use serde_json::json;
+use std::fs;
+use tempfile::tempdir;
 
 fn parse_type_map(text: &str) -> (String, Vec<Vec<String>>, bool) {
     let out: serde_json::Value = serde_json::from_str(text).unwrap();
@@ -208,4 +210,69 @@ fn test_type_map_truncation_marker() {
     let (_header, _rows, truncated) = parse_type_map(&text);
 
     assert!(truncated);
+}
+
+#[test]
+fn test_type_map_separates_duplicate_type_names_by_file() {
+    let dir = tempdir().unwrap();
+    let src_dir = dir.path().join("src");
+    fs::create_dir_all(&src_dir).unwrap();
+
+    fs::write(
+        src_dir.join("a.ts"),
+        "export interface Config { enabled: boolean; }\n",
+    )
+    .unwrap();
+    fs::write(
+        src_dir.join("b.ts"),
+        "export interface Config { retries: number; }\n",
+    )
+    .unwrap();
+    fs::write(
+        src_dir.join("consumer.ts"),
+        r#"
+import type { Config } from "./a";
+
+const config: Config = { enabled: true };
+"#,
+    )
+    .unwrap();
+
+    let arguments = json!({
+        "path": src_dir.to_str().unwrap(),
+        "max_tokens": 10_000
+    });
+
+    let result = treesitter_mcp::analysis::type_map::execute(&arguments).unwrap();
+    let text = common::get_result_text(&result);
+    let (_header, rows, _) = parse_type_map(&text);
+
+    let config_rows: Vec<&Vec<String>> = rows
+        .iter()
+        .filter(|row| row.first().map(|s| s.as_str()) == Some("Config"))
+        .collect();
+    assert_eq!(config_rows.len(), 2, "Expected both Config definitions");
+
+    let usage_for = |suffix: &str| {
+        config_rows
+            .iter()
+            .find(|row| {
+                row.get(2)
+                    .map(|file| file.ends_with(suffix))
+                    .unwrap_or(false)
+            })
+            .and_then(|row| row.get(4))
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or_else(|| panic!("Missing Config row for {suffix}"))
+    };
+
+    assert!(
+        usage_for("a.ts") > 0,
+        "Imported Config should get usage credit"
+    );
+    assert_eq!(
+        usage_for("b.ts"),
+        0,
+        "Unreferenced Config should stay at zero"
+    );
 }

@@ -1,6 +1,8 @@
 mod common;
 
 use serde_json::json;
+use std::fs;
+use tempfile::tempdir;
 
 #[test]
 fn test_parse_file_accepts_include_deps_parameter() {
@@ -243,4 +245,127 @@ fn test_parse_file_deps_rust_traits() {
     // Compact schema: dependency output is a `deps` map of row strings.
     let deps = shape.get("deps").and_then(|v| v.as_object());
     assert!(deps.is_some(), "Should include deps object");
+}
+
+#[test]
+fn test_parse_file_deps_ignore_comments_and_strings_for_type_selection() {
+    let dir = tempdir().unwrap();
+
+    fs::write(
+        dir.path().join("types.ts"),
+        r#"
+export interface RealType {
+    value: number;
+}
+
+export interface CommentGhost {
+    value: number;
+}
+
+export interface StringGhost {
+    value: number;
+}
+"#,
+    )
+    .unwrap();
+
+    fs::write(
+        dir.path().join("main.ts"),
+        r#"
+import type { RealType } from "./types";
+
+// CommentGhost should not become dependency context.
+const label = "StringGhost should not become dependency context either";
+
+export function useIt(value: RealType): RealType {
+    return value;
+}
+"#,
+    )
+    .unwrap();
+
+    let arguments = json!({
+        "file_path": dir.path().join("main.ts").to_str().unwrap(),
+        "include_code": false,
+        "include_deps": true,
+    });
+
+    let result = treesitter_mcp::analysis::view_code::execute(&arguments).unwrap();
+    let text = common::get_result_text(&result);
+    let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let deps = shape
+        .get("deps")
+        .and_then(|value| value.as_object())
+        .expect("Expected deps object");
+
+    let dep_names: Vec<String> = deps
+        .values()
+        .filter_map(|value| value.as_str())
+        .flat_map(common::helpers::parse_compact_rows)
+        .filter_map(|row| row.first().cloned())
+        .collect();
+
+    assert!(dep_names.iter().any(|name| name == "RealType"));
+    assert!(!dep_names.iter().any(|name| name == "CommentGhost"));
+    assert!(!dep_names.iter().any(|name| name == "StringGhost"));
+}
+
+#[test]
+fn test_parse_file_focus_symbol_limits_dependency_context() {
+    let dir = tempdir().unwrap();
+
+    fs::write(
+        dir.path().join("types.ts"),
+        r#"
+export interface Foo {
+    value: number;
+}
+
+export interface Bar {
+    value: number;
+}
+"#,
+    )
+    .unwrap();
+
+    fs::write(
+        dir.path().join("main.ts"),
+        r#"
+import type { Foo, Bar } from "./types";
+
+export function useFoo(value: Foo): Foo {
+    return value;
+}
+
+export function useBar(value: Bar): Bar {
+    return value;
+}
+"#,
+    )
+    .unwrap();
+
+    let arguments = json!({
+        "file_path": dir.path().join("main.ts").to_str().unwrap(),
+        "focus_symbol": "useFoo",
+        "include_code": false,
+        "include_deps": true,
+    });
+
+    let result = treesitter_mcp::analysis::view_code::execute(&arguments).unwrap();
+    let text = common::get_result_text(&result);
+    let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let deps = shape
+        .get("deps")
+        .and_then(|value| value.as_object())
+        .expect("Expected deps object");
+
+    let dep_names: Vec<String> = deps
+        .values()
+        .filter_map(|value| value.as_str())
+        .flat_map(common::helpers::parse_compact_rows)
+        .filter_map(|row| row.first().cloned())
+        .collect();
+
+    assert!(dep_names.iter().any(|name| name == "Foo"));
+    assert!(!dep_names.iter().any(|name| name == "Bar"));
 }
