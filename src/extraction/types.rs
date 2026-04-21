@@ -1335,7 +1335,7 @@ fn extract_java_types(source: &str, relative_path: &Path) -> Result<Vec<TypeDefi
     Ok(definitions)
 }
 
-fn extract_go_types(source: &str, relative_path: &Path) -> Result<Vec<TypeDefinition>> {
+pub(crate) fn extract_go_types(source: &str, relative_path: &Path) -> Result<Vec<TypeDefinition>> {
     let mut parser = Parser::new();
     parser
         .set_language(&tree_sitter_go::LANGUAGE.into())

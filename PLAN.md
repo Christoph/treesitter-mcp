@@ -55,18 +55,17 @@ only as a last resort.
 - `find_usages` now includes scope, confidence, and owner metadata
 - `affected_by_diff` now deprioritizes unrelated same-name symbols
 - Main directory scanners now share Git-aware traversal for ignored files
+- Type usage ranking separates same-name types by defining file
+- `view_code` dependency selection is AST-position-backed for Rust,
+  TypeScript, Python, and Go, with no arbitrary dependency padding
 
 ### Remaining Shortcomings
 
-1. Type usage ranking keys by bare name, conflating unrelated types with
-   the same name across files and modules.
-2. `view_code` dependency selection uses a capitalized-token heuristic and
-   falls back to padding with arbitrary exported types.
-3. No LSP integration points: agents must choose between precise-but-verbose
+1. No LSP integration points: agents must choose between precise-but-verbose
    LSP results and compact-but-imprecise MCP results.
-4. No `minimal_edit_context` tool exists yet.
-5. No `call_graph` tool exists yet.
-6. Token-efficiency proof still needs to be added for the remaining roadmap
+2. No `minimal_edit_context` tool exists yet.
+3. No `call_graph` tool exists yet.
+4. Token-efficiency proof still needs to be added for the remaining roadmap
    items.
 
 ## Status Update
@@ -81,14 +80,19 @@ Completed in the current worktree:
 - **Workstream 4**: `find_usages`, `code_map`, `usage_counter`, and type
   extraction now share Git-aware traversal that skips ignored files in git
   repos, while preserving legacy skip behavior for common build directories.
+- **Workstream 2**: `type_map` and `code_map(with_types=true)` now keep
+  duplicate type names file-qualified for usage ranking.
+- **Workstream 3**: `view_code(include_deps=true)` now selects dependency
+  types from AST-position type references for Rust, TypeScript, Python, and
+  Go, and returns only explicitly referenced dependency rows.
 - **Workstream 8 (partial)**: adversarial fixtures now cover scope
-  disambiguation, homonym suppression in `affected_by_diff`, and ignored-file
-  traversal.
+  disambiguation, homonym suppression in `affected_by_diff`, ignored-file
+  traversal, duplicate type ranking, and AST-backed dependency extraction.
 
 Next recommended slice:
 
-- **Workstreams 2 + 3**: file-qualified type ranking and AST-backed
-  dependency extraction in `view_code`.
+- **Workstream 5**: add `format_references` as the first LSP integration
+  point, formatting LSP-provided locations into the compact usage schema.
 
 ## Success Criteria
 
@@ -97,11 +101,11 @@ The work in this plan is done when:
 - [x] `cargo test` passes
 - [x] `cargo clippy -- -D warnings` passes
 - [x] README and tool descriptions do not overclaim semantic guarantees
-- [ ] same-name types in different files get separate usage counters
+- [x] same-name types in different files get separate usage counters
 - [x] `find_usages` results include scope context so homonyms are distinguishable
 - [x] `affected_by_diff` uses scope-qualified/confidence-aware matching and is
   less noisy on rename/signature-change flows
-- [ ] `view_code` dependency context comes from AST-position type extraction,
+- [x] `view_code` dependency context comes from AST-position type extraction,
   not capitalized-token scanning
 - [x] directory traversal respects `.gitignore` in git repos for the main
   directory-scanning tools
@@ -206,13 +210,21 @@ Acceptance criteria:
 - `affected_by_diff` does not flag unrelated same-name symbols as high risk
 - confidence field is present and reflects scope alignment
 
-### 2. File-Qualified Type Ranking
+### 2. File-Qualified Type Ranking [Complete in current worktree]
 
 Goal: stop conflating unrelated types with the same name in `type_map` and
 `code_map(with_types=true, count_usages=true)`.
 
-Current problem: `usage_counter.rs` keys counts by bare type name. Two
-`Config` structs in different modules share one counter.
+Status:
+
+- Completed on 2026-04-21 in the current worktree.
+- `usage_counter.rs` now resolves same-name candidates by defining file,
+  same-file references, and project-local dependencies.
+- Tests cover duplicate `Config` interfaces in separate TypeScript files for
+  both `type_map` and `code_map(with_types=true)`.
+
+Original problem: `usage_counter.rs` keyed counts by bare type name. Two
+`Config` structs in different modules shared one counter.
 
 Fix:
 
@@ -240,14 +252,25 @@ Acceptance criteria:
 - ranking is deterministic
 - performance remains acceptable
 
-### 3. AST-Position Dependency Extraction for `view_code`
+### 3. AST-Position Dependency Extraction for `view_code` [Complete in current worktree]
 
 Goal: replace the capitalized-token heuristic in `view_code` dependency
 selection with actual type references from AST positions.
 
-Current problem: `extract_referenced_type_names` in `view_code.rs` scans
-raw text for tokens starting with uppercase. The fallback pads with
-arbitrary exported types when fewer than 3 matches are found.
+Status:
+
+- Completed on 2026-04-21 in the current worktree.
+- Rust, TypeScript, Python, and Go use AST-derived shape/type extraction for
+  dependency type selection.
+- Unsupported languages still use the legacy heuristic fallback.
+- Dependency output no longer pads with arbitrary exported types; only
+  explicitly referenced dependency rows are returned.
+- Go module-local imports from `go.mod` are resolved to project package
+  files, and Go dependency output includes both structs and interfaces.
+
+Original problem: `extract_referenced_type_names` in `view_code.rs` scanned
+raw text for tokens starting with uppercase. The fallback padded with
+arbitrary exported types when fewer than 3 matches were found.
 
 Fix:
 

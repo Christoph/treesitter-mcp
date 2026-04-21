@@ -1,6 +1,7 @@
 mod common;
 
 use std::path::Path;
+use tempfile::tempdir;
 use treesitter_mcp::analysis::dependencies::resolve_dependencies;
 use treesitter_mcp::parser::Language;
 
@@ -68,6 +69,42 @@ import type { Point } from './types/models';
 
     // Then: Should find imported files (if they exist)
     assert!(deps.len() >= 0);
+}
+
+#[test]
+fn test_resolve_dependencies_go_module_import() {
+    let dir = tempdir().unwrap();
+    let types_dir = dir.path().join("types");
+    std::fs::create_dir_all(&types_dir).unwrap();
+    std::fs::write(dir.path().join("go.mod"), "module example.com/app\n").unwrap();
+    std::fs::write(
+        types_dir.join("models.go"),
+        r#"
+package types
+
+type RealType struct {
+    Value int
+}
+"#,
+    )
+    .unwrap();
+
+    let source = r#"
+package app
+
+import "example.com/app/types"
+
+func Use(value types.RealType) types.RealType {
+    return value
+}
+"#;
+    let file_path = dir.path().join("main.go");
+    std::fs::write(&file_path, source).unwrap();
+
+    let deps = resolve_dependencies(Language::Go, source, &file_path, dir.path());
+
+    assert_eq!(deps.len(), 1);
+    assert!(deps[0].ends_with("types/models.go"));
 }
 
 #[test]

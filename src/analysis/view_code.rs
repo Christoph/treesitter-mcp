@@ -9,7 +9,7 @@
 //! - `deps`: map of dependency file path -> newline-delimited type rows
 //! - Optional meta is under `@` (e.g. `{ "t": true }` for truncated)
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -30,7 +30,8 @@ use crate::common::budget;
 use crate::common::budget::BudgetTracker;
 use crate::common::format;
 use crate::extraction::types::{
-    extract_python_types, extract_rust_types, extract_typescript_types, TypeDefinition,
+    extract_go_types, extract_python_types, extract_rust_types, extract_typescript_types,
+    TypeDefinition,
 };
 use crate::mcp_types::{CallToolResult, CallToolResultExt};
 use crate::parser::{detect_language, parse_code};
@@ -626,7 +627,8 @@ fn extract_referenced_type_names(
     match language {
         crate::parser::Language::Rust
         | crate::parser::Language::TypeScript
-        | crate::parser::Language::Python => {
+        | crate::parser::Language::Python
+        | crate::parser::Language::Go => {
             extract_ast_position_type_names(language, source, main_shape, file_path, focus_symbol)
         }
         _ => extract_referenced_type_names_fallback(source, main_shape),
@@ -665,6 +667,7 @@ fn extract_local_type_definitions(
             extract_typescript_types(source, file_path, true).ok()
         }
         crate::parser::Language::Python => extract_python_types(source, file_path).ok(),
+        crate::parser::Language::Go => extract_go_types(source, file_path).ok(),
         _ => None,
     }
 }
@@ -973,6 +976,7 @@ fn build_dependency_rows(
 struct TypeRow {
     name: String,
     line: usize,
+    signature: Option<String>,
     doc: Option<String>,
     code: Option<String>,
     referenced: bool,
@@ -1006,12 +1010,19 @@ fn extract_dependency_types(
         Some(file_path.to_str().unwrap_or("unknown")),
         true,
     )?;
+    let type_signatures: HashMap<String, String> =
+        extract_local_type_definitions(language, &source, file_path)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|ty| (ty.name, ty.signature))
+            .collect();
 
     let mut rows = Vec::new();
 
     for s in shape.structs {
         rows.push(TypeRow {
             referenced: referenced.contains(&s.name),
+            signature: type_signatures.get(&s.name).cloned(),
             name: s.name,
             line: s.line,
             doc: if detail == DetailLevel::Full {
@@ -1026,6 +1037,7 @@ fn extract_dependency_types(
     for c in shape.classes {
         rows.push(TypeRow {
             referenced: referenced.contains(&c.name),
+            signature: type_signatures.get(&c.name).cloned(),
             name: c.name,
             line: c.line,
             doc: if detail == DetailLevel::Full {
@@ -1040,6 +1052,7 @@ fn extract_dependency_types(
     for i in shape.interfaces {
         rows.push(TypeRow {
             referenced: referenced.contains(&i.name),
+            signature: type_signatures.get(&i.name).cloned(),
             name: i.name,
             line: i.line,
             doc: if detail == DetailLevel::Full {
@@ -1048,6 +1061,21 @@ fn extract_dependency_types(
                 None
             },
             code: i.code,
+        });
+    }
+
+    for tr in shape.traits {
+        rows.push(TypeRow {
+            referenced: referenced.contains(&tr.name),
+            signature: type_signatures.get(&tr.name).cloned(),
+            name: tr.name,
+            line: tr.line,
+            doc: if detail == DetailLevel::Full {
+                tr.doc
+            } else {
+                None
+            },
+            code: None,
         });
     }
 
@@ -1061,7 +1089,10 @@ fn type_rows_to_string(rows: &[&TypeRow], detail: DetailLevel) -> String {
     rows.iter()
         .map(|row| {
             let line = row.line.to_string();
-            let sig = signature_snippet_from_code(row.code.as_deref());
+            let sig = row
+                .signature
+                .clone()
+                .unwrap_or_else(|| signature_snippet_from_code(row.code.as_deref()));
 
             if detail == DetailLevel::Full {
                 let owned = [

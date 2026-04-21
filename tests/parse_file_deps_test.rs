@@ -369,3 +369,94 @@ export function useBar(value: Bar): Bar {
     assert!(dep_names.iter().any(|name| name == "Foo"));
     assert!(!dep_names.iter().any(|name| name == "Bar"));
 }
+
+#[test]
+fn test_parse_file_deps_go_ast_type_selection() {
+    let dir = tempdir().unwrap();
+    let types_dir = dir.path().join("types");
+    fs::create_dir_all(&types_dir).unwrap();
+    fs::write(dir.path().join("go.mod"), "module example.com/app\n").unwrap();
+
+    fs::write(
+        types_dir.join("models.go"),
+        r#"
+package types
+
+type RealType struct {
+    Value int
+}
+
+type RealReader interface {
+    Read() RealType
+}
+
+type CommentGhost struct {
+    Value int
+}
+
+type StringGhost struct {
+    Value int
+}
+"#,
+    )
+    .unwrap();
+
+    fs::write(
+        dir.path().join("main.go"),
+        r#"
+package app
+
+import "example.com/app/types"
+
+// CommentGhost should not become dependency context.
+const label = "StringGhost should not become dependency context either"
+
+func UseIt(value types.RealType, reader types.RealReader) types.RealType {
+    return value
+}
+"#,
+    )
+    .unwrap();
+
+    let arguments = json!({
+        "file_path": dir.path().join("main.go").to_str().unwrap(),
+        "include_code": false,
+        "include_deps": true,
+    });
+
+    let result = treesitter_mcp::analysis::view_code::execute(&arguments).unwrap();
+    let text = common::get_result_text(&result);
+    let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let deps = shape
+        .get("deps")
+        .and_then(|value| value.as_object())
+        .expect("Expected deps object");
+
+    let dep_rows: Vec<Vec<String>> = deps
+        .values()
+        .filter_map(|value| value.as_str())
+        .flat_map(common::helpers::parse_compact_rows)
+        .collect();
+
+    let dep_names: Vec<&str> = dep_rows
+        .iter()
+        .filter_map(|row| row.first().map(String::as_str))
+        .collect();
+
+    assert!(dep_names.iter().any(|name| *name == "RealType"));
+    assert!(dep_names.iter().any(|name| *name == "RealReader"));
+    assert!(!dep_names.iter().any(|name| *name == "CommentGhost"));
+    assert!(!dep_names.iter().any(|name| *name == "StringGhost"));
+
+    let reader_row = dep_rows
+        .iter()
+        .find(|row| row.first().map(|name| name.as_str()) == Some("RealReader"))
+        .expect("Expected RealReader dependency row");
+    assert!(
+        reader_row
+            .get(2)
+            .map(|signature| signature.contains("interface"))
+            .unwrap_or(false),
+        "Go interface dependency should include a useful signature"
+    );
+}
