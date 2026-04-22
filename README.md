@@ -126,7 +126,7 @@ Choose the right tool for your task:
 | `view_code` (signatures) | Single file | Low | Fast | Quick overview, API understanding |
 | `view_code` (full) | Single file | High | Fast | Deep understanding, multiple functions |
 | `view_code` (focused) | Single file | Medium | Fast | Editing specific function |
-| `minimal_edit_context` | Single symbol | Low | Fast | Focused edits with same-file deps |
+| `minimal_edit_context` | Single symbol | Low | Fast | Focused edits with direct deps |
 | `call_graph` | Single symbol | Low-Medium | Medium | Best-effort callers/callees |
 | `find_usages` | Multi-file | Medium-High | Medium | Refactoring, impact analysis |
 | `format_references` | LSP locations | Low-Medium | Fast | Compact context for precise LSP references |
@@ -148,7 +148,7 @@ These tools provide strong guarantees based on AST structure:
 These tools use syntax-aware matching (best-effort, not compiler-grade):
 - `find_usages`: identifier matching via tree-sitter, may match homonyms in different scopes
 - `format_references`: trusts LSP-provided locations for precision, then adds syntax-aware context
-- `minimal_edit_context`: same-file call/type/import relevance from AST and token matching
+- `minimal_edit_context`: same-file relevance plus direct project-local dependency signatures from imports
 - `call_graph`: project-local call extraction, same-file definitions preferred, not compiler-grade resolution
 - `affected_by_diff`: relies on `find_usages` for impact analysis
 - `code_map`: structural overview, scope-aware but not semantically resolved
@@ -494,12 +494,12 @@ Return the smallest useful context for editing one known symbol.
 
 **Use When:**
 - ✅ Editing one known function or method
-- ✅ You need the target code plus directly relevant same-file callees, types, and imports
+- ✅ You need the target code plus directly relevant callees, types, and imports
 - ✅ `view_code(focus_symbol=...)` is still too large for a file with many symbols
 
 **Don't Use When:**
 - ❌ Exploring an unfamiliar file → use `code_map` or `view_code`
-- ❌ You need project-wide dependency resolution → use `view_code(include_deps=true)` for now
+- ❌ You need full transitive project-wide dependency resolution → use `view_code(include_deps=true)` or LSP
 
 **Token Cost:** LOW (usually much smaller than focused `view_code` on large files)
 
@@ -520,7 +520,7 @@ Return the smallest useful context for editing one known symbol.
 **Returns**: Compact schema.
 
 - `target`: full code row for the symbol (`name|line|sig|code`)
-- `deps`: optional same-file callee signature rows (`kind|name|line|sig`)
+- `deps`: optional same-file and direct project-local dependency signature rows (`kind|name|line|sig`)
 - `types`: optional same-file referenced type rows (`kind|name|line|sig`)
 - `imports`: optional relevant import rows (`line|text`)
 - `scope`: enclosing class/impl scope when available

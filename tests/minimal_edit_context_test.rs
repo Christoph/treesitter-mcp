@@ -77,6 +77,57 @@ fn test_minimal_edit_context_is_smaller_than_focused_view_code() {
     );
 }
 
+#[test]
+fn test_minimal_edit_context_includes_project_local_dependency_signatures() {
+    let dir = tempdir().unwrap();
+    fs::write(
+        dir.path().join("package.json"),
+        r#"{"name":"minimal-edit-fixture"}"#,
+    )
+    .unwrap();
+    let src = dir.path().join("src");
+    fs::create_dir(&src).unwrap();
+    let file_path = src.join("workflow.ts");
+    fs::write(
+        &file_path,
+        r#"
+import { externalNormalize, unusedExternal } from "./helpers";
+
+export function buildSummary(input: string): string {
+  return externalNormalize(input);
+}
+"#,
+    )
+    .unwrap();
+    fs::write(
+        src.join("helpers.ts"),
+        r#"
+export function externalNormalize(input: string): string {
+  return input.trim();
+}
+
+export function unusedExternal(input: string): string {
+  return input.toUpperCase();
+}
+"#,
+    )
+    .unwrap();
+
+    let result = treesitter_mcp::analysis::minimal_edit_context::execute(&json!({
+        "file_path": file_path.to_str().unwrap(),
+        "symbol_name": "buildSummary",
+        "max_tokens": 4000
+    }))
+    .unwrap();
+    let text = common::get_result_text(&result);
+    let output: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let dep_rows = common::helpers::parse_compact_rows(output["deps"].as_str().unwrap());
+    let dep_names: Vec<&str> = dep_rows.iter().map(|row| row[1].as_str()).collect();
+
+    assert!(dep_names.contains(&"externalNormalize"));
+    assert!(!dep_names.contains(&"unusedExternal"));
+}
+
 fn large_typescript_fixture() -> String {
     let mut source = String::from(
         r#"

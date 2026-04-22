@@ -58,16 +58,16 @@ only as a last resort.
 - Type usage ranking separates same-name types by defining file
 - `view_code` dependency selection is AST-position-backed for Rust,
   TypeScript, Python, and Go, with no arbitrary dependency padding
+- `minimal_edit_context` includes direct project-local dependency signatures
+  from imported files
 - `call_graph` returns compact best-effort callers/callees with depth and
   budget enforcement
 
 ### Remaining Shortcomings
 
-1. `minimal_edit_context` currently resolves same-file deps only; project-local
-   dependency signatures remain future hardening work.
-2. Later LSP bridge phases still need definition-location and diagnostic
+1. Later LSP bridge phases still need definition-location and diagnostic
    formatting support.
-3. Token-efficiency proof still needs to be added for the remaining roadmap
+2. Token-efficiency proof still needs to be added for the remaining roadmap
    items.
 
 ## Status Update
@@ -91,9 +91,9 @@ Completed in the current worktree:
   reference locations and emits the same compact usage schema as
   `find_usages`, with `conf=high`.
 - **Workstream 6 (initial)**: `minimal_edit_context` returns target symbol
-  code plus same-file callee signatures, same-file referenced types, and
-  relevant imports, with a 3x token-savings fixture versus focused
-  `view_code`.
+  code plus same-file callee signatures, same-file referenced types, relevant
+  imports, and direct project-local dependency signatures from imported files,
+  with a 3x token-savings fixture versus focused `view_code`.
 - **Workstream 7 (initial)**: `call_graph` returns compact best-effort
   caller/callee rows for depth 1, supports bounded depth traversal with a
   visited set, and enforces token budgets.
@@ -105,8 +105,9 @@ Completed in the current worktree:
 
 Next recommended slice:
 
-- Extend Workstream 6 with project-local dependency signatures, or continue
-  Workstream 5 with LSP definition-location or diagnostics formatting.
+- Continue Workstream 5 with LSP definition-location or diagnostics
+  formatting, or add broader token-efficiency proof for remaining roadmap
+  items.
 
 ## Success Criteria
 
@@ -411,14 +412,16 @@ New tool: `minimal_edit_context`
 
 Status:
 
-- Initial version completed on 2026-04-22 in the current worktree.
+- Initial version completed on 2026-04-22 in the current worktree, then
+  extended with direct project-local dependency signatures.
 - Supports locating top-level functions, class methods, and Rust impl
   methods via `extract_enhanced_shape`.
 - Returns the target symbol code, same-file callee signatures from AST call
-  sites, same-file referenced type rows, relevant import rows, and scope.
+  sites, direct project-local dependency signatures from imported files,
+  same-file referenced type rows, relevant import rows, and scope.
 - Enforces token budget by dropping optional context before the target.
-- Current limitation: dependency signatures are same-file only; project-local
-  dependency signatures remain future hardening work.
+- Current limitation: dependency signature resolution is direct-import only,
+  not transitive or compiler-grade.
 
 Input:
 

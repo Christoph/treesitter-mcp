@@ -3,11 +3,13 @@
 use std::collections::HashSet;
 use std::fs;
 use std::io;
+use std::path::{Path, PathBuf};
 
 use serde_json::{json, Map, Value};
 use tiktoken_rs::cl100k_base;
 use tree_sitter::{Node, Tree};
 
+use crate::analysis::dependencies::resolve_dependencies;
 use crate::analysis::path_utils;
 use crate::analysis::shape::{
     extract_enhanced_shape, EnhancedFileShape, EnhancedFunctionInfo, EnhancedStructInfo,
@@ -89,12 +91,21 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
     })?;
 
     let called_names = collect_called_names(&tree, &source, language, target.line, target.end_line);
-    let same_file_symbols = collect_same_file_signatures(&shape);
-    let deps: Vec<SymbolSignature> = same_file_symbols
+    let same_file_symbols = collect_same_file_signatures(&shape, None);
+    let mut deps: Vec<SymbolSignature> = same_file_symbols
         .iter()
         .filter(|dep| dep.name != target.name && called_names.contains(&dep.name))
         .cloned()
         .collect();
+    let mut seen_dep_names: HashSet<String> = deps.iter().map(|dep| dep.name.clone()).collect();
+    seen_dep_names.insert(target.name.clone());
+    deps.extend(collect_project_dependency_signatures(
+        language,
+        &source,
+        Path::new(file_path),
+        &called_names,
+        &mut seen_dep_names,
+    ));
 
     let target_text = format!("{}\n{}", target.signature, target.code);
     let imports = relevant_imports(&shape.imports, &target_text);
@@ -195,12 +206,15 @@ fn target_from_function(function: &EnhancedFunctionInfo, parent_scope: &str) -> 
     }
 }
 
-fn collect_same_file_signatures(shape: &EnhancedFileShape) -> Vec<SymbolSignature> {
+fn collect_same_file_signatures(
+    shape: &EnhancedFileShape,
+    source_file: Option<&Path>,
+) -> Vec<SymbolSignature> {
     let mut signatures = Vec::new();
 
     for function in &shape.functions {
         signatures.push(SymbolSignature {
-            kind: "fn",
+            kind: dependency_kind("fn", source_file),
             name: function.name.clone(),
             line: function.line,
             signature: function.signature.clone(),
@@ -210,7 +224,7 @@ fn collect_same_file_signatures(shape: &EnhancedFileShape) -> Vec<SymbolSignatur
     for class in &shape.classes {
         for method in &class.methods {
             signatures.push(SymbolSignature {
-                kind: "method",
+                kind: dependency_kind("method", source_file),
                 name: method.name.clone(),
                 line: method.line,
                 signature: method.signature.clone(),
@@ -221,11 +235,68 @@ fn collect_same_file_signatures(shape: &EnhancedFileShape) -> Vec<SymbolSignatur
     for block in &shape.impl_blocks {
         for method in &block.methods {
             signatures.push(SymbolSignature {
-                kind: "method",
+                kind: dependency_kind("method", source_file),
                 name: method.name.clone(),
                 line: method.line,
                 signature: method.signature.clone(),
             });
+        }
+    }
+
+    signatures
+}
+
+fn dependency_kind(base: &'static str, source_file: Option<&Path>) -> &'static str {
+    match (base, source_file.is_some()) {
+        ("fn", true) => "dep_fn",
+        ("method", true) => "dep_method",
+        ("fn", false) => "fn",
+        ("method", false) => "method",
+        _ => base,
+    }
+}
+
+fn collect_project_dependency_signatures(
+    language: Language,
+    source: &str,
+    file_path: &Path,
+    called_names: &HashSet<String>,
+    seen_names: &mut HashSet<String>,
+) -> Vec<SymbolSignature> {
+    if called_names.is_empty() {
+        return Vec::new();
+    }
+
+    let project_root = path_utils::find_project_root(file_path)
+        .or_else(|| file_path.parent().map(Path::to_path_buf))
+        .unwrap_or_else(|| PathBuf::from("."));
+    let dependency_files = resolve_dependencies(language, source, file_path, &project_root);
+    let mut signatures = Vec::new();
+
+    for dependency_file in dependency_files {
+        let Ok(dependency_source) = fs::read_to_string(&dependency_file) else {
+            continue;
+        };
+        let Ok(dependency_language) = detect_language(&dependency_file) else {
+            continue;
+        };
+        let Ok(dependency_tree) = parse_code(&dependency_source, dependency_language) else {
+            continue;
+        };
+        let Ok(dependency_shape) = extract_enhanced_shape(
+            &dependency_tree,
+            &dependency_source,
+            dependency_language,
+            dependency_file.to_str(),
+            false,
+        ) else {
+            continue;
+        };
+
+        for signature in collect_same_file_signatures(&dependency_shape, Some(&dependency_file)) {
+            if called_names.contains(&signature.name) && seen_names.insert(signature.name.clone()) {
+                signatures.push(signature);
+            }
         }
     }
 
