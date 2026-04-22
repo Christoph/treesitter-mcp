@@ -7,7 +7,9 @@ use rust_mcp_sdk::macros::{mcp_tool, JsonSchema};
 use rust_mcp_sdk::schema::{schema_utils::CallToolError, CallToolResult};
 use rust_mcp_sdk::tool_box;
 
-use crate::analysis::{code_map, diff, find_usages, query_pattern, symbol_at_line, view_code};
+use crate::analysis::{
+    code_map, diff, find_usages, format_references, query_pattern, symbol_at_line, view_code,
+};
 
 // Helper function for serde default
 fn default_full() -> String {
@@ -87,6 +89,64 @@ pub struct FindUsages {
     pub max_context_lines: Option<u32>,
     /// Maximum tokens for output (tiktoken counted). When set, output is
     /// truncated by dropping code/context and/or truncating usages.
+    #[serde(default)]
+    pub max_tokens: Option<u32>,
+}
+
+#[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
+pub struct LspPosition {
+    /// 0-based LSP line
+    pub line: u32,
+    /// 0-based LSP character
+    pub character: u32,
+}
+
+#[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
+pub struct LspRange {
+    /// LSP range start; end is ignored by this tool
+    pub start: LspPosition,
+}
+
+#[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
+pub struct ReferenceLocation {
+    /// Source file path. Use this or `uri`.
+    #[serde(default)]
+    pub file: Option<String>,
+    /// Alternative source file path field accepted by the analysis module.
+    #[serde(default)]
+    pub file_path: Option<String>,
+    /// LSP file URI, e.g. file:///repo/src/lib.rs. Use this or `file`.
+    #[serde(default)]
+    pub uri: Option<String>,
+    /// 1-based line for compact non-LSP locations.
+    #[serde(default)]
+    pub line: Option<u32>,
+    /// 1-based column for compact non-LSP locations.
+    #[serde(default)]
+    pub col: Option<u32>,
+    /// 1-based column alias.
+    #[serde(default)]
+    pub column: Option<u32>,
+    /// LSP 0-based range. When provided, line/col are ignored.
+    #[serde(default)]
+    pub range: Option<LspRange>,
+}
+
+/// Format precise LSP reference locations into the compact find_usages schema
+#[mcp_tool(
+    name = "format_references",
+    description = "Format LSP-provided reference locations into the same compact schema as find_usages. Input accepts `symbol` plus `references` rows using either 1-based `{file,line,col}` / `{file_path,line,column}` or LSP `{uri,range:{start:{line,character}}}`. Output keys: `sym`, `h`, `u`; rows are `file|line|col|type|context|scope|conf|owner` with `conf=high` because locations are assumed to come from precise LSP resolution. USE WHEN: ✅ You already called LSP textDocument/references and need compact context for an LLM ✅ You want scope/context around precise references without rerunning syntax-aware search. DON'T USE: ❌ You need MCP to discover references itself → use find_usages."
+)]
+#[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
+pub struct FormatReferences {
+    /// Symbol name these LSP locations resolve to
+    pub symbol: String,
+    /// LSP or compact reference locations
+    pub references: Vec<ReferenceLocation>,
+    /// Number of context lines around each reference (default: 3)
+    #[serde(default)]
+    pub context_lines: Option<u32>,
+    /// Maximum tokens for output (tiktoken counted)
     #[serde(default)]
     pub max_tokens: Option<u32>,
 }
@@ -196,6 +256,19 @@ impl FindUsages {
         });
 
         find_usages::execute(&args).map_err(CallToolError::new)
+    }
+}
+
+impl FormatReferences {
+    pub fn call_tool(&self) -> Result<CallToolResult, CallToolError> {
+        let args = serde_json::json!({
+            "symbol": self.symbol,
+            "references": self.references,
+            "context_lines": self.context_lines,
+            "max_tokens": self.max_tokens
+        });
+
+        format_references::execute(&args).map_err(CallToolError::new)
     }
 }
 
@@ -326,6 +399,7 @@ tool_box!(
         ViewCode,
         CodeMap,
         FindUsages,
+        FormatReferences,
         SymbolAtLine,
         ParseDiff,
         AffectedByDiff,

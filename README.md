@@ -103,6 +103,7 @@ Choose the right tool for your task:
 
 #### "I need to find something"
 - **Where is symbol X used?** → `find_usages` (syntax-aware search with usage types)
+- **Already have LSP references?** → `format_references` (compact context for precise locations)
 - **Complex pattern matching?** → `query_pattern` (advanced, requires tree-sitter syntax)
 - **What function is at line N?** → `symbol_at_line` (symbol info with scope hierarchy)
 - **What data is available in a template?** → `template_context` (Askama template variables)
@@ -124,6 +125,7 @@ Choose the right tool for your task:
 | `view_code` (full) | Single file | High | Fast | Deep understanding, multiple functions |
 | `view_code` (focused) | Single file | Medium | Fast | Editing specific function |
 | `find_usages` | Multi-file | Medium-High | Medium | Refactoring, impact analysis |
+| `format_references` | LSP locations | Low-Medium | Fast | Compact context for precise LSP references |
 | `affected_by_diff` | Multi-file | Medium-High | Medium | Post-change validation |
 | `parse_diff` | Single file | Low-Medium | Fast | Verify changes |
 | `symbol_at_line` | Single file | Low | Fast | Error debugging, scope lookup |
@@ -141,6 +143,7 @@ These tools provide strong guarantees based on AST structure:
 
 These tools use syntax-aware matching (best-effort, not compiler-grade):
 - `find_usages`: identifier matching via tree-sitter, may match homonyms in different scopes
+- `format_references`: trusts LSP-provided locations for precision, then adds syntax-aware context
 - `affected_by_diff`: relies on `find_usages` for impact analysis
 - `code_map`: structural overview, scope-aware but not semantically resolved
 - `type_map`: type identification via AST, usage counts are approximate
@@ -428,14 +431,58 @@ Find ALL usages of a symbol (function, variable, class, type) across files. Synt
 ```json
 {
   "sym": "helper_fn",
-  "h": "file|line|col|type|context",
-  "u": "src/main.rs|42|15|call|let result = helper_fn();\nsrc/utils.rs|18|9|reference|helper_fn() + 10"
+  "h": "file|line|col|type|context|scope|conf|owner",
+  "u": "src/main.rs|42|15|call|let result = helper_fn();|main|high|\nsrc/utils.rs|18|9|reference|helper_fn() + 10|Utils::apply|medium|"
 }
 ```
 
 ---
 
-### 5. symbol_at_line
+### 5. format_references
+
+Format precise LSP reference locations into the same compact schema as `find_usages`.
+
+**Use When:**
+- ✅ You already called LSP `textDocument/references`
+- ✅ You want compact context, scope, usage type, and owner hints around precise references
+- ✅ You need `find_usages`-compatible rows with `conf=high`
+
+**Don't Use When:**
+- ❌ You need MCP to discover references itself → use `find_usages`
+- ❌ You need compiler diagnostics grouped by severity → future `format_diagnostics`
+
+**Token Cost:** LOW-MEDIUM (scales with number of provided locations × context_lines)
+
+**Parameters**:
+- `symbol` (string, required): Symbol name these locations resolve to
+- `references` (array, required): Either 1-based `{file,line,col}` / `{file_path,line,column}` rows or LSP `{uri,range:{start:{line,character}}}` rows
+- `context_lines` (integer, optional, default: 3): Lines of context around each reference
+- `max_tokens` (integer, optional): Hard output budget
+
+**Example**:
+```json
+{
+  "symbol": "helper_fn",
+  "references": [
+    {
+      "uri": "file:///path/to/src/main.rs",
+      "range": {
+        "start": { "line": 41, "character": 14 }
+      }
+    }
+  ],
+  "context_lines": 1
+}
+```
+
+**Returns**: Compact schema identical to `find_usages`.
+
+- Output keys: `sym` (symbol), `h` (header), `u` (usage rows)
+- `conf` is `high` because locations are assumed to come from precise LSP resolution
+
+---
+
+### 6. symbol_at_line
 
 Get symbol (function/class/method) at specific line with signature and scope chain.
 
@@ -483,7 +530,7 @@ Get symbol (function/class/method) at specific line with signature and scope cha
 
 ---
 
-### 6. parse_diff
+### 7. parse_diff
 
 Analyze structural changes vs git revision. Returns symbol-level diff (functions/classes added/removed/modified), not line-level.
 
@@ -535,7 +582,7 @@ Analyze structural changes vs git revision. Returns symbol-level diff (functions
 
 ---
 
-### 7. affected_by_diff
+### 8. affected_by_diff
 
 Find usages AFFECTED by your changes. Combines `parse_diff` + `find_usages` to show blast radius with risk levels.
 
@@ -590,7 +637,7 @@ Find usages AFFECTED by your changes. Combines `parse_diff` + `find_usages` to s
 
 ---
 
-### 8. query_pattern
+### 9. query_pattern
 
 Execute custom tree-sitter S-expression query for advanced AST pattern matching. Returns matches with code context for complex structural patterns.
 
@@ -658,7 +705,7 @@ Execute custom tree-sitter S-expression query for advanced AST pattern matching.
 
 ---
 
-### 9. template_context
+### 10. template_context
 
 Find Rust structs associated with an Askama template file. Returns struct names, fields, and types (resolved up to 3 levels deep) that are available as variables in the template.
 

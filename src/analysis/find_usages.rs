@@ -28,16 +28,18 @@ use crate::common::project_files::collect_project_files;
 use crate::mcp_types::{CallToolResult, CallToolResultExt};
 use crate::parser::{detect_language, parse_code, Language};
 
+pub(crate) const USAGE_HEADER: &str = "file|line|col|type|context|scope|conf|owner";
+
 #[derive(Debug, Clone)]
-struct UsageRow {
-    file: String,
-    line: usize,
-    column: usize,
-    usage_type: String,
-    context: String,
-    scope: String,
-    confidence: String,
-    owner_hint: Option<String>,
+pub(crate) struct UsageRow {
+    pub(crate) file: String,
+    pub(crate) line: usize,
+    pub(crate) column: usize,
+    pub(crate) usage_type: String,
+    pub(crate) context: String,
+    pub(crate) scope: String,
+    pub(crate) confidence: String,
+    pub(crate) owner_hint: Option<String>,
 }
 
 #[derive(Clone, Copy)]
@@ -118,18 +120,16 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
         usage.file = path_utils::to_relative_path(&usage.file);
     }
 
-    let header = "file|line|col|type|context|scope|conf|owner";
-
     let (rows, truncated_by_budget) = build_rows_with_budget(
         &usages,
-        header,
+        USAGE_HEADER,
         max_tokens.unwrap_or(usize::MAX),
         max_tokens.is_some(),
     )?;
 
     let mut result = json!({
         "sym": symbol,
-        "h": header,
+        "h": USAGE_HEADER,
         "u": rows,
     });
 
@@ -147,7 +147,7 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
     Ok(CallToolResult::success(json_text))
 }
 
-fn build_rows_with_budget(
+pub(crate) fn build_rows_with_budget(
     usages: &[UsageRow],
     header: &str,
     max_tokens: usize,
@@ -397,7 +397,7 @@ fn visit_node(
     true
 }
 
-fn classify_usage_type(node: &Node) -> String {
+pub(crate) fn classify_usage_type(node: &Node) -> String {
     if let Some(parent) = node.parent() {
         let parent_kind = parent.kind();
 
@@ -486,7 +486,7 @@ fn classify_usage_type(node: &Node) -> String {
     "reference".to_string()
 }
 
-fn scope_for_node(node: Node, source: &str, language: Language) -> String {
+pub(crate) fn scope_for_node(node: Node, source: &str, language: Language) -> String {
     let mut parts = Vec::new();
     let mut current = Some(node);
 
@@ -602,7 +602,7 @@ fn extract_named_field(node: Node, source: &str) -> Option<String> {
     None
 }
 
-fn owner_hint(node: Node, source: &str) -> Option<String> {
+pub(crate) fn owner_hint(node: Node, source: &str) -> Option<String> {
     let parent = node.parent()?;
 
     for field_name in [
@@ -787,7 +787,7 @@ fn definition_owner(usage: &UsageRow) -> Option<String> {
         })
 }
 
-fn extract_code_with_context(source: &str, line: usize, context_lines: u32) -> String {
+pub(crate) fn extract_code_with_context(source: &str, line: usize, context_lines: u32) -> String {
     let lines: Vec<&str> = source.lines().collect();
     let context_lines = context_lines as usize;
 

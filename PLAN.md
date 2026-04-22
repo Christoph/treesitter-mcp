@@ -1,6 +1,6 @@
 # Context Quality Improvement Plan
 
-Updated: 2026-04-20
+Updated: 2026-04-21
 
 ## Purpose
 
@@ -85,14 +85,18 @@ Completed in the current worktree:
 - **Workstream 3**: `view_code(include_deps=true)` now selects dependency
   types from AST-position type references for Rust, TypeScript, Python, and
   Go, and returns only explicitly referenced dependency rows.
+- **Workstream 5 (phase 1)**: `format_references` accepts LSP-provided
+  reference locations and emits the same compact usage schema as
+  `find_usages`, with `conf=high`.
 - **Workstream 8 (partial)**: adversarial fixtures now cover scope
   disambiguation, homonym suppression in `affected_by_diff`, ignored-file
-  traversal, duplicate type ranking, and AST-backed dependency extraction.
+  traversal, duplicate type ranking, AST-backed dependency extraction, and
+  LSP reference formatting.
 
 Next recommended slice:
 
-- **Workstream 5**: add `format_references` as the first LSP integration
-  point, formatting LSP-provided locations into the compact usage schema.
+- **Workstream 6**: add `minimal_edit_context` for focused edit context, or
+  continue Workstream 5 with LSP-aware definition/dependency formatting.
 
 ## Success Criteria
 
@@ -110,7 +114,7 @@ The work in this plan is done when:
 - [x] directory traversal respects `.gitignore` in git repos for the main
   directory-scanning tools
 - [x] results include confidence markers where resolution is heuristic
-- [ ] at least one LSP integration point exists (accept resolved references,
+- [x] at least one LSP integration point exists (accept resolved references,
   format compactly)
 - [ ] `minimal_edit_context` returns focused context at least 3x smaller than
   `view_code(focus_symbol=X)` on files with 10+ symbols
@@ -330,11 +334,21 @@ Acceptance criteria:
 - existing hardcoded skips still work (they're covered by `.gitignore` in
   most projects)
 
-### 5. LSP Integration Points
+### 5. LSP Integration Points [Phase 1 complete in current worktree]
 
 Goal: let agents combine LSP precision with MCP compactness.
 
 #### Phase 1: Accept resolved references
+
+- Status: completed on 2026-04-21 in the current worktree.
+- Added `format_references`, which accepts either compact 1-based
+  `{file,line,col}` / `{file_path,line,column}` locations or LSP
+  `{uri,range:{start:{line,character}}}` locations.
+- Output uses the native `find_usages` compact schema:
+  `file|line|col|type|context|scope|conf|owner`, with `conf=high`.
+- Tests cover compact locations and LSP URI/range locations.
+
+Original task:
 
 - Add a tool (or parameter on `find_usages`) that accepts a list of
   locations from LSP `textDocument/references` and formats them in the
