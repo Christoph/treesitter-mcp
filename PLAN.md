@@ -64,12 +64,14 @@ only as a last resort.
   budget enforcement
 - `format_diagnostics` accepts LSP diagnostics and emits compact rows with
   structural owners
+- `view_code` accepts LSP definition locations and narrows dependency
+  context to the exact type at that definition
+- Strict tiktoken-budget fixtures cover the remaining LSP bridge and
+  precision-tool surfaces
 
 ### Remaining Shortcomings
 
-1. Later LSP bridge work still needs definition-location support.
-2. Token-efficiency proof still needs to be added for the remaining roadmap
-   items.
+No open plan shortcomings remain in this worktree.
 
 ## Status Update
 
@@ -91,6 +93,9 @@ Completed in the current worktree:
 - **Workstream 5 (phase 1)**: `format_references` accepts LSP-provided
   reference locations and emits the same compact usage schema as
   `find_usages`, with `conf=high`.
+- **Workstream 5 (phase 2)**: `view_code(definition_location=...)`
+  accepts LSP-provided definition locations and uses them to select the
+  exact dependency type.
 - **Workstream 5 (phase 3)**: `format_diagnostics` accepts LSP-provided
   diagnostics and emits compact severity/file/owner rows.
 - **Workstream 6 (initial)**: `minimal_edit_context` returns target symbol
@@ -100,16 +105,11 @@ Completed in the current worktree:
 - **Workstream 7 (initial)**: `call_graph` returns compact best-effort
   caller/callee rows for depth 1, supports bounded depth traversal with a
   visited set, and enforces token budgets.
-- **Workstream 8 (partial)**: adversarial fixtures now cover scope
+- **Workstream 8**: adversarial fixtures now cover scope
   disambiguation, homonym suppression in `affected_by_diff`, ignored-file
   traversal, duplicate type ranking, AST-backed dependency extraction, and
-  LSP reference formatting, focused edit-context reduction, and call-graph
-  traversal.
-
-Next recommended slice:
-
-- Continue Workstream 5 with LSP definition-location support, or add broader
-  token-efficiency proof for remaining roadmap items.
+  LSP reference/definition/diagnostic formatting, focused edit-context
+  reduction, call-graph traversal, and strict tiktoken budget enforcement.
 
 ## Success Criteria
 
@@ -132,7 +132,7 @@ The work in this plan is done when:
 - [x] `minimal_edit_context` returns focused context at least 3x smaller than
   `view_code(focus_symbol=X)` on files with 10+ symbols
 - [x] `call_graph` returns correct callers and callees for depth=1
-- [ ] token budgets remain within current rough envelopes for the remaining
+- [x] token budgets remain within current rough envelopes for the remaining
   roadmap items
 
 ## Guiding Principles
@@ -347,7 +347,7 @@ Acceptance criteria:
 - existing hardcoded skips still work (they're covered by `.gitignore` in
   most projects)
 
-### 5. LSP Integration Points [Phase 1 and 3 complete in current worktree]
+### 5. LSP Integration Points [Complete in current worktree]
 
 Goal: let agents combine LSP precision with MCP compactness.
 
@@ -370,6 +370,13 @@ Original task:
   through MCP for compact formatting and risk assessment.
 
 #### Phase 2: Accept definition location
+
+- Status: completed on 2026-04-22 in the current worktree.
+- Added `definition_location` on `view_code`, accepting compact
+  `{file,line,col}` / `{file_path,line,column}` locations or LSP
+  `{uri,range:{start:{line,character}}}` locations.
+- When provided, dependency context is narrowed to the type defined at
+  that location instead of broad import/name inference.
 
 - Add a parameter on `view_code` that accepts a definition location from
   LSP `textDocument/definition` and uses it to resolve the correct
@@ -572,18 +579,19 @@ Acceptance criteria:
 - callers match `find_usages(type=call)` results but with less noise
   (scope-qualified, no non-call usages)
 
-### 8. Targeted Quality Fixtures [Partial]
+### 8. Targeted Quality Fixtures [Complete in current worktree]
 
 Goal: prove precision improvements with adversarial test cases.
 
 Status:
 
-- Partial as of 2026-04-20.
-- Fixtures exist for scope qualification, homonym suppression in
-  `affected_by_diff`, and ignored-file traversal.
-- Remaining work should add adversarial fixtures for any uncovered hardening
-  slices, especially project-local edit context and later LSP bridge
-  formatting.
+- Completed on 2026-04-22 in the current worktree.
+- Fixtures cover scope qualification, homonym suppression in
+  `affected_by_diff`, ignored-file traversal, duplicate type ranking,
+  AST-backed dependency extraction, LSP reference formatting, LSP
+  definition-location dependency narrowing, LSP diagnostics formatting,
+  project-local edit context, call graph traversal, and strict tiktoken
+  budget enforcement for the remaining roadmap tools.
 
 Add fixtures alongside each workstream, not as a separate evaluation
 framework:
@@ -620,7 +628,7 @@ Acceptance criteria:
 - Phase 3: confidence markers
 - Fixtures for scope disambiguation
 
-### Milestone 3: Relevance Upgrades (Workstreams 2 + 3) [Next]
+### Milestone 3: Relevance Upgrades (Workstreams 2 + 3) [Complete]
 
 - File-qualified type ranking
 - AST-position dependency extraction
@@ -636,13 +644,13 @@ Acceptance criteria:
 - `call_graph` tool (depends on Workstream 1)
 - Fixtures for both
 
-### Milestone 6: LSP Bridge (Workstream 5)
+### Milestone 6: LSP Bridge (Workstream 5) [Complete]
 
 - `format_references` tool
 - LSP-aware `view_code` dependency resolution
 - Compact diagnostics formatting
 
-### Milestone 7: Prove It (Workstream 8) [Partial]
+### Milestone 7: Prove It (Workstream 8) [Complete]
 
 - Adversarial fixtures for all workstreams
 - Token efficiency assertions

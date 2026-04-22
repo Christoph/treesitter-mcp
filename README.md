@@ -282,6 +282,8 @@ View a source file with flexible detail levels and automatic type inclusion from
   - `"full"`: Complete implementation code
 - `focus_symbol` (string, optional): Focus on ONE symbol, show full code only for it
   - When set, returns full code for this symbol + signatures for rest - 3x cheaper
+- `definition_location` (object, optional): LSP `textDocument/definition` result or compact
+  `{file,line,col}` location used to include the exact dependency type from that definition
 
 **Auto-Includes**: All struct/class/interface definitions from project dependencies (not external libs)
 

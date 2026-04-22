@@ -115,7 +115,7 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
     });
     edges.dedup();
 
-    let (rows, truncated) = edge_rows_with_budget(&edges, max_tokens)?;
+    let (rows, truncated) = edge_rows_with_budget(&edges, symbol, max_tokens)?;
     let mut result = json!({
         "sym": symbol,
         "h": EDGE_HEADER,
@@ -521,7 +521,11 @@ fn last_identifier_text(node: Node<'_>, source: &str) -> Option<String> {
     found
 }
 
-fn edge_rows_with_budget(edges: &[Edge], max_tokens: usize) -> Result<(String, bool), io::Error> {
+fn edge_rows_with_budget(
+    edges: &[Edge],
+    symbol: &str,
+    max_tokens: usize,
+) -> Result<(String, bool), io::Error> {
     let bpe = cl100k_base()
         .map_err(|e| io::Error::other(format!("Failed to initialize tiktoken tokenizer: {e}")))?;
     let mut kept = edges.to_vec();
@@ -529,12 +533,16 @@ fn edge_rows_with_budget(edges: &[Edge], max_tokens: usize) -> Result<(String, b
 
     loop {
         let rows = edge_rows(&kept);
-        let candidate = serde_json::to_string(&json!({
-            "sym": "_",
+        let mut candidate = json!({
+            "sym": symbol,
             "h": EDGE_HEADER,
             "edges": rows,
-        }))
-        .map_err(|e| {
+        });
+        if truncated {
+            candidate["@"] = json!({"t": true});
+        }
+
+        let candidate = serde_json::to_string(&candidate).map_err(|e| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("Failed to serialize result to JSON: {e}"),

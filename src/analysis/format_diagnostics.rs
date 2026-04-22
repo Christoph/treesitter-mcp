@@ -344,11 +344,15 @@ fn rows_with_budget(
 
     loop {
         let formatted = diagnostic_rows(&kept);
-        let candidate = serde_json::to_string(&json!({
+        let mut candidate = json!({
             "h": DIAGNOSTIC_HEADER,
             "d": formatted,
-        }))
-        .map_err(|e| {
+        });
+        if truncated {
+            candidate["@"] = json!({"t": true});
+        }
+
+        let candidate = serde_json::to_string(&candidate).map_err(|e| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("Failed to serialize result to JSON: {e}"),

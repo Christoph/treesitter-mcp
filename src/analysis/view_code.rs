@@ -42,6 +42,13 @@ enum DetailLevel {
     Full,
 }
 
+#[derive(Debug, Clone)]
+struct DefinitionLocation {
+    file: PathBuf,
+    line: usize,
+    column: usize,
+}
+
 impl DetailLevel {
     fn from_args(arguments: &Value) -> Self {
         // Back-compat: some tests call this tool with include_code.
@@ -118,6 +125,11 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
         .and_then(Value::as_u64)
         .unwrap_or(2000) as usize;
 
+    let definition_location = arguments
+        .get("definition_location")
+        .map(parse_definition_location)
+        .transpose()?;
+
     log::info!(
         "Viewing code: {file_path} (detail: {:?}, focus_symbol: {:?}, include_deps: {include_deps}, max_tokens: {max_tokens})",
         detail,
@@ -187,17 +199,24 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
                 )
             })?;
 
-        let dep_paths =
+        let mut dep_paths =
             resolve_dependencies(language, &source, Path::new(file_path), &project_root);
+        if let Some(location) = definition_location.as_ref() {
+            push_unique_path(&mut dep_paths, location.file.clone());
+        }
         let project_deps = filter_project_dependencies(dep_paths, &project_root);
 
-        let referenced = extract_referenced_type_names(
-            language,
-            &source,
-            &main_shape,
-            Path::new(file_path),
-            focus_symbol,
-        );
+        let referenced = if let Some(location) = definition_location.as_ref() {
+            referenced_type_from_definition_location(location)?
+        } else {
+            extract_referenced_type_names(
+                language,
+                &source,
+                &main_shape,
+                Path::new(file_path),
+                focus_symbol,
+            )
+        };
 
         let deps_obj = build_dependency_rows(
             &project_deps,
@@ -251,6 +270,101 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
     })?;
 
     Ok(CallToolResult::success(output_json))
+}
+
+fn parse_definition_location(value: &Value) -> Result<DefinitionLocation, io::Error> {
+    let file = value
+        .get("file")
+        .or_else(|| value.get("file_path"))
+        .and_then(Value::as_str)
+        .map(PathBuf::from)
+        .or_else(|| {
+            value
+                .get("uri")
+                .and_then(Value::as_str)
+                .and_then(file_path_from_uri)
+        })
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Definition location is missing 'file', 'file_path', or 'uri'",
+            )
+        })?;
+
+    if let Some(start) = value
+        .get("range")
+        .and_then(|range| range.get("start"))
+        .and_then(Value::as_object)
+    {
+        let line = start.get("line").and_then(Value::as_u64).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "LSP range is missing start.line",
+            )
+        })? as usize
+            + 1;
+        let column = start
+            .get("character")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "LSP range is missing start.character",
+                )
+            })? as usize
+            + 1;
+
+        return Ok(DefinitionLocation { file, line, column });
+    }
+
+    let line = value.get("line").and_then(Value::as_u64).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Definition location is missing 1-based 'line'",
+        )
+    })? as usize;
+
+    let column = value
+        .get("col")
+        .or_else(|| value.get("column"))
+        .and_then(Value::as_u64)
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Definition location is missing 1-based 'col' or 'column'",
+            )
+        })? as usize;
+
+    Ok(DefinitionLocation { file, line, column })
+}
+
+fn file_path_from_uri(uri: &str) -> Option<PathBuf> {
+    let rest = uri.strip_prefix("file://")?;
+    let path = rest.strip_prefix("localhost").unwrap_or(rest);
+    Some(PathBuf::from(percent_decode(path)))
+}
+
+fn percent_decode(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut output = String::with_capacity(input.len());
+    let mut index = 0;
+
+    while index < bytes.len() {
+        if bytes[index] == b'%' && index + 2 < bytes.len() {
+            if let Ok(hex) = std::str::from_utf8(&bytes[index + 1..index + 3]) {
+                if let Ok(value) = u8::from_str_radix(hex, 16) {
+                    output.push(value as char);
+                    index += 3;
+                    continue;
+                }
+            }
+        }
+
+        output.push(bytes[index] as char);
+        index += 1;
+    }
+
+    output
 }
 
 fn insert_symbol_tables(
@@ -633,6 +747,26 @@ fn extract_referenced_type_names(
         }
         _ => extract_referenced_type_names_fallback(source, main_shape),
     }
+}
+
+fn referenced_type_from_definition_location(
+    location: &DefinitionLocation,
+) -> Result<HashSet<String>, io::Error> {
+    let rows = extract_dependency_types(&location.file, &HashSet::new(), DetailLevel::Signatures)?;
+    let mut referenced = HashSet::new();
+
+    if let Some(row) = rows.iter().find(|row| row.line == location.line) {
+        log::debug!(
+            "Resolved definition location {}:{}:{} to type {}",
+            location.file.display(),
+            location.line,
+            location.column,
+            row.name
+        );
+        referenced.insert(row.name.clone());
+    }
+
+    Ok(referenced)
 }
 
 fn extract_ast_position_type_names(
@@ -1134,6 +1268,14 @@ fn filter_project_dependencies(dep_paths: Vec<PathBuf>, project_root: &Path) -> 
                 && !path.to_string_lossy().contains("\\site-packages\\")
         })
         .collect()
+}
+
+fn push_unique_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
+    if paths.iter().any(|existing| existing == &path) {
+        return;
+    }
+
+    paths.push(path);
 }
 
 /// Apply focus to show full code only for the specified symbol

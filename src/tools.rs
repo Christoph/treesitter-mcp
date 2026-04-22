@@ -24,7 +24,7 @@ fn default_one() -> Option<u32> {
 /// View a source file with flexible detail levels and automatic type inclusion
 #[mcp_tool(
     name = "view_code",
-    description = "View file in compact schema (BREAKING). Output keys: `p` (relative path), `h` (header for f/s/c rows), `f` (functions rows), `s` (structs rows), `c` (classes rows), optional deps `deps` (map dep_path -> type rows), plus optional tables: imports `ih`+`im`, trait methods `th`+`tm`, interfaces `ah`+`i`, properties `ph`+`pr`, class implements `ch`+`ci`, class methods `mh`+`cm`, Rust impl methods `bh`+`bm`. Rows are newline-delimited; fields are pipe-delimited and escaped: `\\` -> `\\\\`, `\n` -> `\\n`, `\r` -> `\\r`, `|` -> `\\|`. Meta: `@.t=true` when truncated. DETAIL: 'signatures' (name/line/sig), 'full' (adds doc/code). FOCUS: set focus_symbol to keep code only for that symbol."
+    description = "View file in compact schema (BREAKING). Output keys: `p` (relative path), `h` (header for f/s/c rows), `f` (functions rows), `s` (structs rows), `c` (classes rows), optional deps `deps` (map dep_path -> type rows), plus optional tables: imports `ih`+`im`, trait methods `th`+`tm`, interfaces `ah`+`i`, properties `ph`+`pr`, class implements `ch`+`ci`, class methods `mh`+`cm`, Rust impl methods `bh`+`bm`. Rows are newline-delimited; fields are pipe-delimited and escaped: `\\` -> `\\\\`, `\n` -> `\\n`, `\r` -> `\\r`, `|` -> `\\|`. Meta: `@.t=true` when truncated. DETAIL: 'signatures' (name/line/sig), 'full' (adds doc/code). FOCUS: set focus_symbol to keep code only for that symbol. LSP: pass definition_location from textDocument/definition to include the exact dependency type."
 )]
 #[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
 pub struct ViewCode {
@@ -41,6 +41,10 @@ pub struct ViewCode {
     /// When set, returns full code for this symbol + signatures for rest
     #[serde(default)]
     pub focus_symbol: Option<String>,
+
+    /// Optional LSP or compact definition location for exact dependency type selection.
+    #[serde(default)]
+    pub definition_location: Option<ReferenceLocation>,
 }
 
 /// Generate a high-level code map of a directory with token budget awareness and detail levels
@@ -312,7 +316,8 @@ impl ViewCode {
         let args = serde_json::json!({
             "file_path": self.file_path,
             "detail": self.detail,
-            "focus_symbol": self.focus_symbol
+            "focus_symbol": self.focus_symbol,
+            "definition_location": self.definition_location
         });
 
         view_code::execute(&args).map_err(CallToolError::new)

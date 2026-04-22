@@ -371,6 +371,68 @@ export function useBar(value: Bar): Bar {
 }
 
 #[test]
+fn test_parse_file_definition_location_selects_exact_dependency_type() {
+    let dir = tempdir().unwrap();
+
+    let types_path = dir.path().join("types.ts");
+    fs::write(
+        &types_path,
+        r#"
+export interface Foo {
+    value: number;
+}
+
+export interface Bar {
+    value: number;
+}
+"#,
+    )
+    .unwrap();
+
+    let main_path = dir.path().join("main.ts");
+    fs::write(
+        &main_path,
+        r#"
+import type { Foo, Bar } from "./types";
+
+export function makeValue(): unknown {
+    return {};
+}
+"#,
+    )
+    .unwrap();
+
+    let arguments = json!({
+        "file_path": main_path.to_str().unwrap(),
+        "include_code": false,
+        "include_deps": true,
+        "definition_location": {
+            "file": types_path.to_str().unwrap(),
+            "line": 6,
+            "col": 18
+        }
+    });
+
+    let result = treesitter_mcp::analysis::view_code::execute(&arguments).unwrap();
+    let text = common::get_result_text(&result);
+    let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let deps = shape
+        .get("deps")
+        .and_then(|value| value.as_object())
+        .expect("Expected deps object");
+
+    let dep_names: Vec<String> = deps
+        .values()
+        .filter_map(|value| value.as_str())
+        .flat_map(common::helpers::parse_compact_rows)
+        .filter_map(|row| row.first().cloned())
+        .collect();
+
+    assert!(dep_names.iter().any(|name| name == "Bar"));
+    assert!(!dep_names.iter().any(|name| name == "Foo"));
+}
+
+#[test]
 fn test_parse_file_deps_go_ast_type_selection() {
     let dir = tempdir().unwrap();
     let types_dir = dir.path().join("types");

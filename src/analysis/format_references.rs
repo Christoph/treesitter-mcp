@@ -104,6 +104,7 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
 
     let (rows, truncated_by_budget) = build_rows_with_budget(
         &usages,
+        symbol,
         USAGE_HEADER,
         max_tokens.unwrap_or(usize::MAX),
         max_tokens.is_some(),

@@ -122,6 +122,7 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
 
     let (rows, truncated_by_budget) = build_rows_with_budget(
         &usages,
+        symbol,
         USAGE_HEADER,
         max_tokens.unwrap_or(usize::MAX),
         max_tokens.is_some(),
@@ -149,6 +150,7 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
 
 pub(crate) fn build_rows_with_budget(
     usages: &[UsageRow],
+    symbol: &str,
     header: &str,
     max_tokens: usize,
     enforce: bool,
@@ -190,12 +192,17 @@ pub(crate) fn build_rows_with_budget(
     // Hard enforcement by truncating rows from the end until we fit.
     loop {
         let candidate_rows = usages_to_rows(&kept, header);
-        let candidate_json = serde_json::to_string(&json!({
+        let mut candidate = json!({
             "sym": "_",
             "h": header,
             "u": candidate_rows,
-        }))
-        .map_err(|e| {
+        });
+        candidate["sym"] = json!(symbol);
+        if truncated {
+            candidate["@"] = json!({"t": true});
+        }
+
+        let candidate_json = serde_json::to_string(&candidate).map_err(|e| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("Failed to serialize result to JSON: {e}"),
