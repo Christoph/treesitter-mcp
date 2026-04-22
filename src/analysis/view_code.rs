@@ -127,6 +127,7 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
 
     let definition_location = arguments
         .get("definition_location")
+        .filter(|value| !value.is_null())
         .map(parse_definition_location)
         .transpose()?;
 

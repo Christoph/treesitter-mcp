@@ -433,6 +433,26 @@ export function makeValue(): unknown {
 }
 
 #[test]
+fn test_parse_file_ignores_null_definition_location() {
+    let dir = tempdir().unwrap();
+    let file_path = dir.path().join("types.ts");
+    fs::write(&file_path, "export interface User {\n  name: string;\n}\n").unwrap();
+
+    let arguments = json!({
+        "file_path": file_path.to_str().unwrap(),
+        "include_code": false,
+        "include_deps": false,
+        "definition_location": null
+    });
+
+    let result = treesitter_mcp::analysis::view_code::execute(&arguments).unwrap();
+    let text = common::get_result_text(&result);
+    let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
+
+    assert_eq!(shape["i"].as_str().unwrap(), "User|1|");
+}
+
+#[test]
 fn test_parse_file_deps_go_ast_type_selection() {
     let dir = tempdir().unwrap();
     let types_dir = dir.path().join("types");
