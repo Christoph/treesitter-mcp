@@ -1,6 +1,6 @@
 # Context Quality Improvement Plan
 
-Updated: 2026-04-21
+Updated: 2026-04-22
 
 ## Purpose
 
@@ -61,10 +61,11 @@ only as a last resort.
 
 ### Remaining Shortcomings
 
-1. No LSP integration points: agents must choose between precise-but-verbose
-   LSP results and compact-but-imprecise MCP results.
-2. No `minimal_edit_context` tool exists yet.
-3. No `call_graph` tool exists yet.
+1. `minimal_edit_context` currently resolves same-file deps only; project-local
+   dependency signatures remain future hardening work.
+2. No `call_graph` tool exists yet.
+3. Later LSP bridge phases still need definition-location and diagnostic
+   formatting support.
 4. Token-efficiency proof still needs to be added for the remaining roadmap
    items.
 
@@ -88,15 +89,19 @@ Completed in the current worktree:
 - **Workstream 5 (phase 1)**: `format_references` accepts LSP-provided
   reference locations and emits the same compact usage schema as
   `find_usages`, with `conf=high`.
+- **Workstream 6 (initial)**: `minimal_edit_context` returns target symbol
+  code plus same-file callee signatures, same-file referenced types, and
+  relevant imports, with a 3x token-savings fixture versus focused
+  `view_code`.
 - **Workstream 8 (partial)**: adversarial fixtures now cover scope
   disambiguation, homonym suppression in `affected_by_diff`, ignored-file
   traversal, duplicate type ranking, AST-backed dependency extraction, and
-  LSP reference formatting.
+  LSP reference formatting, and focused edit-context reduction.
 
 Next recommended slice:
 
-- **Workstream 6**: add `minimal_edit_context` for focused edit context, or
-  continue Workstream 5 with LSP-aware definition/dependency formatting.
+- **Workstream 7**: add `call_graph` for callers/callees depth=1, or extend
+  Workstream 6 with project-local dependency signatures.
 
 ## Success Criteria
 
@@ -116,7 +121,7 @@ The work in this plan is done when:
 - [x] results include confidence markers where resolution is heuristic
 - [x] at least one LSP integration point exists (accept resolved references,
   format compactly)
-- [ ] `minimal_edit_context` returns focused context at least 3x smaller than
+- [x] `minimal_edit_context` returns focused context at least 3x smaller than
   `view_code(focus_symbol=X)` on files with 10+ symbols
 - [ ] `call_graph` returns correct callers and callees for depth=1
 - [ ] token budgets remain within current rough envelopes for the remaining
@@ -387,7 +392,7 @@ Acceptance criteria:
 - output is indistinguishable in schema from native `find_usages` output
   but with confidence=high
 
-### 6. Minimal Edit Context
+### 6. Minimal Edit Context [Initial version complete in current worktree]
 
 Goal: return the absolute minimum context needed to correctly edit one
 symbol, saving 10-40x tokens compared to reading the full file.
@@ -398,6 +403,17 @@ functions, structs, and imports. An agent editing a 20-line function in a
 500-line file pays for all 500 lines of structure.
 
 New tool: `minimal_edit_context`
+
+Status:
+
+- Initial version completed on 2026-04-22 in the current worktree.
+- Supports locating top-level functions, class methods, and Rust impl
+  methods via `extract_enhanced_shape`.
+- Returns the target symbol code, same-file callee signatures from AST call
+  sites, same-file referenced type rows, relevant import rows, and scope.
+- Enforces token budget by dropping optional context before the target.
+- Current limitation: dependency signatures are same-file only; project-local
+  dependency signatures remain future hardening work.
 
 Input:
 

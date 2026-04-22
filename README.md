@@ -100,6 +100,7 @@ Choose the right tool for your task:
 - **Know the file, need overview?** → `view_code` with `detail="signatures"` (signatures only)
 - **Know the file, need full details?** → `view_code` with `detail="full"` (complete code)
 - **Know the specific function?** → `view_code` with `focus_symbol` (focused view, optimized tokens)
+- **Editing one known symbol?** → `minimal_edit_context` (smallest useful edit context)
 
 #### "I need to find something"
 - **Where is symbol X used?** → `find_usages` (syntax-aware search with usage types)
@@ -124,6 +125,7 @@ Choose the right tool for your task:
 | `view_code` (signatures) | Single file | Low | Fast | Quick overview, API understanding |
 | `view_code` (full) | Single file | High | Fast | Deep understanding, multiple functions |
 | `view_code` (focused) | Single file | Medium | Fast | Editing specific function |
+| `minimal_edit_context` | Single symbol | Low | Fast | Focused edits with same-file deps |
 | `find_usages` | Multi-file | Medium-High | Medium | Refactoring, impact analysis |
 | `format_references` | LSP locations | Low-Medium | Fast | Compact context for precise LSP references |
 | `affected_by_diff` | Multi-file | Medium-High | Medium | Post-change validation |
@@ -144,6 +146,7 @@ These tools provide strong guarantees based on AST structure:
 These tools use syntax-aware matching (best-effort, not compiler-grade):
 - `find_usages`: identifier matching via tree-sitter, may match homonyms in different scopes
 - `format_references`: trusts LSP-provided locations for precision, then adds syntax-aware context
+- `minimal_edit_context`: same-file call/type/import relevance from AST and token matching
 - `affected_by_diff`: relies on `find_usages` for impact analysis
 - `code_map`: structural overview, scope-aware but not semantically resolved
 - `type_map`: type identification via AST, usage counts are approximate
@@ -482,7 +485,46 @@ Format precise LSP reference locations into the same compact schema as `find_usa
 
 ---
 
-### 6. symbol_at_line
+### 6. minimal_edit_context
+
+Return the smallest useful context for editing one known symbol.
+
+**Use When:**
+- ✅ Editing one known function or method
+- ✅ You need the target code plus directly relevant same-file callees, types, and imports
+- ✅ `view_code(focus_symbol=...)` is still too large for a file with many symbols
+
+**Don't Use When:**
+- ❌ Exploring an unfamiliar file → use `code_map` or `view_code`
+- ❌ You need project-wide dependency resolution → use `view_code(include_deps=true)` for now
+
+**Token Cost:** LOW (usually much smaller than focused `view_code` on large files)
+
+**Parameters**:
+- `file_path` (string, required): Path to the source file
+- `symbol_name` (string, required): Symbol to edit
+- `max_tokens` (integer, optional, default: 2000): Hard output budget
+
+**Example**:
+```json
+{
+  "file_path": "/path/to/src/workflow.ts",
+  "symbol_name": "buildSummary",
+  "max_tokens": 2000
+}
+```
+
+**Returns**: Compact schema.
+
+- `target`: full code row for the symbol (`name|line|sig|code`)
+- `deps`: optional same-file callee signature rows (`kind|name|line|sig`)
+- `types`: optional same-file referenced type rows (`kind|name|line|sig`)
+- `imports`: optional relevant import rows (`line|text`)
+- `scope`: enclosing class/impl scope when available
+
+---
+
+### 7. symbol_at_line
 
 Get symbol (function/class/method) at specific line with signature and scope chain.
 
@@ -530,7 +572,7 @@ Get symbol (function/class/method) at specific line with signature and scope cha
 
 ---
 
-### 7. parse_diff
+### 8. parse_diff
 
 Analyze structural changes vs git revision. Returns symbol-level diff (functions/classes added/removed/modified), not line-level.
 
@@ -582,7 +624,7 @@ Analyze structural changes vs git revision. Returns symbol-level diff (functions
 
 ---
 
-### 8. affected_by_diff
+### 9. affected_by_diff
 
 Find usages AFFECTED by your changes. Combines `parse_diff` + `find_usages` to show blast radius with risk levels.
 
@@ -637,7 +679,7 @@ Find usages AFFECTED by your changes. Combines `parse_diff` + `find_usages` to s
 
 ---
 
-### 9. query_pattern
+### 10. query_pattern
 
 Execute custom tree-sitter S-expression query for advanced AST pattern matching. Returns matches with code context for complex structural patterns.
 
@@ -705,7 +747,7 @@ Execute custom tree-sitter S-expression query for advanced AST pattern matching.
 
 ---
 
-### 10. template_context
+### 11. template_context
 
 Find Rust structs associated with an Askama template file. Returns struct names, fields, and types (resolved up to 3 levels deep) that are available as variables in the template.
 

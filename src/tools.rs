@@ -8,7 +8,8 @@ use rust_mcp_sdk::schema::{schema_utils::CallToolError, CallToolResult};
 use rust_mcp_sdk::tool_box;
 
 use crate::analysis::{
-    code_map, diff, find_usages, format_references, query_pattern, symbol_at_line, view_code,
+    code_map, diff, find_usages, format_references, minimal_edit_context, query_pattern,
+    symbol_at_line, view_code,
 };
 
 // Helper function for serde default
@@ -151,6 +152,22 @@ pub struct FormatReferences {
     pub max_tokens: Option<u32>,
 }
 
+/// Return compact context needed to edit one symbol
+#[mcp_tool(
+    name = "minimal_edit_context",
+    description = "Return focused edit context for one symbol. Output keys include `p`, `sym`, `scope`, `h`, `target`, optional `dh`+`deps`, optional `tyh`+`types`, optional `ih`+`imports`, and optional `@.t=true` when truncated. USE WHEN: ✅ Editing one known function/method and need the smallest useful context ✅ Avoiding full-file reads for large files. DON'T USE: ❌ Exploring an unfamiliar file → use view_code or code_map first. Current scope: same-file callees/types/imports."
+)]
+#[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
+pub struct MinimalEditContext {
+    /// Path to the source file
+    pub file_path: String,
+    /// Symbol name to edit
+    pub symbol_name: String,
+    /// Maximum tokens for output (default: 2000)
+    #[serde(default)]
+    pub max_tokens: Option<u32>,
+}
+
 /// Get symbol information at a specific line with signature and scope chain
 #[mcp_tool(
     name = "symbol_at_line",
@@ -269,6 +286,18 @@ impl FormatReferences {
         });
 
         format_references::execute(&args).map_err(CallToolError::new)
+    }
+}
+
+impl MinimalEditContext {
+    pub fn call_tool(&self) -> Result<CallToolResult, CallToolError> {
+        let args = serde_json::json!({
+            "file_path": self.file_path,
+            "symbol_name": self.symbol_name,
+            "max_tokens": self.max_tokens
+        });
+
+        minimal_edit_context::execute(&args).map_err(CallToolError::new)
     }
 }
 
@@ -400,6 +429,7 @@ tool_box!(
         CodeMap,
         FindUsages,
         FormatReferences,
+        MinimalEditContext,
         SymbolAtLine,
         ParseDiff,
         AffectedByDiff,

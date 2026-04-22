@@ -58,6 +58,7 @@ impl ServerHandler for TreesitterServerHandler {
             TreesitterTools::CodeMap(t) => t.call_tool(),
             TreesitterTools::FindUsages(t) => t.call_tool(),
             TreesitterTools::FormatReferences(t) => t.call_tool(),
+            TreesitterTools::MinimalEditContext(t) => t.call_tool(),
             TreesitterTools::SymbolAtLine(t) => t.call_tool(),
             TreesitterTools::ParseDiff(t) => t.call_tool(),
             TreesitterTools::AffectedByDiff(t) => t.call_tool(),
