@@ -5,6 +5,7 @@ pub mod dependencies;
 pub mod diff;
 pub mod file_shape;
 pub mod find_usages;
+pub mod format_diagnostics;
 pub mod format_references;
 pub mod minimal_edit_context;
 pub mod path_utils;

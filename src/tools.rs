@@ -8,8 +8,8 @@ use rust_mcp_sdk::schema::{schema_utils::CallToolError, CallToolResult};
 use rust_mcp_sdk::tool_box;
 
 use crate::analysis::{
-    call_graph, code_map, diff, find_usages, format_references, minimal_edit_context,
-    query_pattern, symbol_at_line, view_code,
+    call_graph, code_map, diff, find_usages, format_diagnostics, format_references,
+    minimal_edit_context, query_pattern, symbol_at_line, view_code,
 };
 
 // Helper function for serde default
@@ -147,6 +147,56 @@ pub struct FormatReferences {
     /// Number of context lines around each reference (default: 3)
     #[serde(default)]
     pub context_lines: Option<u32>,
+    /// Maximum tokens for output (tiktoken counted)
+    #[serde(default)]
+    pub max_tokens: Option<u32>,
+}
+
+#[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
+pub struct DiagnosticItem {
+    /// Source file path. Use this or `uri`.
+    #[serde(default)]
+    pub file: Option<String>,
+    /// Alternative source file path field accepted by the analysis module.
+    #[serde(default)]
+    pub file_path: Option<String>,
+    /// LSP file URI, e.g. file:///repo/src/lib.rs. Use this or `file`.
+    #[serde(default)]
+    pub uri: Option<String>,
+    /// 1-based line for compact non-LSP locations.
+    #[serde(default)]
+    pub line: Option<u32>,
+    /// 1-based column for compact non-LSP locations.
+    #[serde(default)]
+    pub col: Option<u32>,
+    /// 1-based column alias.
+    #[serde(default)]
+    pub column: Option<u32>,
+    /// LSP 0-based range. When provided, line/col are ignored.
+    #[serde(default)]
+    pub range: Option<LspRange>,
+    /// LSP diagnostic severity: 1 error, 2 warning, 3 info, 4 hint.
+    #[serde(default)]
+    pub severity: Option<u32>,
+    /// Diagnostic message.
+    pub message: String,
+    /// Diagnostic source, such as rustc or typescript.
+    #[serde(default)]
+    pub source: Option<String>,
+    /// Diagnostic code as a compact string/number.
+    #[serde(default)]
+    pub code: Option<String>,
+}
+
+/// Format LSP diagnostics into compact rows with structural owners
+#[mcp_tool(
+    name = "format_diagnostics",
+    description = "Format LSP-provided diagnostics into compact rows with structural owner context. Input accepts `diagnostics` rows using either 1-based `{file,line,col}` / `{file_path,line,column}` or LSP `{uri,range:{start:{line,character}}}` plus `severity`, `message`, optional `source`, and optional `code`. Output keys: `h`, `d`; rows are `severity|file|line|col|owner|source|code|message`. USE WHEN: ✅ You already have LSP diagnostics and need a token-efficient grouped summary ✅ You want to know which function/class owns each diagnostic. DON'T USE: ❌ You need to run diagnostics itself → use LSP/compiler/test tools."
+)]
+#[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
+pub struct FormatDiagnostics {
+    /// LSP or compact diagnostics
+    pub diagnostics: Vec<DiagnosticItem>,
     /// Maximum tokens for output (tiktoken counted)
     #[serde(default)]
     pub max_tokens: Option<u32>,
@@ -311,6 +361,17 @@ impl FormatReferences {
     }
 }
 
+impl FormatDiagnostics {
+    pub fn call_tool(&self) -> Result<CallToolResult, CallToolError> {
+        let args = serde_json::json!({
+            "diagnostics": self.diagnostics,
+            "max_tokens": self.max_tokens
+        });
+
+        format_diagnostics::execute(&args).map_err(CallToolError::new)
+    }
+}
+
 impl MinimalEditContext {
     pub fn call_tool(&self) -> Result<CallToolResult, CallToolError> {
         let args = serde_json::json!({
@@ -465,6 +526,7 @@ tool_box!(
         CodeMap,
         FindUsages,
         FormatReferences,
+        FormatDiagnostics,
         MinimalEditContext,
         CallGraph,
         SymbolAtLine,

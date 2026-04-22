@@ -62,11 +62,12 @@ only as a last resort.
   from imported files
 - `call_graph` returns compact best-effort callers/callees with depth and
   budget enforcement
+- `format_diagnostics` accepts LSP diagnostics and emits compact rows with
+  structural owners
 
 ### Remaining Shortcomings
 
-1. Later LSP bridge phases still need definition-location and diagnostic
-   formatting support.
+1. Later LSP bridge work still needs definition-location support.
 2. Token-efficiency proof still needs to be added for the remaining roadmap
    items.
 
@@ -90,6 +91,8 @@ Completed in the current worktree:
 - **Workstream 5 (phase 1)**: `format_references` accepts LSP-provided
   reference locations and emits the same compact usage schema as
   `find_usages`, with `conf=high`.
+- **Workstream 5 (phase 3)**: `format_diagnostics` accepts LSP-provided
+  diagnostics and emits compact severity/file/owner rows.
 - **Workstream 6 (initial)**: `minimal_edit_context` returns target symbol
   code plus same-file callee signatures, same-file referenced types, relevant
   imports, and direct project-local dependency signatures from imported files,
@@ -105,9 +108,8 @@ Completed in the current worktree:
 
 Next recommended slice:
 
-- Continue Workstream 5 with LSP definition-location or diagnostics
-  formatting, or add broader token-efficiency proof for remaining roadmap
-  items.
+- Continue Workstream 5 with LSP definition-location support, or add broader
+  token-efficiency proof for remaining roadmap items.
 
 ## Success Criteria
 
@@ -345,7 +347,7 @@ Acceptance criteria:
 - existing hardcoded skips still work (they're covered by `.gitignore` in
   most projects)
 
-### 5. LSP Integration Points [Phase 1 complete in current worktree]
+### 5. LSP Integration Points [Phase 1 and 3 complete in current worktree]
 
 Goal: let agents combine LSP precision with MCP compactness.
 
@@ -374,6 +376,15 @@ Original task:
   dependency type, avoiding the heuristic entirely.
 
 #### Phase 3: Compact LSP diagnostics
+
+- Status: completed on 2026-04-22 in the current worktree.
+- Added `format_diagnostics`, which accepts either compact 1-based
+  `{file,line,col}` / `{file_path,line,column}` diagnostics or LSP
+  `{uri,range:{start:{line,character}}}` diagnostics.
+- Output uses compact rows:
+  `severity|file|line|col|owner|source|code|message`.
+- Tests cover LSP URI/range diagnostics, compact locations, severity
+  ordering, structural owner context, and token budget truncation.
 
 - Accept LSP `textDocument/diagnostics` and return a compact, token-
   efficient summary grouped by severity and file, with structural context

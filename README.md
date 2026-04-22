@@ -106,6 +106,7 @@ Choose the right tool for your task:
 - **Where is symbol X used?** → `find_usages` (syntax-aware search with usage types)
 - **What calls this / what does this call?** → `call_graph` (compact best-effort callers/callees)
 - **Already have LSP references?** → `format_references` (compact context for precise locations)
+- **Already have LSP diagnostics?** → `format_diagnostics` (compact diagnostics with owners)
 - **Complex pattern matching?** → `query_pattern` (advanced, requires tree-sitter syntax)
 - **What function is at line N?** → `symbol_at_line` (symbol info with scope hierarchy)
 - **What data is available in a template?** → `template_context` (Askama template variables)
@@ -130,6 +131,7 @@ Choose the right tool for your task:
 | `call_graph` | Single symbol | Low-Medium | Medium | Best-effort callers/callees |
 | `find_usages` | Multi-file | Medium-High | Medium | Refactoring, impact analysis |
 | `format_references` | LSP locations | Low-Medium | Fast | Compact context for precise LSP references |
+| `format_diagnostics` | LSP diagnostics | Low-Medium | Fast | Compact diagnostics with owners |
 | `affected_by_diff` | Multi-file | Medium-High | Medium | Post-change validation |
 | `parse_diff` | Single file | Low-Medium | Fast | Verify changes |
 | `symbol_at_line` | Single file | Low | Fast | Error debugging, scope lookup |
@@ -148,6 +150,7 @@ These tools provide strong guarantees based on AST structure:
 These tools use syntax-aware matching (best-effort, not compiler-grade):
 - `find_usages`: identifier matching via tree-sitter, may match homonyms in different scopes
 - `format_references`: trusts LSP-provided locations for precision, then adds syntax-aware context
+- `format_diagnostics`: trusts LSP-provided diagnostics, then adds syntax-aware owner context
 - `minimal_edit_context`: same-file relevance plus direct project-local dependency signatures from imports
 - `call_graph`: project-local call extraction, same-file definitions preferred, not compiler-grade resolution
 - `affected_by_diff`: relies on `find_usages` for impact analysis
@@ -455,7 +458,7 @@ Format precise LSP reference locations into the same compact schema as `find_usa
 
 **Don't Use When:**
 - ❌ You need MCP to discover references itself → use `find_usages`
-- ❌ You need compiler diagnostics grouped by severity → future `format_diagnostics`
+- ❌ You need compiler diagnostics grouped by severity → use `format_diagnostics`
 
 **Token Cost:** LOW-MEDIUM (scales with number of provided locations × context_lines)
 
@@ -488,7 +491,59 @@ Format precise LSP reference locations into the same compact schema as `find_usa
 
 ---
 
-### 6. minimal_edit_context
+### 6. format_diagnostics
+
+Format LSP diagnostics into compact rows with structural owner context.
+
+**Use When:**
+- ✅ You already have LSP `textDocument/diagnostics`
+- ✅ You need a token-efficient diagnostics summary
+- ✅ You want to know which function/class owns each diagnostic
+
+**Don't Use When:**
+- ❌ You need to run diagnostics itself → use LSP, compiler, or test tools
+- ❌ You need non-diagnostic references → use `find_usages` or `format_references`
+
+**Token Cost:** LOW-MEDIUM (scales with number of diagnostics)
+
+**Parameters**:
+- `diagnostics` (array, required): Either 1-based `{file,line,col}` / `{file_path,line,column}` rows or LSP `{uri,range:{start:{line,character}}}` rows with `severity`, `message`, optional `source`, and optional `code`
+- `max_tokens` (integer, optional, default: 2000): Hard output budget
+
+**Example**:
+```json
+{
+  "diagnostics": [
+    {
+      "uri": "file:///path/to/src/main.rs",
+      "range": {
+        "start": { "line": 41, "character": 14 }
+      },
+      "severity": 1,
+      "message": "cannot find value `foo` in this scope",
+      "source": "rustc",
+      "code": "E0425"
+    }
+  ],
+  "max_tokens": 2000
+}
+```
+
+**Returns**: Compact schema.
+
+- Output keys: `h` (header), `d` (diagnostic rows)
+- Diagnostic rows: `severity|file|line|col|owner|source|code|message`
+
+```json
+{
+  "h": "severity|file|line|col|owner|source|code|message",
+  "d": "error|src/main.rs|42|15|run|rustc|E0425|cannot find value `foo` in this scope"
+}
+```
+
+---
+
+### 7. minimal_edit_context
 
 Return the smallest useful context for editing one known symbol.
 
@@ -527,7 +582,7 @@ Return the smallest useful context for editing one known symbol.
 
 ---
 
-### 7. call_graph
+### 8. call_graph
 
 Return compact best-effort callers and callees for one function or method.
 
@@ -575,7 +630,7 @@ Return compact best-effort callers and callees for one function or method.
 
 ---
 
-### 8. symbol_at_line
+### 9. symbol_at_line
 
 Get symbol (function/class/method) at specific line with signature and scope chain.
 
@@ -623,7 +678,7 @@ Get symbol (function/class/method) at specific line with signature and scope cha
 
 ---
 
-### 9. parse_diff
+### 10. parse_diff
 
 Analyze structural changes vs git revision. Returns symbol-level diff (functions/classes added/removed/modified), not line-level.
 
@@ -675,7 +730,7 @@ Analyze structural changes vs git revision. Returns symbol-level diff (functions
 
 ---
 
-### 10. affected_by_diff
+### 11. affected_by_diff
 
 Find usages AFFECTED by your changes. Combines `parse_diff` + `find_usages` to show blast radius with risk levels.
 
@@ -730,7 +785,7 @@ Find usages AFFECTED by your changes. Combines `parse_diff` + `find_usages` to s
 
 ---
 
-### 11. query_pattern
+### 12. query_pattern
 
 Execute custom tree-sitter S-expression query for advanced AST pattern matching. Returns matches with code context for complex structural patterns.
 
@@ -798,7 +853,7 @@ Execute custom tree-sitter S-expression query for advanced AST pattern matching.
 
 ---
 
-### 12. template_context
+### 13. template_context
 
 Find Rust structs associated with an Askama template file. Returns struct names, fields, and types (resolved up to 3 levels deep) that are available as variables in the template.
 
