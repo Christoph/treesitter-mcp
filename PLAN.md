@@ -58,15 +58,16 @@ only as a last resort.
 - Type usage ranking separates same-name types by defining file
 - `view_code` dependency selection is AST-position-backed for Rust,
   TypeScript, Python, and Go, with no arbitrary dependency padding
+- `call_graph` returns compact best-effort callers/callees with depth and
+  budget enforcement
 
 ### Remaining Shortcomings
 
 1. `minimal_edit_context` currently resolves same-file deps only; project-local
    dependency signatures remain future hardening work.
-2. No `call_graph` tool exists yet.
-3. Later LSP bridge phases still need definition-location and diagnostic
+2. Later LSP bridge phases still need definition-location and diagnostic
    formatting support.
-4. Token-efficiency proof still needs to be added for the remaining roadmap
+3. Token-efficiency proof still needs to be added for the remaining roadmap
    items.
 
 ## Status Update
@@ -93,15 +94,19 @@ Completed in the current worktree:
   code plus same-file callee signatures, same-file referenced types, and
   relevant imports, with a 3x token-savings fixture versus focused
   `view_code`.
+- **Workstream 7 (initial)**: `call_graph` returns compact best-effort
+  caller/callee rows for depth 1, supports bounded depth traversal with a
+  visited set, and enforces token budgets.
 - **Workstream 8 (partial)**: adversarial fixtures now cover scope
   disambiguation, homonym suppression in `affected_by_diff`, ignored-file
   traversal, duplicate type ranking, AST-backed dependency extraction, and
-  LSP reference formatting, and focused edit-context reduction.
+  LSP reference formatting, focused edit-context reduction, and call-graph
+  traversal.
 
 Next recommended slice:
 
-- **Workstream 7**: add `call_graph` for callers/callees depth=1, or extend
-  Workstream 6 with project-local dependency signatures.
+- Extend Workstream 6 with project-local dependency signatures, or continue
+  Workstream 5 with LSP definition-location or diagnostics formatting.
 
 ## Success Criteria
 
@@ -123,7 +128,7 @@ The work in this plan is done when:
   format compactly)
 - [x] `minimal_edit_context` returns focused context at least 3x smaller than
   `view_code(focus_symbol=X)` on files with 10+ symbols
-- [ ] `call_graph` returns correct callers and callees for depth=1
+- [x] `call_graph` returns correct callers and callees for depth=1
 - [ ] token budgets remain within current rough envelopes for the remaining
   roadmap items
 
@@ -467,12 +472,23 @@ Acceptance criteria:
 - output includes enough context that an LLM can make a correct edit
   without reading the full file
 
-### 7. Call Graph Extraction
+### 7. Call Graph Extraction [Initial version complete in current worktree]
 
 Goal: answer "what calls this?" and "what does this call?" in one compact
 tool call, replacing multi-file reads and manual filtering.
 
 New tool: `call_graph`
+
+Status:
+
+- Initial version completed on 2026-04-22 in the current worktree.
+- Returns rows shaped as `direction|symbol|file|line|scope|depth`.
+- Resolves project-local definitions best-effort, preferring same-file
+  definitions.
+- Supports `direction=callers|callees|both`, `depth` up to 3, a visited set
+  for recursive graphs, and token budget truncation.
+- Tests cover depth-1 callers/callees, depth-2 transitive callees, and
+  recursive functions.
 
 Input:
 
@@ -489,8 +505,8 @@ Output:
 - `edges`: compact rows of call relationships
 
 ```
-h: "direction|symbol|file|line|scope"
-edges: "callee|validate|src/lib.rs|18|process\ncaller|main|src/main.rs|42|"
+h: "direction|symbol|file|line|scope|depth"
+edges: "callee|validate|src/lib.rs|18|process|1\ncaller|main|src/main.rs|42||1"
 ```
 
 Implementation:
@@ -551,9 +567,9 @@ Status:
 - Partial as of 2026-04-20.
 - Fixtures exist for scope qualification, homonym suppression in
   `affected_by_diff`, and ignored-file traversal.
-- Remaining work should add adversarial fixtures for type ranking,
-  dependency extraction, `minimal_edit_context`, `call_graph`, and LSP
-  bridge formatting.
+- Remaining work should add adversarial fixtures for any uncovered hardening
+  slices, especially project-local edit context and later LSP bridge
+  formatting.
 
 Add fixtures alongside each workstream, not as a separate evaluation
 framework:
@@ -600,7 +616,7 @@ Acceptance criteria:
 
 - `.gitignore`-aware traversal across all tools
 
-### Milestone 5: Precision Tools (Workstreams 6 + 7)
+### Milestone 5: Precision Tools (Workstreams 6 + 7) [Initial complete]
 
 - `minimal_edit_context` tool (depends on Workstreams 1 + 3)
 - `call_graph` tool (depends on Workstream 1)

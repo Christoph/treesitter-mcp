@@ -1,4 +1,5 @@
 pub mod askama;
+pub mod call_graph;
 pub mod code_map;
 pub mod dependencies;
 pub mod diff;

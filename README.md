@@ -104,6 +104,7 @@ Choose the right tool for your task:
 
 #### "I need to find something"
 - **Where is symbol X used?** → `find_usages` (syntax-aware search with usage types)
+- **What calls this / what does this call?** → `call_graph` (compact best-effort callers/callees)
 - **Already have LSP references?** → `format_references` (compact context for precise locations)
 - **Complex pattern matching?** → `query_pattern` (advanced, requires tree-sitter syntax)
 - **What function is at line N?** → `symbol_at_line` (symbol info with scope hierarchy)
@@ -126,6 +127,7 @@ Choose the right tool for your task:
 | `view_code` (full) | Single file | High | Fast | Deep understanding, multiple functions |
 | `view_code` (focused) | Single file | Medium | Fast | Editing specific function |
 | `minimal_edit_context` | Single symbol | Low | Fast | Focused edits with same-file deps |
+| `call_graph` | Single symbol | Low-Medium | Medium | Best-effort callers/callees |
 | `find_usages` | Multi-file | Medium-High | Medium | Refactoring, impact analysis |
 | `format_references` | LSP locations | Low-Medium | Fast | Compact context for precise LSP references |
 | `affected_by_diff` | Multi-file | Medium-High | Medium | Post-change validation |
@@ -147,6 +149,7 @@ These tools use syntax-aware matching (best-effort, not compiler-grade):
 - `find_usages`: identifier matching via tree-sitter, may match homonyms in different scopes
 - `format_references`: trusts LSP-provided locations for precision, then adds syntax-aware context
 - `minimal_edit_context`: same-file call/type/import relevance from AST and token matching
+- `call_graph`: project-local call extraction, same-file definitions preferred, not compiler-grade resolution
 - `affected_by_diff`: relies on `find_usages` for impact analysis
 - `code_map`: structural overview, scope-aware but not semantically resolved
 - `type_map`: type identification via AST, usage counts are approximate
@@ -524,7 +527,55 @@ Return the smallest useful context for editing one known symbol.
 
 ---
 
-### 7. symbol_at_line
+### 7. call_graph
+
+Return compact best-effort callers and callees for one function or method.
+
+**Use When:**
+- ✅ You need to know what calls a symbol
+- ✅ You need to know what the symbol calls
+- ✅ You want compact depth-1 navigation or impact context without manual multi-file reads
+
+**Don't Use When:**
+- ❌ You need compiler-grade resolution across imports, generics, traits, or overloads → use LSP when available
+- ❌ You are looking for non-call references → use `find_usages`
+
+**Token Cost:** LOW-MEDIUM
+
+**Parameters**:
+- `file_path` (string, required): Path to the source file containing the symbol
+- `symbol_name` (string, required): Function or method to analyze
+- `direction` (string, optional, default: `"both"`): `"callers"`, `"callees"`, or `"both"`
+- `depth` (integer, optional, default: 1, max: 3): Traversal depth
+- `max_tokens` (integer, optional, default: 2000): Hard output budget
+
+**Example**:
+```json
+{
+  "file_path": "/path/to/src/workflow.rs",
+  "symbol_name": "build_report",
+  "direction": "both",
+  "depth": 1,
+  "max_tokens": 2000
+}
+```
+
+**Returns**: Compact schema.
+
+- Output keys: `sym` (symbol), `h` (header), `edges` (edge rows)
+- Edge rows: `direction|symbol|file|line|scope|depth`
+
+```json
+{
+  "sym": "build_report",
+  "h": "direction|symbol|file|line|scope|depth",
+  "edges": "callee|normalize_input|src/workflow.rs|8||1\ncaller|render_page|src/workflow.rs|20||1"
+}
+```
+
+---
+
+### 8. symbol_at_line
 
 Get symbol (function/class/method) at specific line with signature and scope chain.
 
@@ -572,7 +623,7 @@ Get symbol (function/class/method) at specific line with signature and scope cha
 
 ---
 
-### 8. parse_diff
+### 9. parse_diff
 
 Analyze structural changes vs git revision. Returns symbol-level diff (functions/classes added/removed/modified), not line-level.
 
@@ -624,7 +675,7 @@ Analyze structural changes vs git revision. Returns symbol-level diff (functions
 
 ---
 
-### 9. affected_by_diff
+### 10. affected_by_diff
 
 Find usages AFFECTED by your changes. Combines `parse_diff` + `find_usages` to show blast radius with risk levels.
 
@@ -679,7 +730,7 @@ Find usages AFFECTED by your changes. Combines `parse_diff` + `find_usages` to s
 
 ---
 
-### 10. query_pattern
+### 11. query_pattern
 
 Execute custom tree-sitter S-expression query for advanced AST pattern matching. Returns matches with code context for complex structural patterns.
 
@@ -747,7 +798,7 @@ Execute custom tree-sitter S-expression query for advanced AST pattern matching.
 
 ---
 
-### 11. template_context
+### 12. template_context
 
 Find Rust structs associated with an Askama template file. Returns struct names, fields, and types (resolved up to 3 levels deep) that are available as variables in the template.
 

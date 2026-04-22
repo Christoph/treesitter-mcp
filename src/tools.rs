@@ -8,8 +8,8 @@ use rust_mcp_sdk::schema::{schema_utils::CallToolError, CallToolResult};
 use rust_mcp_sdk::tool_box;
 
 use crate::analysis::{
-    code_map, diff, find_usages, format_references, minimal_edit_context, query_pattern,
-    symbol_at_line, view_code,
+    call_graph, code_map, diff, find_usages, format_references, minimal_edit_context,
+    query_pattern, symbol_at_line, view_code,
 };
 
 // Helper function for serde default
@@ -168,6 +168,28 @@ pub struct MinimalEditContext {
     pub max_tokens: Option<u32>,
 }
 
+/// Return compact callers/callees for one symbol
+#[mcp_tool(
+    name = "call_graph",
+    description = "Return a compact best-effort call graph for one function or method. Output keys: `sym`, `h`, `edges`; rows are `direction|symbol|file|line|scope|depth` where direction is `caller` or `callee`. USE WHEN: ✅ You need to know what calls a symbol and what it calls ✅ You want depth=1 impact/navigation context without manual multi-file reads. DON'T USE: ❌ You need compiler-grade name resolution across imports/generics/traits → use LSP references/definitions when available. TOKEN COST: LOW-MEDIUM. Current resolution is syntax-aware and project-local, with same-file definitions preferred."
+)]
+#[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
+pub struct CallGraph {
+    /// Path to the source file containing the symbol
+    pub file_path: String,
+    /// Function or method name to analyze
+    pub symbol_name: String,
+    /// Direction: "callers", "callees", or "both" (default: "both")
+    #[serde(default)]
+    pub direction: Option<String>,
+    /// Traversal depth (default: 1, max: 3)
+    #[serde(default)]
+    pub depth: Option<u32>,
+    /// Maximum tokens for output (default: 2000)
+    #[serde(default)]
+    pub max_tokens: Option<u32>,
+}
+
 /// Get symbol information at a specific line with signature and scope chain
 #[mcp_tool(
     name = "symbol_at_line",
@@ -301,6 +323,20 @@ impl MinimalEditContext {
     }
 }
 
+impl CallGraph {
+    pub fn call_tool(&self) -> Result<CallToolResult, CallToolError> {
+        let args = serde_json::json!({
+            "file_path": self.file_path,
+            "symbol_name": self.symbol_name,
+            "direction": self.direction,
+            "depth": self.depth,
+            "max_tokens": self.max_tokens
+        });
+
+        call_graph::execute(&args).map_err(CallToolError::new)
+    }
+}
+
 impl SymbolAtLine {
     pub fn call_tool(&self) -> Result<CallToolResult, CallToolError> {
         let args = serde_json::json!({
@@ -430,6 +466,7 @@ tool_box!(
         FindUsages,
         FormatReferences,
         MinimalEditContext,
+        CallGraph,
         SymbolAtLine,
         ParseDiff,
         AffectedByDiff,
