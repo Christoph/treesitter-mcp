@@ -210,7 +210,7 @@ fn search_rust_files_for_template(
         let path = entry.path();
         if path.extension().and_then(|s| s.to_str()) == Some("rs") {
             if let Ok(mut file_matches) =
-                extract_template_structs_from_file(path, target_template_path)
+                extract_template_structs_from_file(path, target_template_path, project_root)
             {
                 matches.append(&mut file_matches);
             }
@@ -224,16 +224,13 @@ fn search_rust_files_for_template(
 fn extract_template_structs_from_file(
     file_path: &Path,
     target_template_path: &str,
+    project_root: &Path,
 ) -> Result<Vec<TemplateStructMatch>> {
     let source_code = std::fs::read_to_string(file_path)?;
     let tree = parse_code(&source_code, Language::Rust)?;
 
     let root = tree.root_node();
     let mut matches = Vec::new();
-
-    // Get project root - walk up to find Cargo.toml
-    let project_root =
-        find_project_root(file_path).unwrap_or_else(|| file_path.parent().unwrap().to_path_buf());
 
     // Find all struct items
     find_template_structs_recursive(
@@ -242,7 +239,7 @@ fn extract_template_structs_from_file(
         target_template_path,
         file_path,
         &mut matches,
-        &project_root,
+        project_root,
     )?;
 
     Ok(matches)
@@ -514,18 +511,6 @@ fn is_primitive_or_std_type(type_name: &str) -> bool {
             | "Cell"
             | "RefCell"
     )
-}
-
-/// Find project root by walking up to find Cargo.toml
-fn find_project_root(start: &Path) -> Option<PathBuf> {
-    let mut current = start;
-    while let Some(parent) = current.parent() {
-        if parent.join("Cargo.toml").exists() {
-            return Some(parent.to_path_buf());
-        }
-        current = parent;
-    }
-    None
 }
 
 /// Find a type definition in the project

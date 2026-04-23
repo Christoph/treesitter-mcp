@@ -6,6 +6,8 @@
 mod common;
 
 use serde_json::json;
+use std::fs;
+use tempfile::tempdir;
 
 // ============================================================================
 // file_shape vs parse_file (documented: 10-20% of parse_file)
@@ -407,4 +409,216 @@ fn test_find_usages_uses_tiktoken_for_token_counting() {
         max_tokens,
         text
     );
+}
+
+#[test]
+fn test_format_references_uses_tiktoken_for_token_counting() {
+    let dir = tempdir().unwrap();
+    let file_path = dir.path().join("lib.rs");
+    fs::write(
+        &file_path,
+        r#"
+pub fn target(value: i32) -> i32 {
+    value + 1
+}
+
+pub fn caller_one() -> i32 {
+    target(1)
+}
+
+pub fn caller_two() -> i32 {
+    target(2)
+}
+
+pub fn caller_three() -> i32 {
+    target(3)
+}
+"#,
+    )
+    .unwrap();
+
+    let max_tokens = 80;
+    let result = treesitter_mcp::analysis::format_references::execute(&json!({
+        "symbol": "target",
+        "references": [
+            {"file": file_path.to_str().unwrap(), "line": 7, "col": 5},
+            {"file": file_path.to_str().unwrap(), "line": 11, "col": 5},
+            {"file": file_path.to_str().unwrap(), "line": 15, "col": 5}
+        ],
+        "context_lines": 1,
+        "max_tokens": max_tokens
+    }))
+    .unwrap();
+    let text = common::get_result_text(&result);
+
+    assert_tiktoken_budget(&text, max_tokens, "format_references");
+}
+
+#[test]
+fn test_format_diagnostics_uses_tiktoken_for_token_counting() {
+    let dir = tempdir().unwrap();
+    let file_path = dir.path().join("lib.ts");
+    fs::write(
+        &file_path,
+        r#"
+export function buildReport(value: string): string {
+  const first = missingOne;
+  const second = missingTwo;
+  const third = missingThree;
+  return value;
+}
+"#,
+    )
+    .unwrap();
+
+    let diagnostics: Vec<_> = (0..12)
+        .map(|idx| {
+            json!({
+                "file": file_path.to_str().unwrap(),
+                "line": 3,
+                "col": 17,
+                "severity": 1,
+                "source": "typescript",
+                "code": "2304",
+                "message": format!("Cannot find name 'missingValue{idx}' in this scope with repeated details")
+            })
+        })
+        .collect();
+
+    let max_tokens = 100;
+    let result = treesitter_mcp::analysis::format_diagnostics::execute(&json!({
+        "diagnostics": diagnostics,
+        "max_tokens": max_tokens
+    }))
+    .unwrap();
+    let text = common::get_result_text(&result);
+
+    assert_tiktoken_budget(&text, max_tokens, "format_diagnostics");
+}
+
+#[test]
+fn test_call_graph_uses_tiktoken_for_token_counting() {
+    let dir = tempdir().unwrap();
+    fs::write(
+        dir.path().join("Cargo.toml"),
+        "[package]\nname='token_fixture'\nversion='0.1.0'\n",
+    )
+    .unwrap();
+    let src = dir.path().join("src");
+    fs::create_dir(&src).unwrap();
+    let file_path = src.join("lib.rs");
+    fs::write(
+        &file_path,
+        r#"
+pub fn leaf_one() -> u32 { 1 }
+pub fn leaf_two() -> u32 { 2 }
+pub fn leaf_three() -> u32 { 3 }
+pub fn leaf_four() -> u32 { 4 }
+pub fn leaf_five() -> u32 { 5 }
+
+pub fn target() -> u32 {
+    leaf_one() + leaf_two() + leaf_three() + leaf_four() + leaf_five()
+}
+
+pub fn caller_one() -> u32 { target() }
+pub fn caller_two() -> u32 { target() }
+pub fn caller_three() -> u32 { target() }
+"#,
+    )
+    .unwrap();
+
+    let max_tokens = 90;
+    let result = treesitter_mcp::analysis::call_graph::execute(&json!({
+        "file_path": file_path.to_str().unwrap(),
+        "symbol_name": "target",
+        "direction": "both",
+        "depth": 1,
+        "max_tokens": max_tokens
+    }))
+    .unwrap();
+    let text = common::get_result_text(&result);
+
+    assert_tiktoken_budget(&text, max_tokens, "call_graph");
+}
+
+#[test]
+fn test_view_code_definition_location_keeps_dependency_context_compact() {
+    let dir = tempdir().unwrap();
+    let types_path = dir.path().join("types.ts");
+    fs::write(
+        &types_path,
+        r#"
+export interface Alpha { value: string; }
+export interface Beta { value: string; }
+export interface Gamma { value: string; }
+export interface Delta { value: string; }
+export interface Epsilon { value: string; }
+"#,
+    )
+    .unwrap();
+
+    let main_path = dir.path().join("main.ts");
+    fs::write(
+        &main_path,
+        r#"
+import type { Alpha, Beta, Gamma, Delta, Epsilon } from "./types";
+
+export function makeValue(): unknown {
+  return {};
+}
+"#,
+    )
+    .unwrap();
+
+    let broad_result = treesitter_mcp::analysis::view_code::execute(&json!({
+        "file_path": main_path.to_str().unwrap(),
+        "detail": "signatures",
+        "include_deps": true,
+        "max_tokens": 4000
+    }))
+    .unwrap();
+    let broad_text = common::get_result_text(&broad_result);
+
+    let exact_result = treesitter_mcp::analysis::view_code::execute(&json!({
+        "file_path": main_path.to_str().unwrap(),
+        "detail": "signatures",
+        "include_deps": true,
+        "definition_location": {
+            "file": types_path.to_str().unwrap(),
+            "line": 4,
+            "col": 18
+        },
+        "max_tokens": 4000
+    }))
+    .unwrap();
+    let exact_text = common::get_result_text(&exact_result);
+    let exact_json: serde_json::Value = serde_json::from_str(&exact_text).unwrap();
+    let dep_rows = exact_json["deps"]
+        .as_object()
+        .unwrap()
+        .values()
+        .filter_map(serde_json::Value::as_str)
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(dep_rows.contains("Gamma|4|"));
+    assert!(!dep_rows.contains("Alpha|"));
+    assert!(!dep_rows.contains("Beta|"));
+    assert!(
+        tiktoken_count(&exact_text) < tiktoken_count(&broad_text),
+        "definition_location should be more compact than broad dependency inference"
+    );
+}
+
+fn assert_tiktoken_budget(text: &str, max_tokens: usize, context: &str) {
+    let actual_tokens = tiktoken_count(text);
+    assert!(
+        actual_tokens <= max_tokens,
+        "{context} should respect tiktoken token budget: {actual_tokens} > {max_tokens}. Output was: {text}"
+    );
+}
+
+fn tiktoken_count(text: &str) -> usize {
+    let bpe = tiktoken_rs::cl100k_base().unwrap();
+    bpe.encode_with_special_tokens(text).len()
 }

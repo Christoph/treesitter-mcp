@@ -1,5 +1,32 @@
 # Tree-sitter MCP Server
 
+![Token efficiency comparison: MCP vs raw file reading](docs/token-efficiency-comparison.png)
+
+## Why Use This MCP
+
+- **Focused edits are about 5-6x smaller** than reading the raw source file.
+- **Call graph navigation is about 24x smaller** than reading the source file to trace callers/callees manually.
+- **Repo search and directory overview are about 47-73x smaller** than concatenating matching project files.
+- **The comparison uses real tool output** from `target/debug/treesitter-mcp` over JSON-RPC stdio, not hand-estimated examples.
+- **Token counts use `tiktoken_rs::cl100k_base()`** for both raw baselines and MCP responses.
+
+## Token Efficiency Comparison
+
+Measured on this repository after the plan-completion build on 2026-04-22.
+The standard baseline is raw shell/file reading (`cat` or `find ... -exec cat`).
+The MCP side is the compact response returned by the named MCP tool.
+
+| Standard tool/action | MCP tool | Raw tokens | MCP tokens | Saved tokens | Saved | Smaller |
+|---|---|---:|---:|---:|---:|---:|
+| `cat src/analysis/view_code.rs` | `view_code(detail="signatures")` | 9,516 | 1,992 | 7,524 | 79.1% | 4.8x |
+| `cat src/analysis/view_code.rs` | `minimal_edit_context(symbol_name="execute")` | 9,516 | 1,646 | 7,870 | 82.7% | 5.8x |
+| `cat src/analysis/view_code.rs` | `call_graph(symbol_name="execute")` | 9,516 | 390 | 9,126 | 95.9% | 24.4x |
+| `cat src/analysis/*.rs` | `find_usages(symbol="parse_code")` | 93,066 | 1,280 | 91,786 | 98.6% | 72.7x |
+| `cat src/analysis/*.rs` | `code_map(path="src/analysis")` | 93,066 | 1,979 | 91,087 | 97.9% | 47.0x |
+| `find src -name '*.rs' -exec cat` | `code_map(path="src", detail="minimal")` | 116,094 | 1,905 | 114,189 | 98.4% | 60.9x |
+
+Saved tokens = raw tokens - MCP tokens. Percent saved = `1 - MCP/raw`.
+
 ## Overview
 
 Tree-sitter MCP Server exposes powerful code analysis tools through the MCP protocol, allowing AI assistants to:
@@ -100,9 +127,13 @@ Choose the right tool for your task:
 - **Know the file, need overview?** → `view_code` with `detail="signatures"` (signatures only)
 - **Know the file, need full details?** → `view_code` with `detail="full"` (complete code)
 - **Know the specific function?** → `view_code` with `focus_symbol` (focused view, optimized tokens)
+- **Editing one known symbol?** → `minimal_edit_context` (smallest useful edit context)
 
 #### "I need to find something"
-- **Where is symbol X used?** → `find_usages` (semantic search with usage types)
+- **Where is symbol X used?** → `find_usages` (syntax-aware search with usage types)
+- **What calls this / what does this call?** → `call_graph` (compact best-effort callers/callees)
+- **Already have LSP references?** → `format_references` (compact context for precise locations)
+- **Already have LSP diagnostics?** → `format_diagnostics` (compact diagnostics with owners)
 - **Complex pattern matching?** → `query_pattern` (advanced, requires tree-sitter syntax)
 - **What function is at line N?** → `symbol_at_line` (symbol info with scope hierarchy)
 - **What data is available in a template?** → `template_context` (Askama template variables)
@@ -123,12 +154,37 @@ Choose the right tool for your task:
 | `view_code` (signatures) | Single file | Low | Fast | Quick overview, API understanding |
 | `view_code` (full) | Single file | High | Fast | Deep understanding, multiple functions |
 | `view_code` (focused) | Single file | Medium | Fast | Editing specific function |
+| `minimal_edit_context` | Single symbol | Low | Fast | Focused edits with direct deps |
+| `call_graph` | Single symbol | Low-Medium | Medium | Best-effort callers/callees |
 | `find_usages` | Multi-file | Medium-High | Medium | Refactoring, impact analysis |
+| `format_references` | LSP locations | Low-Medium | Fast | Compact context for precise LSP references |
+| `format_diagnostics` | LSP diagnostics | Low-Medium | Fast | Compact diagnostics with owners |
 | `affected_by_diff` | Multi-file | Medium-High | Medium | Post-change validation |
 | `parse_diff` | Single file | Low-Medium | Fast | Verify changes |
 | `symbol_at_line` | Single file | Low | Fast | Error debugging, scope lookup |
 | `query_pattern` | Single file | Medium | Medium | Complex patterns (advanced) |
 | `template_context` | Single file | Low-Medium | Fast | Askama template editing |
+
+### Precision vs. Heuristic
+
+These tools provide strong guarantees based on AST structure:
+- `view_code`: exact code extraction from parsed AST
+- `parse_diff`: structural diff between file revisions
+- `query_pattern`: precise tree-sitter AST queries
+- `symbol_at_line`: scope chain from AST traversal
+- `template_context`: Askama struct resolution
+
+These tools use syntax-aware matching (best-effort, not compiler-grade):
+- `find_usages`: identifier matching via tree-sitter, may match homonyms in different scopes
+- `format_references`: trusts LSP-provided locations for precision, then adds syntax-aware context
+- `format_diagnostics`: trusts LSP-provided diagnostics, then adds syntax-aware owner context
+- `minimal_edit_context`: same-file relevance plus direct project-local dependency signatures from imports
+- `call_graph`: project-local call extraction, same-file definitions preferred, not compiler-grade resolution
+- `affected_by_diff`: relies on `find_usages` for impact analysis
+- `code_map`: structural overview, scope-aware but not semantically resolved
+- `type_map`: type identification via AST, usage counts are approximate
+
+For compiler-grade symbol resolution (go-to-definition, precise find-references), use an LSP server alongside this MCP server.
 
 ### Common Workflow Patterns
 
@@ -253,6 +309,8 @@ View a source file with flexible detail levels and automatic type inclusion from
   - `"full"`: Complete implementation code
 - `focus_symbol` (string, optional): Focus on ONE symbol, show full code only for it
   - When set, returns full code for this symbol + signatures for rest - 3x cheaper
+- `definition_location` (object, optional): LSP `textDocument/definition` result or compact
+  `{file,line,col}` location used to include the exact dependency type from that definition
 
 **Auto-Includes**: All struct/class/interface definitions from project dependencies (not external libs)
 
@@ -367,7 +425,7 @@ Generate hierarchical map of a DIRECTORY (not single file). Returns structure ov
 
 ### 4. find_usages
 
-Find ALL usages of a symbol (function, variable, class, type) across files. Semantic search, not text search.
+Find ALL usages of a symbol (function, variable, class, type) across files. Syntax-aware search, not text search.
 
 **Use When:**
 - ✅ Refactoring: need to see all places that call a function
@@ -411,14 +469,197 @@ Find ALL usages of a symbol (function, variable, class, type) across files. Sema
 ```json
 {
   "sym": "helper_fn",
-  "h": "file|line|col|type|context",
-  "u": "src/main.rs|42|15|call|let result = helper_fn();\nsrc/utils.rs|18|9|reference|helper_fn() + 10"
+  "h": "file|line|col|type|context|scope|conf|owner",
+  "u": "src/main.rs|42|15|call|let result = helper_fn();|main|high|\nsrc/utils.rs|18|9|reference|helper_fn() + 10|Utils::apply|medium|"
 }
 ```
 
 ---
 
-### 5. symbol_at_line
+### 5. format_references
+
+Format precise LSP reference locations into the same compact schema as `find_usages`.
+
+**Use When:**
+- ✅ You already called LSP `textDocument/references`
+- ✅ You want compact context, scope, usage type, and owner hints around precise references
+- ✅ You need `find_usages`-compatible rows with `conf=high`
+
+**Don't Use When:**
+- ❌ You need MCP to discover references itself → use `find_usages`
+- ❌ You need compiler diagnostics grouped by severity → use `format_diagnostics`
+
+**Token Cost:** LOW-MEDIUM (scales with number of provided locations × context_lines)
+
+**Parameters**:
+- `symbol` (string, required): Symbol name these locations resolve to
+- `references` (array, required): Either 1-based `{file,line,col}` / `{file_path,line,column}` rows or LSP `{uri,range:{start:{line,character}}}` rows
+- `context_lines` (integer, optional, default: 3): Lines of context around each reference
+- `max_tokens` (integer, optional): Hard output budget
+
+**Example**:
+```json
+{
+  "symbol": "helper_fn",
+  "references": [
+    {
+      "uri": "file:///path/to/src/main.rs",
+      "range": {
+        "start": { "line": 41, "character": 14 }
+      }
+    }
+  ],
+  "context_lines": 1
+}
+```
+
+**Returns**: Compact schema identical to `find_usages`.
+
+- Output keys: `sym` (symbol), `h` (header), `u` (usage rows)
+- `conf` is `high` because locations are assumed to come from precise LSP resolution
+
+---
+
+### 6. format_diagnostics
+
+Format LSP diagnostics into compact rows with structural owner context.
+
+**Use When:**
+- ✅ You already have LSP `textDocument/diagnostics`
+- ✅ You need a token-efficient diagnostics summary
+- ✅ You want to know which function/class owns each diagnostic
+
+**Don't Use When:**
+- ❌ You need to run diagnostics itself → use LSP, compiler, or test tools
+- ❌ You need non-diagnostic references → use `find_usages` or `format_references`
+
+**Token Cost:** LOW-MEDIUM (scales with number of diagnostics)
+
+**Parameters**:
+- `diagnostics` (array, required): Either 1-based `{file,line,col}` / `{file_path,line,column}` rows or LSP `{uri,range:{start:{line,character}}}` rows with `severity`, `message`, optional `source`, and optional `code`
+- `max_tokens` (integer, optional, default: 2000): Hard output budget
+
+**Example**:
+```json
+{
+  "diagnostics": [
+    {
+      "uri": "file:///path/to/src/main.rs",
+      "range": {
+        "start": { "line": 41, "character": 14 }
+      },
+      "severity": 1,
+      "message": "cannot find value `foo` in this scope",
+      "source": "rustc",
+      "code": "E0425"
+    }
+  ],
+  "max_tokens": 2000
+}
+```
+
+**Returns**: Compact schema.
+
+- Output keys: `h` (header), `d` (diagnostic rows)
+- Diagnostic rows: `severity|file|line|col|owner|source|code|message`
+
+```json
+{
+  "h": "severity|file|line|col|owner|source|code|message",
+  "d": "error|src/main.rs|42|15|run|rustc|E0425|cannot find value `foo` in this scope"
+}
+```
+
+---
+
+### 7. minimal_edit_context
+
+Return the smallest useful context for editing one known symbol.
+
+**Use When:**
+- ✅ Editing one known function or method
+- ✅ You need the target code plus directly relevant callees, types, and imports
+- ✅ `view_code(focus_symbol=...)` is still too large for a file with many symbols
+
+**Don't Use When:**
+- ❌ Exploring an unfamiliar file → use `code_map` or `view_code`
+- ❌ You need full transitive project-wide dependency resolution → use `view_code(include_deps=true)` or LSP
+
+**Token Cost:** LOW (usually much smaller than focused `view_code` on large files)
+
+**Parameters**:
+- `file_path` (string, required): Path to the source file
+- `symbol_name` (string, required): Symbol to edit
+- `max_tokens` (integer, optional, default: 2000): Hard output budget
+
+**Example**:
+```json
+{
+  "file_path": "/path/to/src/workflow.ts",
+  "symbol_name": "buildSummary",
+  "max_tokens": 2000
+}
+```
+
+**Returns**: Compact schema.
+
+- `target`: full code row for the symbol (`name|line|sig|code`)
+- `deps`: optional same-file and direct project-local dependency signature rows (`kind|name|line|sig`)
+- `types`: optional same-file referenced type rows (`kind|name|line|sig`)
+- `imports`: optional relevant import rows (`line|text`)
+- `scope`: enclosing class/impl scope when available
+
+---
+
+### 8. call_graph
+
+Return compact best-effort callers and callees for one function or method.
+
+**Use When:**
+- ✅ You need to know what calls a symbol
+- ✅ You need to know what the symbol calls
+- ✅ You want compact depth-1 navigation or impact context without manual multi-file reads
+
+**Don't Use When:**
+- ❌ You need compiler-grade resolution across imports, generics, traits, or overloads → use LSP when available
+- ❌ You are looking for non-call references → use `find_usages`
+
+**Token Cost:** LOW-MEDIUM
+
+**Parameters**:
+- `file_path` (string, required): Path to the source file containing the symbol
+- `symbol_name` (string, required): Function or method to analyze
+- `direction` (string, optional, default: `"both"`): `"callers"`, `"callees"`, or `"both"`
+- `depth` (integer, optional, default: 1, max: 3): Traversal depth
+- `max_tokens` (integer, optional, default: 2000): Hard output budget
+
+**Example**:
+```json
+{
+  "file_path": "/path/to/src/workflow.rs",
+  "symbol_name": "build_report",
+  "direction": "both",
+  "depth": 1,
+  "max_tokens": 2000
+}
+```
+
+**Returns**: Compact schema.
+
+- Output keys: `sym` (symbol), `h` (header), `edges` (edge rows)
+- Edge rows: `direction|symbol|file|line|scope|depth`
+
+```json
+{
+  "sym": "build_report",
+  "h": "direction|symbol|file|line|scope|depth",
+  "edges": "callee|normalize_input|src/workflow.rs|8||1\ncaller|render_page|src/workflow.rs|20||1"
+}
+```
+
+---
+
+### 9. symbol_at_line
 
 Get symbol (function/class/method) at specific line with signature and scope chain.
 
@@ -466,7 +707,7 @@ Get symbol (function/class/method) at specific line with signature and scope cha
 
 ---
 
-### 6. parse_diff
+### 10. parse_diff
 
 Analyze structural changes vs git revision. Returns symbol-level diff (functions/classes added/removed/modified), not line-level.
 
@@ -518,7 +759,7 @@ Analyze structural changes vs git revision. Returns symbol-level diff (functions
 
 ---
 
-### 7. affected_by_diff
+### 11. affected_by_diff
 
 Find usages AFFECTED by your changes. Combines `parse_diff` + `find_usages` to show blast radius with risk levels.
 
@@ -573,7 +814,7 @@ Find usages AFFECTED by your changes. Combines `parse_diff` + `find_usages` to s
 
 ---
 
-### 8. query_pattern
+### 12. query_pattern
 
 Execute custom tree-sitter S-expression query for advanced AST pattern matching. Returns matches with code context for complex structural patterns.
 
@@ -641,7 +882,7 @@ Execute custom tree-sitter S-expression query for advanced AST pattern matching.
 
 ---
 
-### 9. template_context
+### 13. template_context
 
 Find Rust structs associated with an Askama template file. Returns struct names, fields, and types (resolved up to 3 levels deep) that are available as variables in the template.
 

@@ -1,9 +1,13 @@
 pub mod askama;
+pub mod call_graph;
 pub mod code_map;
 pub mod dependencies;
 pub mod diff;
 pub mod file_shape;
 pub mod find_usages;
+pub mod format_diagnostics;
+pub mod format_references;
+pub mod minimal_edit_context;
 pub mod path_utils;
 pub mod query_pattern;
 pub mod shape;

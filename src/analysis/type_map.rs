@@ -51,11 +51,11 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult> {
             b.usage_count
                 .cmp(&a.usage_count)
                 .then_with(|| a.name.cmp(&b.name))
+                .then_with(|| a.file.cmp(&b.file))
+                .then_with(|| a.line.cmp(&b.line))
         } else {
             // When not counting usages, sort by file path then line number for predictable output
-            a.file
-                .cmp(&b.file)
-                .then_with(|| a.line.cmp(&b.line))
+            a.file.cmp(&b.file).then_with(|| a.line.cmp(&b.line))
         }
     });
 

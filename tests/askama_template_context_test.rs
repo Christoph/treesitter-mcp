@@ -6,7 +6,6 @@ use serde_json::json;
 
 #[test]
 fn test_find_single_template_struct() {
-    // RED: This test will fail because askama module doesn't exist yet
     let fixture_path = PathBuf::from("tests/fixtures/askama_project");
     let template_path = fixture_path.join("templates/calculator.html");
 
@@ -21,180 +20,6 @@ fn test_find_single_template_struct() {
     // Debug: print what we found
     for s in &structs {
         eprintln!("Found struct: {} in {:?}", s.struct_name, s.file_path);
-    }
-
-    #[test]
-    fn test_nested_type_resolution_level_1() {
-        // RED: Test that nested types are resolved (level 1)
-        let fixture_path = PathBuf::from("tests/fixtures/askama_project");
-        let template_path = fixture_path.join("templates/admin/dashboard.html");
-
-        let result = treesitter_mcp::analysis::askama::find_askama_structs_for_template(
-            &template_path,
-            &fixture_path,
-        );
-
-        assert!(result.is_ok());
-        let structs = result.unwrap();
-        assert_eq!(structs.len(), 1);
-
-        let dashboard = &structs[0];
-        assert_eq!(dashboard.struct_name, "DashboardTemplate");
-
-        // Find the stats field
-        let stats_field = dashboard
-            .fields
-            .iter()
-            .find(|f| f.name == "stats")
-            .expect("Should have stats field");
-
-        assert_eq!(stats_field.field_type, "Statistics");
-
-        // Check nested definition is present
-        assert!(
-            stats_field.nested_definition.is_some(),
-            "Statistics type should be resolved"
-        );
-
-        let nested = stats_field.nested_definition.as_ref().unwrap();
-        assert_eq!(nested.type_name, "Statistics");
-        assert_eq!(nested.depth, 1);
-
-        // Should have: total_users, active_sessions, performance
-        assert_eq!(nested.fields.len(), 3);
-
-        let total_users = nested.fields.iter().find(|f| f.name == "total_users");
-        assert!(total_users.is_some());
-        assert_eq!(total_users.unwrap().field_type, "u32");
-    }
-
-    #[test]
-    fn test_nested_type_resolution_level_2() {
-        // RED: Test that nested types are resolved up to level 2
-        let fixture_path = PathBuf::from("tests/fixtures/askama_project");
-        let template_path = fixture_path.join("templates/admin/dashboard.html");
-
-        let result = treesitter_mcp::analysis::askama::find_askama_structs_for_template(
-            &template_path,
-            &fixture_path,
-        );
-
-        assert!(result.is_ok());
-        let structs = result.unwrap();
-        let dashboard = &structs[0];
-
-        // Navigate: DashboardTemplate -> stats: Statistics -> performance: PerformanceMetrics
-        let stats_field = dashboard.fields.iter().find(|f| f.name == "stats").unwrap();
-
-        let stats_nested = stats_field.nested_definition.as_ref().unwrap();
-
-        // Find performance field in Statistics
-        let performance_field = stats_nested
-            .fields
-            .iter()
-            .find(|f| f.name == "performance")
-            .expect("Statistics should have performance field");
-
-        assert_eq!(performance_field.field_type, "PerformanceMetrics");
-
-        // Check level 2 nested definition
-        assert!(
-            performance_field.nested_definition.is_some(),
-            "PerformanceMetrics should be resolved at level 2"
-        );
-
-        let perf_nested = performance_field.nested_definition.as_ref().unwrap();
-        assert_eq!(perf_nested.type_name, "PerformanceMetrics");
-        assert_eq!(perf_nested.depth, 2);
-
-        // Should have: avg_response_time_ms, error_rate, detailed_stats
-        assert_eq!(perf_nested.fields.len(), 3);
-    }
-
-    #[test]
-    fn test_nested_type_resolution_level_3() {
-        // RED: Test that nested types are resolved up to level 3 (max depth)
-        let fixture_path = PathBuf::from("tests/fixtures/askama_project");
-        let template_path = fixture_path.join("templates/admin/dashboard.html");
-
-        let result = treesitter_mcp::analysis::askama::find_askama_structs_for_template(
-            &template_path,
-            &fixture_path,
-        );
-
-        assert!(result.is_ok());
-        let structs = result.unwrap();
-        let dashboard = &structs[0];
-
-        // Navigate: DashboardTemplate -> stats -> performance -> detailed_stats
-        let stats = dashboard.fields.iter().find(|f| f.name == "stats").unwrap();
-        let stats_nested = stats.nested_definition.as_ref().unwrap();
-        let performance = stats_nested
-            .fields
-            .iter()
-            .find(|f| f.name == "performance")
-            .unwrap();
-        let perf_nested = performance.nested_definition.as_ref().unwrap();
-        let detailed = perf_nested
-            .fields
-            .iter()
-            .find(|f| f.name == "detailed_stats")
-            .unwrap();
-
-        assert_eq!(detailed.field_type, "DetailedStats");
-
-        // Check level 3 nested definition
-        assert!(
-            detailed.nested_definition.is_some(),
-            "DetailedStats should be resolved at level 3"
-        );
-
-        let detailed_nested = detailed.nested_definition.as_ref().unwrap();
-        assert_eq!(detailed_nested.type_name, "DetailedStats");
-        assert_eq!(detailed_nested.depth, 3);
-
-        // Should have: p95_latency, p99_latency, requests_per_second
-        assert_eq!(detailed_nested.fields.len(), 3);
-    }
-
-    #[test]
-    fn test_nested_type_resolution_max_depth() {
-        // RED: Test that we don't resolve beyond depth 3
-        let fixture_path = PathBuf::from("tests/fixtures/askama_project");
-        let template_path = fixture_path.join("templates/admin/dashboard.html");
-
-        let result = treesitter_mcp::analysis::askama::find_askama_structs_for_template(
-            &template_path,
-            &fixture_path,
-        );
-
-        assert!(result.is_ok());
-        let structs = result.unwrap();
-        let dashboard = &structs[0];
-
-        // Navigate to depth 3
-        let stats = dashboard.fields.iter().find(|f| f.name == "stats").unwrap();
-        let stats_nested = stats.nested_definition.as_ref().unwrap();
-        let performance = stats_nested
-            .fields
-            .iter()
-            .find(|f| f.name == "performance")
-            .unwrap();
-        let perf_nested = performance.nested_definition.as_ref().unwrap();
-        let detailed = perf_nested
-            .fields
-            .iter()
-            .find(|f| f.name == "detailed_stats")
-            .unwrap();
-        let detailed_nested = detailed.nested_definition.as_ref().unwrap();
-
-        // At depth 3, fields should NOT have further nested definitions
-        for field in &detailed_nested.fields {
-            assert!(
-                field.nested_definition.is_none(),
-                "Fields at depth 3 should not have nested definitions (max depth reached)"
-            );
-        }
     }
 
     // Should find exactly one struct: CalculatorTemplate
@@ -235,6 +60,183 @@ fn test_find_single_template_struct() {
 
     // Verify line number is reasonable (should be around line 4-6)
     assert!(template_struct.line > 0 && template_struct.line < 20);
+}
+
+#[test]
+fn test_nested_type_resolution_level_1() {
+    let fixture_path = PathBuf::from("tests/fixtures/askama_project");
+    let template_path = fixture_path.join("templates/admin/dashboard.html");
+
+    let result = treesitter_mcp::analysis::askama::find_askama_structs_for_template(
+        &template_path,
+        &fixture_path,
+    );
+
+    assert!(result.is_ok());
+    let structs = result.unwrap();
+    eprintln!("DEBUG: Found {} structs", structs.len());
+    for s in &structs {
+        eprintln!(
+            "  Struct: {} at {}:{}, {} fields",
+            s.struct_name,
+            s.file_path.display(),
+            s.line,
+            s.fields.len()
+        );
+        for f in &s.fields {
+            eprintln!(
+                "    Field: {} ({}) nested={:?}",
+                f.name,
+                f.field_type,
+                f.nested_definition.is_some()
+            );
+        }
+    }
+    assert_eq!(structs.len(), 1);
+
+    let dashboard = &structs[0];
+    assert_eq!(dashboard.struct_name, "DashboardTemplate");
+
+    let stats_field = dashboard
+        .fields
+        .iter()
+        .find(|f| f.name == "stats")
+        .expect("Should have stats field");
+
+    assert_eq!(stats_field.field_type, "Statistics");
+
+    assert!(
+        stats_field.nested_definition.is_some(),
+        "Statistics type should be resolved (got nested_definition={:?})",
+        stats_field.nested_definition
+    );
+
+    let nested = stats_field.nested_definition.as_ref().unwrap();
+    assert_eq!(nested.type_name, "Statistics");
+    assert_eq!(nested.depth, 1);
+
+    assert_eq!(nested.fields.len(), 3);
+
+    let total_users = nested.fields.iter().find(|f| f.name == "total_users");
+    assert!(total_users.is_some());
+    assert_eq!(total_users.unwrap().field_type, "u32");
+}
+
+#[test]
+fn test_nested_type_resolution_level_2() {
+    let fixture_path = PathBuf::from("tests/fixtures/askama_project");
+    let template_path = fixture_path.join("templates/admin/dashboard.html");
+
+    let result = treesitter_mcp::analysis::askama::find_askama_structs_for_template(
+        &template_path,
+        &fixture_path,
+    );
+
+    assert!(result.is_ok());
+    let structs = result.unwrap();
+    let dashboard = &structs[0];
+
+    let stats_field = dashboard.fields.iter().find(|f| f.name == "stats").unwrap();
+
+    let stats_nested = stats_field.nested_definition.as_ref().unwrap();
+
+    let performance_field = stats_nested
+        .fields
+        .iter()
+        .find(|f| f.name == "performance")
+        .expect("Statistics should have performance field");
+
+    assert_eq!(performance_field.field_type, "PerformanceMetrics");
+
+    assert!(
+        performance_field.nested_definition.is_some(),
+        "PerformanceMetrics should be resolved at level 2"
+    );
+
+    let perf_nested = performance_field.nested_definition.as_ref().unwrap();
+    assert_eq!(perf_nested.type_name, "PerformanceMetrics");
+    assert_eq!(perf_nested.depth, 2);
+
+    assert_eq!(perf_nested.fields.len(), 3);
+}
+
+#[test]
+fn test_nested_type_resolution_level_3() {
+    let fixture_path = PathBuf::from("tests/fixtures/askama_project");
+    let template_path = fixture_path.join("templates/admin/dashboard.html");
+
+    let result = treesitter_mcp::analysis::askama::find_askama_structs_for_template(
+        &template_path,
+        &fixture_path,
+    );
+
+    assert!(result.is_ok());
+    let structs = result.unwrap();
+    let dashboard = &structs[0];
+
+    let stats = dashboard.fields.iter().find(|f| f.name == "stats").unwrap();
+    let stats_nested = stats.nested_definition.as_ref().unwrap();
+    let performance = stats_nested
+        .fields
+        .iter()
+        .find(|f| f.name == "performance")
+        .unwrap();
+    let perf_nested = performance.nested_definition.as_ref().unwrap();
+    let detailed = perf_nested
+        .fields
+        .iter()
+        .find(|f| f.name == "detailed_stats")
+        .unwrap();
+
+    assert_eq!(detailed.field_type, "DetailedStats");
+
+    assert!(
+        detailed.nested_definition.is_some(),
+        "DetailedStats should be resolved at level 3"
+    );
+
+    let detailed_nested = detailed.nested_definition.as_ref().unwrap();
+    assert_eq!(detailed_nested.type_name, "DetailedStats");
+    assert_eq!(detailed_nested.depth, 3);
+
+    assert_eq!(detailed_nested.fields.len(), 3);
+}
+
+#[test]
+fn test_nested_type_resolution_max_depth() {
+    let fixture_path = PathBuf::from("tests/fixtures/askama_project");
+    let template_path = fixture_path.join("templates/admin/dashboard.html");
+
+    let result = treesitter_mcp::analysis::askama::find_askama_structs_for_template(
+        &template_path,
+        &fixture_path,
+    );
+
+    assert!(result.is_ok());
+    let structs = result.unwrap();
+    let dashboard = &structs[0];
+
+    let stats = dashboard.fields.iter().find(|f| f.name == "stats").unwrap();
+    let stats_nested = stats.nested_definition.as_ref().unwrap();
+    let performance = stats_nested
+        .fields
+        .iter()
+        .find(|f| f.name == "performance")
+        .unwrap();
+    let perf_nested = performance.nested_definition.as_ref().unwrap();
+    let detailed = perf_nested
+        .fields
+        .iter()
+        .find(|f| f.name == "detailed_stats")
+        .unwrap();
+    let detailed_nested = detailed.nested_definition.as_ref().unwrap();
+
+    for field in &detailed_nested.fields {
+        assert!(
+            field.nested_definition.is_none(),
+            "Fields at depth 3 should not have nested definitions (max depth reached)"
+        );
+    }
 }
 
 #[test]

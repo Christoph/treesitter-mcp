@@ -367,6 +367,82 @@ fn test_affected_by_diff_no_structural_changes() {
     assert_eq!(affected["affected"].as_str().unwrap_or(""), "");
 }
 
+#[test]
+fn test_affected_by_diff_deprioritizes_unrelated_same_name_symbols() {
+    let dir = setup_git_repo();
+
+    fs::write(
+        dir.path().join("math.rs"),
+        "pub fn add(x: i32, y: i32) -> i32 { x + y }\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join("calc.rs"),
+        r#"
+pub struct Calculator;
+
+impl Calculator {
+    pub fn add(&self, x: i32, y: i32) -> i32 { x + y }
+
+    pub fn compute(&self) -> i32 {
+        self.add(1, 2)
+    }
+}
+"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join("main.rs"),
+        r#"
+mod calc;
+mod math;
+
+fn main() {
+    let calculator = calc::Calculator;
+    let _ = math::add(1, 2);
+    let _ = calculator.compute();
+}
+"#,
+    )
+    .unwrap();
+
+    Command::new("git")
+        .args(["add", "."])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    Command::new("git")
+        .args(["commit", "-m", "initial"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    fs::write(
+        dir.path().join("math.rs"),
+        "pub fn add(x: i64, y: i64) -> i64 { x + y }\n",
+    )
+    .unwrap();
+
+    let arguments = json!({
+        "file_path": dir.path().join("math.rs").to_str().unwrap(),
+        "compare_to": "HEAD",
+        "scope": dir.path().to_str().unwrap()
+    });
+
+    let result = treesitter_mcp::analysis::diff::execute_affected_by_diff(&arguments).unwrap();
+    let text = common::get_result_text(&result);
+    let affected: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let rows = rows(&affected, "affected");
+
+    assert!(rows
+        .iter()
+        .any(|row| row[2] == "main.rs" && row[4] == "high"));
+    assert!(rows
+        .iter()
+        .any(|row| row[2] == "calc.rs" && row[4] == "low"));
+}
+
 // ============================================================================
 // Error Handling Tests
 // ============================================================================

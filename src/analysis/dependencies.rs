@@ -4,6 +4,7 @@
 //! Supports both module declarations and import statements.
 
 use std::collections::HashSet;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use tree_sitter::{Query, QueryCursor};
@@ -26,6 +27,7 @@ pub fn resolve_dependencies(
         Language::JavaScript | Language::TypeScript => {
             find_js_ts_dependencies(source, file_path, project_root)
         }
+        Language::Go => find_go_dependencies(source, file_path, project_root),
         _ => vec![],
     }
 }
@@ -361,4 +363,141 @@ fn resolve_js_ts_spec(spec: &str, dir: &Path, project_root: &Path) -> Option<Pat
     }
 
     None
+}
+
+/// For Go files, find imported package files that live in this project.
+///
+/// This resolves relative imports and module-local imports declared by the
+/// nearest `go.mod` at the project root. For a package import, all non-test
+/// `.go` files in that package directory are returned as dependency context.
+pub fn find_go_dependencies(source: &str, file_path: &Path, project_root: &Path) -> Vec<PathBuf> {
+    let mut deps = Vec::new();
+    let mut seen = HashSet::new();
+    let dir = file_path.parent().unwrap_or(project_root);
+
+    let language = tree_sitter_go::LANGUAGE.into();
+    let mut parser = tree_sitter::Parser::new();
+    if parser.set_language(&language).is_err() {
+        return deps;
+    }
+
+    let tree = match parser.parse(source, None) {
+        Some(t) => t,
+        None => return deps,
+    };
+
+    let query = match Query::new(
+        &language,
+        r#"
+        (import_spec path: (interpreted_string_literal) @import_path)
+        "#,
+    ) {
+        Ok(q) => q,
+        Err(_) => return deps,
+    };
+
+    let module_path = read_go_module_path(project_root);
+    let current_file = fs::canonicalize(file_path).unwrap_or_else(|_| file_path.to_path_buf());
+    let mut cursor = QueryCursor::new();
+
+    for match_ in cursor.matches(&query, tree.root_node(), source.as_bytes()) {
+        for capture in match_.captures {
+            let Ok(raw) = capture.node.utf8_text(source.as_bytes()) else {
+                continue;
+            };
+            let import_path = raw.trim_matches('"');
+
+            let Some(package_dir) = resolve_go_import(import_path, dir, project_root, &module_path)
+            else {
+                continue;
+            };
+
+            push_go_package_files(
+                &mut deps,
+                &mut seen,
+                &package_dir,
+                project_root,
+                &current_file,
+            );
+        }
+    }
+
+    deps
+}
+
+fn read_go_module_path(project_root: &Path) -> Option<String> {
+    let content = fs::read_to_string(project_root.join("go.mod")).ok()?;
+
+    content.lines().find_map(|line| {
+        let line = line.trim();
+        line.strip_prefix("module ")
+            .map(str::trim)
+            .filter(|module| !module.is_empty())
+            .map(ToOwned::to_owned)
+    })
+}
+
+fn resolve_go_import(
+    import_path: &str,
+    dir: &Path,
+    project_root: &Path,
+    module_path: &Option<String>,
+) -> Option<PathBuf> {
+    if import_path.starts_with('.') {
+        let candidate = dir.join(import_path);
+        if candidate.is_dir() && candidate.starts_with(project_root) {
+            return Some(candidate);
+        }
+        return None;
+    }
+
+    let module = module_path.as_deref()?;
+    let relative = if import_path == module {
+        ""
+    } else {
+        import_path.strip_prefix(&format!("{module}/"))?
+    };
+    let candidate = project_root.join(relative);
+
+    if candidate.is_dir() && candidate.starts_with(project_root) {
+        Some(candidate)
+    } else {
+        None
+    }
+}
+
+fn push_go_package_files(
+    deps: &mut Vec<PathBuf>,
+    seen: &mut HashSet<PathBuf>,
+    package_dir: &Path,
+    project_root: &Path,
+    current_file: &Path,
+) {
+    let Ok(entries) = fs::read_dir(package_dir) else {
+        return;
+    };
+
+    let mut files: Vec<PathBuf> = entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.extension().and_then(|ext| ext.to_str()) == Some("go")
+                && !path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.ends_with("_test.go"))
+                && path.starts_with(project_root)
+        })
+        .collect();
+    files.sort();
+
+    for file in files {
+        let canonical = fs::canonicalize(&file).unwrap_or_else(|_| file.clone());
+        if canonical == current_file {
+            continue;
+        }
+        if seen.insert(canonical) {
+            deps.push(file);
+        }
+    }
 }

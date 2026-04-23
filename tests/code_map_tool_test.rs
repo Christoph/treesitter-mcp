@@ -1,7 +1,34 @@
 mod common;
 
 use serde_json::json;
+use std::fs;
 use std::path::PathBuf;
+use std::process::Command;
+use tempfile::TempDir;
+
+fn setup_git_repo() -> TempDir {
+    let dir = TempDir::new().unwrap();
+
+    Command::new("git")
+        .args(["init"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    Command::new("git")
+        .args(["config", "user.email", "test@test.com"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    Command::new("git")
+        .args(["config", "user.name", "Test"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    dir
+}
 
 fn count_symbols(file: &serde_json::Value) -> usize {
     let f = file
@@ -262,6 +289,28 @@ fn test_code_map_skips_hidden_and_vendor() {
     }
 }
 
+#[test]
+fn test_code_map_respects_gitignore() {
+    let dir = setup_git_repo();
+
+    fs::write(dir.path().join(".gitignore"), "ignored.rs\n").unwrap();
+    fs::write(dir.path().join("visible.rs"), "fn visible() {}\n").unwrap();
+    fs::write(dir.path().join("ignored.rs"), "fn hidden() {}\n").unwrap();
+
+    let arguments = json!({
+        "path": dir.path().to_str().unwrap(),
+        "detail": "signatures"
+    });
+
+    let result = treesitter_mcp::analysis::code_map::execute(&arguments).unwrap();
+    let text = common::get_result_text(&result);
+    let map: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let files = common::helpers::code_map_files(&map);
+
+    assert!(files.iter().any(|(path, _)| *path == "visible.rs"));
+    assert!(files.iter().all(|(path, _)| *path != "ignored.rs"));
+}
+
 // ============================================================================
 // Token-Aware Truncation Tests
 // ============================================================================
@@ -322,4 +371,78 @@ fn test_code_map_symbol_counts_are_reasonable() {
         .unwrap_or(0);
 
     assert!(max_symbols > 0);
+}
+
+#[test]
+fn test_code_map_with_types_separates_duplicate_type_usage_counts() {
+    let dir = TempDir::new().unwrap();
+    let src_dir = dir.path().join("src");
+    fs::create_dir_all(&src_dir).unwrap();
+
+    fs::write(
+        src_dir.join("a.ts"),
+        "export interface Config { enabled: boolean; }\n",
+    )
+    .unwrap();
+    fs::write(
+        src_dir.join("b.ts"),
+        "export interface Config { retries: number; }\n",
+    )
+    .unwrap();
+    fs::write(
+        src_dir.join("consumer.ts"),
+        r#"
+import type { Config } from "./a";
+
+const config: Config = { enabled: true };
+"#,
+    )
+    .unwrap();
+
+    let arguments = json!({
+        "path": src_dir.to_str().unwrap(),
+        "with_types": true,
+        "count_usages": true,
+        "max_tokens": 10_000
+    });
+
+    let result = treesitter_mcp::analysis::code_map::execute(&arguments).unwrap();
+    let text = common::get_result_text(&result);
+    let map: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let types = map.get("types").expect("Expected code_map types output");
+    let rows = common::helpers::parse_compact_rows(
+        types
+            .get("rows")
+            .and_then(|value| value.as_str())
+            .unwrap_or(""),
+    );
+
+    let config_rows: Vec<&Vec<String>> = rows
+        .iter()
+        .filter(|row| row.first().map(|s| s.as_str()) == Some("Config"))
+        .collect();
+    assert_eq!(config_rows.len(), 2, "Expected both Config definitions");
+
+    let usage_for = |suffix: &str| {
+        config_rows
+            .iter()
+            .find(|row| {
+                row.get(2)
+                    .map(|file| file.ends_with(suffix))
+                    .unwrap_or(false)
+            })
+            .and_then(|row| row.get(4))
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or_else(|| panic!("Missing Config row for {suffix}"))
+    };
+
+    assert!(
+        usage_for("a.ts") > 0,
+        "Imported Config should get usage credit"
+    );
+    assert_eq!(
+        usage_for("b.ts"),
+        0,
+        "Unreferenced Config should stay at zero"
+    );
 }

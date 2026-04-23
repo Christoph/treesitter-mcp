@@ -7,7 +7,10 @@ use rust_mcp_sdk::macros::{mcp_tool, JsonSchema};
 use rust_mcp_sdk::schema::{schema_utils::CallToolError, CallToolResult};
 use rust_mcp_sdk::tool_box;
 
-use crate::analysis::{code_map, diff, find_usages, query_pattern, symbol_at_line, view_code};
+use crate::analysis::{
+    call_graph, code_map, diff, find_usages, format_diagnostics, format_references,
+    minimal_edit_context, query_pattern, symbol_at_line, view_code,
+};
 
 // Helper function for serde default
 fn default_full() -> String {
@@ -21,7 +24,7 @@ fn default_one() -> Option<u32> {
 /// View a source file with flexible detail levels and automatic type inclusion
 #[mcp_tool(
     name = "view_code",
-    description = "View file in compact schema (BREAKING). Output keys: `p` (relative path), `h` (header for f/s/c rows), `f` (functions rows), `s` (structs rows), `c` (classes rows), optional deps `deps` (map dep_path -> type rows), plus optional tables: imports `ih`+`im`, trait methods `th`+`tm`, interfaces `ah`+`i`, properties `ph`+`pr`, class implements `ch`+`ci`, class methods `mh`+`cm`, Rust impl methods `bh`+`bm`. Rows are newline-delimited; fields are pipe-delimited and escaped: `\\` -> `\\\\`, `\n` -> `\\n`, `\r` -> `\\r`, `|` -> `\\|`. Meta: `@.t=true` when truncated. DETAIL: 'signatures' (name/line/sig), 'full' (adds doc/code). FOCUS: set focus_symbol to keep code only for that symbol."
+    description = "View file in compact schema (BREAKING). Output keys: `p` (relative path), `h` (header for f/s/c rows), `f` (functions rows), `s` (structs rows), `c` (classes rows), optional deps `deps` (map dep_path -> type rows), plus optional tables: imports `ih`+`im`, trait methods `th`+`tm`, interfaces `ah`+`i`, properties `ph`+`pr`, class implements `ch`+`ci`, class methods `mh`+`cm`, Rust impl methods `bh`+`bm`. Rows are newline-delimited; fields are pipe-delimited and escaped: `\\` -> `\\\\`, `\n` -> `\\n`, `\r` -> `\\r`, `|` -> `\\|`. Meta: `@.t=true` when truncated. DETAIL: 'signatures' (name/line/sig), 'full' (adds doc/code). FOCUS: set focus_symbol to keep code only for that symbol. LSP: pass definition_location from textDocument/definition to include the exact dependency type."
 )]
 #[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
 pub struct ViewCode {
@@ -38,6 +41,10 @@ pub struct ViewCode {
     /// When set, returns full code for this symbol + signatures for rest
     #[serde(default)]
     pub focus_symbol: Option<String>,
+
+    /// Optional LSP or compact definition location for exact dependency type selection.
+    #[serde(default)]
+    pub definition_location: Option<ReferenceLocation>,
 }
 
 /// Generate a high-level code map of a directory with token budget awareness and detail levels
@@ -70,7 +77,7 @@ pub struct CodeMap {
 /// Find all usages of a symbol with context and usage type classification
 #[mcp_tool(
     name = "find_usages",
-    description = "Find ALL usages of a symbol (function, variable, class, type) across files. Semantic search, not text search. Returns file locations, code context, usage type (definition, call, type_reference, import, reference). USE WHEN: ✅ Refactoring: see all places that call a function ✅ Impact analysis: checking what breaks if you change signature ✅ Tracing data flow ✅ Before renaming/modifying shared code. DON'T USE: ❌ Need structural changes only → use parse_diff ❌ Want risk assessment → use affected_by_diff ❌ Symbol used >50 places → use affected_by_diff or set max_context_lines=50. TOKEN COST: MEDIUM-HIGH (scales with usage count × context_lines). OPTIMIZATION: Set max_context_lines=50 for frequent symbols, context_lines=1 for locations only. WORKFLOW: find_usages (before changes) → make changes → affected_by_diff (verify)"
+    description = "Find ALL usages of a symbol (function, variable, class, type) across files. Syntax-aware search, not text search. Returns file locations, code context, usage type (definition, call, type_reference, import, reference). USE WHEN: ✅ Refactoring: see all places that call a function ✅ Impact analysis: checking what breaks if you change signature ✅ Tracing data flow ✅ Before renaming/modifying shared code. DON'T USE: ❌ Need structural changes only → use parse_diff ❌ Want risk assessment → use affected_by_diff ❌ Symbol used >50 places → use affected_by_diff or set max_context_lines=50. TOKEN COST: MEDIUM-HIGH (scales with usage count × context_lines). OPTIMIZATION: Set max_context_lines=50 for frequent symbols, context_lines=1 for locations only. WORKFLOW: find_usages (before changes) → make changes → affected_by_diff (verify)"
 )]
 #[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
 pub struct FindUsages {
@@ -87,6 +94,152 @@ pub struct FindUsages {
     pub max_context_lines: Option<u32>,
     /// Maximum tokens for output (tiktoken counted). When set, output is
     /// truncated by dropping code/context and/or truncating usages.
+    #[serde(default)]
+    pub max_tokens: Option<u32>,
+}
+
+#[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
+pub struct LspPosition {
+    /// 0-based LSP line
+    pub line: u32,
+    /// 0-based LSP character
+    pub character: u32,
+}
+
+#[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
+pub struct LspRange {
+    /// LSP range start; end is ignored by this tool
+    pub start: LspPosition,
+}
+
+#[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
+pub struct ReferenceLocation {
+    /// Source file path. Use this or `uri`.
+    #[serde(default)]
+    pub file: Option<String>,
+    /// Alternative source file path field accepted by the analysis module.
+    #[serde(default)]
+    pub file_path: Option<String>,
+    /// LSP file URI, e.g. file:///repo/src/lib.rs. Use this or `file`.
+    #[serde(default)]
+    pub uri: Option<String>,
+    /// 1-based line for compact non-LSP locations.
+    #[serde(default)]
+    pub line: Option<u32>,
+    /// 1-based column for compact non-LSP locations.
+    #[serde(default)]
+    pub col: Option<u32>,
+    /// 1-based column alias.
+    #[serde(default)]
+    pub column: Option<u32>,
+    /// LSP 0-based range. When provided, line/col are ignored.
+    #[serde(default)]
+    pub range: Option<LspRange>,
+}
+
+/// Format precise LSP reference locations into the compact find_usages schema
+#[mcp_tool(
+    name = "format_references",
+    description = "Format LSP-provided reference locations into the same compact schema as find_usages. Input accepts `symbol` plus `references` rows using either 1-based `{file,line,col}` / `{file_path,line,column}` or LSP `{uri,range:{start:{line,character}}}`. Output keys: `sym`, `h`, `u`; rows are `file|line|col|type|context|scope|conf|owner` with `conf=high` because locations are assumed to come from precise LSP resolution. USE WHEN: ✅ You already called LSP textDocument/references and need compact context for an LLM ✅ You want scope/context around precise references without rerunning syntax-aware search. DON'T USE: ❌ You need MCP to discover references itself → use find_usages."
+)]
+#[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
+pub struct FormatReferences {
+    /// Symbol name these LSP locations resolve to
+    pub symbol: String,
+    /// LSP or compact reference locations
+    pub references: Vec<ReferenceLocation>,
+    /// Number of context lines around each reference (default: 3)
+    #[serde(default)]
+    pub context_lines: Option<u32>,
+    /// Maximum tokens for output (tiktoken counted)
+    #[serde(default)]
+    pub max_tokens: Option<u32>,
+}
+
+#[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
+pub struct DiagnosticItem {
+    /// Source file path. Use this or `uri`.
+    #[serde(default)]
+    pub file: Option<String>,
+    /// Alternative source file path field accepted by the analysis module.
+    #[serde(default)]
+    pub file_path: Option<String>,
+    /// LSP file URI, e.g. file:///repo/src/lib.rs. Use this or `file`.
+    #[serde(default)]
+    pub uri: Option<String>,
+    /// 1-based line for compact non-LSP locations.
+    #[serde(default)]
+    pub line: Option<u32>,
+    /// 1-based column for compact non-LSP locations.
+    #[serde(default)]
+    pub col: Option<u32>,
+    /// 1-based column alias.
+    #[serde(default)]
+    pub column: Option<u32>,
+    /// LSP 0-based range. When provided, line/col are ignored.
+    #[serde(default)]
+    pub range: Option<LspRange>,
+    /// LSP diagnostic severity: 1 error, 2 warning, 3 info, 4 hint.
+    #[serde(default)]
+    pub severity: Option<u32>,
+    /// Diagnostic message.
+    pub message: String,
+    /// Diagnostic source, such as rustc or typescript.
+    #[serde(default)]
+    pub source: Option<String>,
+    /// Diagnostic code as a compact string/number.
+    #[serde(default)]
+    pub code: Option<String>,
+}
+
+/// Format LSP diagnostics into compact rows with structural owners
+#[mcp_tool(
+    name = "format_diagnostics",
+    description = "Format LSP-provided diagnostics into compact rows with structural owner context. Input accepts `diagnostics` rows using either 1-based `{file,line,col}` / `{file_path,line,column}` or LSP `{uri,range:{start:{line,character}}}` plus `severity`, `message`, optional `source`, and optional `code`. Output keys: `h`, `d`; rows are `severity|file|line|col|owner|source|code|message`. USE WHEN: ✅ You already have LSP diagnostics and need a token-efficient grouped summary ✅ You want to know which function/class owns each diagnostic. DON'T USE: ❌ You need to run diagnostics itself → use LSP/compiler/test tools."
+)]
+#[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
+pub struct FormatDiagnostics {
+    /// LSP or compact diagnostics
+    pub diagnostics: Vec<DiagnosticItem>,
+    /// Maximum tokens for output (tiktoken counted)
+    #[serde(default)]
+    pub max_tokens: Option<u32>,
+}
+
+/// Return compact context needed to edit one symbol
+#[mcp_tool(
+    name = "minimal_edit_context",
+    description = "Return focused edit context for one symbol. Output keys include `p`, `sym`, `scope`, `h`, `target`, optional `dh`+`deps`, optional `tyh`+`types`, optional `ih`+`imports`, and optional `@.t=true` when truncated. USE WHEN: ✅ Editing one known function/method and need the smallest useful context ✅ Avoiding full-file reads for large files. DON'T USE: ❌ Exploring an unfamiliar file → use view_code or code_map first. Current scope: same-file deps/types/imports plus direct project-local dependency signatures from imports."
+)]
+#[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
+pub struct MinimalEditContext {
+    /// Path to the source file
+    pub file_path: String,
+    /// Symbol name to edit
+    pub symbol_name: String,
+    /// Maximum tokens for output (default: 2000)
+    #[serde(default)]
+    pub max_tokens: Option<u32>,
+}
+
+/// Return compact callers/callees for one symbol
+#[mcp_tool(
+    name = "call_graph",
+    description = "Return a compact best-effort call graph for one function or method. Output keys: `sym`, `h`, `edges`; rows are `direction|symbol|file|line|scope|depth` where direction is `caller` or `callee`. USE WHEN: ✅ You need to know what calls a symbol and what it calls ✅ You want depth=1 impact/navigation context without manual multi-file reads. DON'T USE: ❌ You need compiler-grade name resolution across imports/generics/traits → use LSP references/definitions when available. TOKEN COST: LOW-MEDIUM. Current resolution is syntax-aware and project-local, with same-file definitions preferred."
+)]
+#[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
+pub struct CallGraph {
+    /// Path to the source file containing the symbol
+    pub file_path: String,
+    /// Function or method name to analyze
+    pub symbol_name: String,
+    /// Direction: "callers", "callees", or "both" (default: "both")
+    #[serde(default)]
+    pub direction: Option<String>,
+    /// Traversal depth (default: 1, max: 3)
+    #[serde(default)]
+    pub depth: Option<u32>,
+    /// Maximum tokens for output (default: 2000)
     #[serde(default)]
     pub max_tokens: Option<u32>,
 }
@@ -163,7 +316,8 @@ impl ViewCode {
         let args = serde_json::json!({
             "file_path": self.file_path,
             "detail": self.detail,
-            "focus_symbol": self.focus_symbol
+            "focus_symbol": self.focus_symbol,
+            "definition_location": self.definition_location
         });
 
         view_code::execute(&args).map_err(CallToolError::new)
@@ -196,6 +350,56 @@ impl FindUsages {
         });
 
         find_usages::execute(&args).map_err(CallToolError::new)
+    }
+}
+
+impl FormatReferences {
+    pub fn call_tool(&self) -> Result<CallToolResult, CallToolError> {
+        let args = serde_json::json!({
+            "symbol": self.symbol,
+            "references": self.references,
+            "context_lines": self.context_lines,
+            "max_tokens": self.max_tokens
+        });
+
+        format_references::execute(&args).map_err(CallToolError::new)
+    }
+}
+
+impl FormatDiagnostics {
+    pub fn call_tool(&self) -> Result<CallToolResult, CallToolError> {
+        let args = serde_json::json!({
+            "diagnostics": self.diagnostics,
+            "max_tokens": self.max_tokens
+        });
+
+        format_diagnostics::execute(&args).map_err(CallToolError::new)
+    }
+}
+
+impl MinimalEditContext {
+    pub fn call_tool(&self) -> Result<CallToolResult, CallToolError> {
+        let args = serde_json::json!({
+            "file_path": self.file_path,
+            "symbol_name": self.symbol_name,
+            "max_tokens": self.max_tokens
+        });
+
+        minimal_edit_context::execute(&args).map_err(CallToolError::new)
+    }
+}
+
+impl CallGraph {
+    pub fn call_tool(&self) -> Result<CallToolResult, CallToolError> {
+        let args = serde_json::json!({
+            "file_path": self.file_path,
+            "symbol_name": self.symbol_name,
+            "direction": self.direction,
+            "depth": self.depth,
+            "max_tokens": self.max_tokens
+        });
+
+        call_graph::execute(&args).map_err(CallToolError::new)
     }
 }
 
@@ -326,6 +530,10 @@ tool_box!(
         ViewCode,
         CodeMap,
         FindUsages,
+        FormatReferences,
+        FormatDiagnostics,
+        MinimalEditContext,
+        CallGraph,
         SymbolAtLine,
         ParseDiff,
         AffectedByDiff,

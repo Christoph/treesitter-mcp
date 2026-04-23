@@ -7,22 +7,10 @@ use globset::{Glob, GlobSet, GlobSetBuilder};
 use log::debug;
 use serde::{Deserialize, Serialize};
 use tree_sitter::{Node, Parser, Query, QueryCursor};
-use walkdir::{DirEntry, WalkDir};
+
+use crate::common::project_files::collect_project_files;
 
 const HARD_TYPE_LIMIT: usize = 1000;
-
-const IGNORED_DIR_NAMES: &[&str] = &[
-    ".git",
-    ".hg",
-    ".svn",
-    ".svelte-kit",
-    "target",
-    "node_modules",
-    "dist",
-    "build",
-    "deps",
-    "vendor",
-];
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TypeExtractionResult {
@@ -31,9 +19,6 @@ pub struct TypeExtractionResult {
     pub types_included: usize,
     pub limit_hit: Option<LimitHit>,
     pub truncated: bool,
-    /// Word frequency map built during extraction (when count_usages=true)
-    #[serde(skip)]
-    word_counts: HashMap<String, usize>,
 }
 
 impl TypeExtractionResult {
@@ -44,30 +29,12 @@ impl TypeExtractionResult {
             types_included: 0,
             limit_hit: None,
             truncated: false,
-            word_counts: HashMap::new(),
         }
     }
 
     fn finalize(&mut self) {
         self.types_included = self.types.len();
         self.truncated = self.limit_hit.is_some();
-    }
-
-    /// Apply word counts to populate usage_count for each type
-    fn apply_usage_counts(&mut self) {
-        // Count how many times each type name is defined (to subtract from usage)
-        let mut definition_counts: HashMap<String, usize> = HashMap::new();
-        for ty in &self.types {
-            *definition_counts.entry(ty.name.clone()).or_insert(0) += 1;
-        }
-
-        // Apply counts
-        for ty in &mut self.types {
-            if let Some(&count) = self.word_counts.get(&ty.name) {
-                let def_count = definition_counts.get(&ty.name).copied().unwrap_or(1);
-                ty.usage_count = count.saturating_sub(def_count);
-            }
-        }
     }
 }
 
@@ -130,10 +97,8 @@ pub struct TypeDefinition {
     pub members: Option<Vec<Member>>,
 }
 
-/// Extract types from a path (file or directory).
-///
-/// Set `count_usages` to true to also count usages during extraction (single-pass).
-/// This is more efficient than calling `count_all_usages` separately.
+/// Compatibility wrapper for callers that do not need usage counting.
+#[allow(dead_code)]
 pub fn extract_types(
     path: impl AsRef<Path>,
     pattern: Option<&str>,
@@ -142,15 +107,15 @@ pub fn extract_types(
     extract_types_with_options(path, pattern, max_types, false)
 }
 
-/// Extract types with optional usage counting in a single pass.
+/// Extract types from a path (file or directory).
+///
+/// Set `count_usages` to true to also count usages during extraction (single-pass).
 pub fn extract_types_with_options(
     path: impl AsRef<Path>,
     pattern: Option<&str>,
     max_types: usize,
     count_usages: bool,
 ) -> Result<TypeExtractionResult> {
-    use crate::analysis::usage_counter::{count_words_in_content, language_for_path};
-
     let path = path.as_ref();
     if !path.exists() {
         bail!("Path does not exist: {}", path.display());
@@ -178,28 +143,12 @@ pub fn extract_types_with_options(
     let mut result = TypeExtractionResult::new();
 
     if path.is_file() {
-        process_single_file(path, &root_dir, &matcher, effective_limit, count_usages, &mut result)?;
+        process_single_file(path, &root_dir, &matcher, effective_limit, &mut result)?;
     } else {
-        let walker = WalkDir::new(path).into_iter().filter_entry(should_descend);
-        for entry in walker {
-            let entry = match entry {
-                Ok(value) => value,
-                Err(err) => {
-                    debug!("Skipping entry due to error: {err}");
-                    continue;
-                }
-            };
-
-            if !entry.file_type().is_file() {
-                continue;
-            }
-
-            if is_hidden(entry.path()) {
-                continue;
-            }
-
-            let file_path = entry.path();
-            let rel_path = relative_path(&root_dir, file_path);
+        let files = collect_project_files(path)
+            .map_err(|err| eyre::eyre!("Failed to walk {}: {err}", path.display()))?;
+        for file_path in files {
+            let rel_path = relative_path(&root_dir, &file_path);
             if let Some(matcher) = matcher.as_ref() {
                 if !matcher.is_match(normalize_path(&rel_path)) {
                     continue;
@@ -207,7 +156,7 @@ pub fn extract_types_with_options(
             }
 
             // Read file once for both word counting and type extraction
-            let content = match fs::read_to_string(file_path) {
+            let content = match fs::read_to_string(&file_path) {
                 Ok(c) => c,
                 Err(err) => {
                     debug!("Skipping file {}: {err}", file_path.display());
@@ -215,17 +164,15 @@ pub fn extract_types_with_options(
                 }
             };
 
-            // Count words for usage tracking (works on all file types)
-            if count_usages {
-                let lang = language_for_path(file_path);
-                count_words_in_content(&content, lang, &mut result.word_counts);
-            }
-
             // Extract types from supported languages
-            if let Some(language) = detect_language(file_path) {
-                if let Err(err) =
-                    process_file_with_source(&content, &rel_path, language, effective_limit, &mut result)
-                {
+            if let Some(language) = detect_language(&file_path) {
+                if let Err(err) = process_file_with_source(
+                    &content,
+                    &rel_path,
+                    language,
+                    effective_limit,
+                    &mut result,
+                ) {
                     debug!("Skipping file {}: {err}", file_path.display());
                 }
             }
@@ -238,9 +185,8 @@ pub fn extract_types_with_options(
 
     result.finalize();
 
-    // Apply usage counts after all files are processed
     if count_usages {
-        result.apply_usage_counts();
+        crate::analysis::usage_counter::count_all_usages(&mut result.types, &root_dir)?;
     }
 
     Ok(result)
@@ -251,11 +197,8 @@ fn process_single_file(
     root_dir: &Path,
     matcher: &Option<GlobSet>,
     limit: usize,
-    count_usages: bool,
     result: &mut TypeExtractionResult,
 ) -> Result<()> {
-    use crate::analysis::usage_counter::{count_words_in_content, language_for_path};
-
     if is_hidden(path) {
         return Ok(());
     }
@@ -268,14 +211,8 @@ fn process_single_file(
     }
 
     // Read file once for both extraction and counting
-    let source = fs::read_to_string(path)
-        .wrap_err_with(|| format!("Failed to read {}", path.display()))?;
-
-    // Count words if requested
-    if count_usages {
-        let lang = language_for_path(path);
-        count_words_in_content(&source, lang, &mut result.word_counts);
-    }
+    let source =
+        fs::read_to_string(path).wrap_err_with(|| format!("Failed to read {}", path.display()))?;
 
     if let Some(language) = detect_language(path) {
         process_file_with_source(&source, &rel_path, language, limit, result)?;
@@ -317,28 +254,6 @@ fn build_globset(pattern: &str) -> Result<GlobSet> {
     let mut builder = GlobSetBuilder::new();
     builder.add(Glob::new(pattern)?);
     builder.build().map_err(Into::into)
-}
-
-fn should_descend(entry: &DirEntry) -> bool {
-    if entry.depth() == 0 {
-        return true;
-    }
-
-    if !entry.file_type().is_dir() {
-        return true;
-    }
-
-    let Some(name) = entry.file_name().to_str() else {
-        return false;
-    };
-
-    if name.starts_with('.') {
-        return false;
-    }
-
-    !IGNORED_DIR_NAMES
-        .iter()
-        .any(|skip| skip.eq_ignore_ascii_case(name))
 }
 
 fn is_hidden(path: &Path) -> bool {
@@ -1420,7 +1335,7 @@ fn extract_java_types(source: &str, relative_path: &Path) -> Result<Vec<TypeDefi
     Ok(definitions)
 }
 
-fn extract_go_types(source: &str, relative_path: &Path) -> Result<Vec<TypeDefinition>> {
+pub(crate) fn extract_go_types(source: &str, relative_path: &Path) -> Result<Vec<TypeDefinition>> {
     let mut parser = Parser::new();
     parser
         .set_language(&tree_sitter_go::LANGUAGE.into())

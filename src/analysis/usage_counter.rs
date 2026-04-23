@@ -1,70 +1,147 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use eyre::Result;
-use walkdir::WalkDir;
 
+use crate::analysis::dependencies::resolve_dependencies;
+use crate::common::project_files::collect_project_files;
 use crate::extraction::types::TypeDefinition;
+use crate::parser::detect_language;
 
+/// Compatibility two-pass usage counter retained for library callers.
+#[allow(dead_code)]
 pub fn count_all_usages(types: &mut [TypeDefinition], project_path: &Path) -> Result<()> {
     if types.is_empty() {
         return Ok(());
     }
 
-    let unique_names: HashSet<String> = types.iter().map(|t| t.name.clone()).collect();
-    let mut usage_map: HashMap<String, usize> =
-        unique_names.into_iter().map(|name| (name, 0)).collect();
+    let scan_root = if project_path.is_file() {
+        project_path.parent().unwrap_or(project_path)
+    } else {
+        project_path
+    };
 
-    let mut definition_counts: HashMap<String, usize> = HashMap::new();
-    for type_def in types.iter() {
-        *definition_counts.entry(type_def.name.clone()).or_insert(0) += 1;
+    let tracked_names: HashSet<String> = types.iter().map(|ty| ty.name.clone()).collect();
+    let resolved_type_files: Vec<PathBuf> = types
+        .iter()
+        .map(|ty| resolve_type_file(scan_root, &ty.file))
+        .collect();
+
+    let mut type_index: HashMap<String, Vec<usize>> = HashMap::new();
+    for (idx, type_def) in types.iter().enumerate() {
+        type_index
+            .entry(type_def.name.clone())
+            .or_default()
+            .push(idx);
     }
 
-    // Single pass through all files
-    let project_path_abs = project_path
-        .canonicalize()
-        .unwrap_or_else(|_| project_path.to_path_buf());
+    let mut usage_counts = vec![0usize; types.len()];
 
-    for entry in WalkDir::new(&project_path_abs)
-        .into_iter()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().is_file())
-    {
-        let file_path = entry.path();
-
-        // Skip hidden files/dirs and common ignore dirs
-        // Only check components relative to project_path to avoid skipping due to hidden parent dirs
-        if let Ok(rel_path) = file_path.strip_prefix(&project_path_abs) {
-            if is_rel_path_ignored(rel_path) {
-                continue;
-            }
-        }
-
-        let content = match fs::read_to_string(file_path) {
+    for file_path in collect_project_files(scan_root)? {
+        let content = match fs::read_to_string(&file_path) {
             Ok(c) => c,
             Err(_) => continue,
         };
 
-        let stripped = strip_comments_and_strings(&content, language_for_path(file_path));
+        let local_counts =
+            count_tracked_words_in_content(&content, language_for_path(&file_path), &tracked_names);
+        if local_counts.is_empty() {
+            continue;
+        }
 
-        // Count all type names in this file
-        for word in stripped.split(|c: char| !c.is_alphanumeric() && c != '_') {
-            if let Some(count) = usage_map.get_mut(word) {
-                *count += 1;
+        let current_file = canonicalize_or_identity(&file_path);
+        let dependency_files = detect_language(&file_path)
+            .ok()
+            .map(|language| resolve_dependencies(language, &content, &file_path, scan_root))
+            .unwrap_or_default()
+            .into_iter()
+            .map(|path| canonicalize_or_identity(&path))
+            .collect::<HashSet<_>>();
+
+        for (name, count) in local_counts {
+            let Some(candidates) = type_index.get(&name) else {
+                continue;
+            };
+
+            if let Some(target) = select_type_target(
+                candidates,
+                &resolved_type_files,
+                &current_file,
+                &dependency_files,
+            ) {
+                usage_counts[target] += count;
             }
         }
     }
 
-    // Update usage counts
-    for type_def in types {
-        if let Some(&count) = usage_map.get(&type_def.name) {
-            let definition_count = definition_counts.get(&type_def.name).copied().unwrap_or(1);
-            type_def.usage_count = count.saturating_sub(definition_count);
-        }
+    for (idx, type_def) in types.iter_mut().enumerate() {
+        type_def.usage_count = usage_counts[idx].saturating_sub(1);
     }
 
     Ok(())
+}
+
+fn count_tracked_words_in_content(
+    content: &str,
+    language: CountLanguage,
+    tracked_names: &HashSet<String>,
+) -> HashMap<String, usize> {
+    let mut counts = HashMap::new();
+    let stripped = strip_comments_and_strings(content, language);
+
+    for word in stripped.split(|c: char| !c.is_alphanumeric() && c != '_') {
+        if tracked_names.contains(word) {
+            *counts.entry(word.to_string()).or_insert(0) += 1;
+        }
+    }
+
+    counts
+}
+
+fn select_type_target(
+    candidates: &[usize],
+    resolved_type_files: &[PathBuf],
+    current_file: &Path,
+    dependency_files: &HashSet<PathBuf>,
+) -> Option<usize> {
+    let same_file: Vec<usize> = candidates
+        .iter()
+        .copied()
+        .filter(|idx| resolved_type_files[*idx] == current_file)
+        .collect();
+    if same_file.len() == 1 {
+        return same_file.first().copied();
+    }
+
+    let from_dependencies: Vec<usize> = candidates
+        .iter()
+        .copied()
+        .filter(|idx| dependency_files.contains(&resolved_type_files[*idx]))
+        .collect();
+    if from_dependencies.len() == 1 {
+        return from_dependencies.first().copied();
+    }
+
+    if candidates.len() == 1 {
+        return candidates.first().copied();
+    }
+
+    None
+}
+
+fn resolve_type_file(scan_root: &Path, file: &Path) -> PathBuf {
+    let candidate = if file.is_absolute() {
+        file.to_path_buf()
+    } else {
+        scan_root.join(file)
+    };
+
+    canonicalize_or_identity(&candidate)
+}
+
+fn canonicalize_or_identity(path: &Path) -> PathBuf {
+    fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -92,6 +169,7 @@ pub fn language_for_path(path: &Path) -> CountLanguage {
 
 /// Count all identifier-like words in a file and accumulate into the provided map.
 /// This is useful for single-pass extraction+counting.
+#[allow(dead_code)]
 pub fn count_words_in_content(
     content: &str,
     language: CountLanguage,
@@ -442,16 +520,4 @@ fn ends_rust_raw_string(bytes: &[u8], quote_index: usize, hashes: usize) -> bool
     }
 
     true
-}
-
-fn is_rel_path_ignored(path: &Path) -> bool {
-    path.components().any(|c| {
-        let s = c.as_os_str().to_string_lossy();
-        s.starts_with('.')
-            || s == "target"
-            || s == "node_modules"
-            || s == "vendor"
-            || s == "build"
-            || s == "dist"
-    })
 }

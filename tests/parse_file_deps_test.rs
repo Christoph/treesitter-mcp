@@ -1,6 +1,8 @@
 mod common;
 
 use serde_json::json;
+use std::fs;
+use tempfile::tempdir;
 
 #[test]
 fn test_parse_file_accepts_include_deps_parameter() {
@@ -243,4 +245,300 @@ fn test_parse_file_deps_rust_traits() {
     // Compact schema: dependency output is a `deps` map of row strings.
     let deps = shape.get("deps").and_then(|v| v.as_object());
     assert!(deps.is_some(), "Should include deps object");
+}
+
+#[test]
+fn test_parse_file_deps_ignore_comments_and_strings_for_type_selection() {
+    let dir = tempdir().unwrap();
+
+    fs::write(
+        dir.path().join("types.ts"),
+        r#"
+export interface RealType {
+    value: number;
+}
+
+export interface CommentGhost {
+    value: number;
+}
+
+export interface StringGhost {
+    value: number;
+}
+"#,
+    )
+    .unwrap();
+
+    fs::write(
+        dir.path().join("main.ts"),
+        r#"
+import type { RealType } from "./types";
+
+// CommentGhost should not become dependency context.
+const label = "StringGhost should not become dependency context either";
+
+export function useIt(value: RealType): RealType {
+    return value;
+}
+"#,
+    )
+    .unwrap();
+
+    let arguments = json!({
+        "file_path": dir.path().join("main.ts").to_str().unwrap(),
+        "include_code": false,
+        "include_deps": true,
+    });
+
+    let result = treesitter_mcp::analysis::view_code::execute(&arguments).unwrap();
+    let text = common::get_result_text(&result);
+    let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let deps = shape
+        .get("deps")
+        .and_then(|value| value.as_object())
+        .expect("Expected deps object");
+
+    let dep_names: Vec<String> = deps
+        .values()
+        .filter_map(|value| value.as_str())
+        .flat_map(common::helpers::parse_compact_rows)
+        .filter_map(|row| row.first().cloned())
+        .collect();
+
+    assert!(dep_names.iter().any(|name| name == "RealType"));
+    assert!(!dep_names.iter().any(|name| name == "CommentGhost"));
+    assert!(!dep_names.iter().any(|name| name == "StringGhost"));
+}
+
+#[test]
+fn test_parse_file_focus_symbol_limits_dependency_context() {
+    let dir = tempdir().unwrap();
+
+    fs::write(
+        dir.path().join("types.ts"),
+        r#"
+export interface Foo {
+    value: number;
+}
+
+export interface Bar {
+    value: number;
+}
+"#,
+    )
+    .unwrap();
+
+    fs::write(
+        dir.path().join("main.ts"),
+        r#"
+import type { Foo, Bar } from "./types";
+
+export function useFoo(value: Foo): Foo {
+    return value;
+}
+
+export function useBar(value: Bar): Bar {
+    return value;
+}
+"#,
+    )
+    .unwrap();
+
+    let arguments = json!({
+        "file_path": dir.path().join("main.ts").to_str().unwrap(),
+        "focus_symbol": "useFoo",
+        "include_code": false,
+        "include_deps": true,
+    });
+
+    let result = treesitter_mcp::analysis::view_code::execute(&arguments).unwrap();
+    let text = common::get_result_text(&result);
+    let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let deps = shape
+        .get("deps")
+        .and_then(|value| value.as_object())
+        .expect("Expected deps object");
+
+    let dep_names: Vec<String> = deps
+        .values()
+        .filter_map(|value| value.as_str())
+        .flat_map(common::helpers::parse_compact_rows)
+        .filter_map(|row| row.first().cloned())
+        .collect();
+
+    assert!(dep_names.iter().any(|name| name == "Foo"));
+    assert!(!dep_names.iter().any(|name| name == "Bar"));
+}
+
+#[test]
+fn test_parse_file_definition_location_selects_exact_dependency_type() {
+    let dir = tempdir().unwrap();
+
+    let types_path = dir.path().join("types.ts");
+    fs::write(
+        &types_path,
+        r#"
+export interface Foo {
+    value: number;
+}
+
+export interface Bar {
+    value: number;
+}
+"#,
+    )
+    .unwrap();
+
+    let main_path = dir.path().join("main.ts");
+    fs::write(
+        &main_path,
+        r#"
+import type { Foo, Bar } from "./types";
+
+export function makeValue(): unknown {
+    return {};
+}
+"#,
+    )
+    .unwrap();
+
+    let arguments = json!({
+        "file_path": main_path.to_str().unwrap(),
+        "include_code": false,
+        "include_deps": true,
+        "definition_location": {
+            "file": types_path.to_str().unwrap(),
+            "line": 6,
+            "col": 18
+        }
+    });
+
+    let result = treesitter_mcp::analysis::view_code::execute(&arguments).unwrap();
+    let text = common::get_result_text(&result);
+    let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let deps = shape
+        .get("deps")
+        .and_then(|value| value.as_object())
+        .expect("Expected deps object");
+
+    let dep_names: Vec<String> = deps
+        .values()
+        .filter_map(|value| value.as_str())
+        .flat_map(common::helpers::parse_compact_rows)
+        .filter_map(|row| row.first().cloned())
+        .collect();
+
+    assert!(dep_names.iter().any(|name| name == "Bar"));
+    assert!(!dep_names.iter().any(|name| name == "Foo"));
+}
+
+#[test]
+fn test_parse_file_ignores_null_definition_location() {
+    let dir = tempdir().unwrap();
+    let file_path = dir.path().join("types.ts");
+    fs::write(&file_path, "export interface User {\n  name: string;\n}\n").unwrap();
+
+    let arguments = json!({
+        "file_path": file_path.to_str().unwrap(),
+        "include_code": false,
+        "include_deps": false,
+        "definition_location": null
+    });
+
+    let result = treesitter_mcp::analysis::view_code::execute(&arguments).unwrap();
+    let text = common::get_result_text(&result);
+    let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
+
+    assert_eq!(shape["i"].as_str().unwrap(), "User|1|");
+}
+
+#[test]
+fn test_parse_file_deps_go_ast_type_selection() {
+    let dir = tempdir().unwrap();
+    let types_dir = dir.path().join("types");
+    fs::create_dir_all(&types_dir).unwrap();
+    fs::write(dir.path().join("go.mod"), "module example.com/app\n").unwrap();
+
+    fs::write(
+        types_dir.join("models.go"),
+        r#"
+package types
+
+type RealType struct {
+    Value int
+}
+
+type RealReader interface {
+    Read() RealType
+}
+
+type CommentGhost struct {
+    Value int
+}
+
+type StringGhost struct {
+    Value int
+}
+"#,
+    )
+    .unwrap();
+
+    fs::write(
+        dir.path().join("main.go"),
+        r#"
+package app
+
+import "example.com/app/types"
+
+// CommentGhost should not become dependency context.
+const label = "StringGhost should not become dependency context either"
+
+func UseIt(value types.RealType, reader types.RealReader) types.RealType {
+    return value
+}
+"#,
+    )
+    .unwrap();
+
+    let arguments = json!({
+        "file_path": dir.path().join("main.go").to_str().unwrap(),
+        "include_code": false,
+        "include_deps": true,
+    });
+
+    let result = treesitter_mcp::analysis::view_code::execute(&arguments).unwrap();
+    let text = common::get_result_text(&result);
+    let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let deps = shape
+        .get("deps")
+        .and_then(|value| value.as_object())
+        .expect("Expected deps object");
+
+    let dep_rows: Vec<Vec<String>> = deps
+        .values()
+        .filter_map(|value| value.as_str())
+        .flat_map(common::helpers::parse_compact_rows)
+        .collect();
+
+    let dep_names: Vec<&str> = dep_rows
+        .iter()
+        .filter_map(|row| row.first().map(String::as_str))
+        .collect();
+
+    assert!(dep_names.iter().any(|name| *name == "RealType"));
+    assert!(dep_names.iter().any(|name| *name == "RealReader"));
+    assert!(!dep_names.iter().any(|name| *name == "CommentGhost"));
+    assert!(!dep_names.iter().any(|name| *name == "StringGhost"));
+
+    let reader_row = dep_rows
+        .iter()
+        .find(|row| row.first().map(|name| name.as_str()) == Some("RealReader"))
+        .expect("Expected RealReader dependency row");
+    assert!(
+        reader_row
+            .get(2)
+            .map(|signature| signature.contains("interface"))
+            .unwrap_or(false),
+        "Go interface dependency should include a useful signature"
+    );
 }
