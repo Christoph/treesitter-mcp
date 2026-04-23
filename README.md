@@ -2,30 +2,11 @@
 
 ![Token efficiency comparison: MCP vs raw file reading](docs/token-efficiency-comparison.png)
 
-## Why Use This MCP
-
 - **Focused edits are about 5-6x smaller** than reading the raw source file.
 - **Call graph navigation is about 24x smaller** than reading the source file to trace callers/callees manually.
 - **Repo search and directory overview are about 47-73x smaller** than concatenating matching project files.
 - **The comparison uses real tool output** from `target/debug/treesitter-mcp` over JSON-RPC stdio, not hand-estimated examples.
 - **Token counts use `tiktoken_rs::cl100k_base()`** for both raw baselines and MCP responses.
-
-## Token Efficiency Comparison
-
-Measured on this repository after the plan-completion build on 2026-04-22.
-The standard baseline is raw shell/file reading (`cat` or `find ... -exec cat`).
-The MCP side is the compact response returned by the named MCP tool.
-
-| Standard tool/action | MCP tool | Raw tokens | MCP tokens | Saved tokens | Saved | Smaller |
-|---|---|---:|---:|---:|---:|---:|
-| `cat src/analysis/view_code.rs` | `view_code(detail="signatures")` | 9,516 | 1,992 | 7,524 | 79.1% | 4.8x |
-| `cat src/analysis/view_code.rs` | `minimal_edit_context(symbol_name="execute")` | 9,516 | 1,646 | 7,870 | 82.7% | 5.8x |
-| `cat src/analysis/view_code.rs` | `call_graph(symbol_name="execute")` | 9,516 | 390 | 9,126 | 95.9% | 24.4x |
-| `cat src/analysis/*.rs` | `find_usages(symbol="parse_code")` | 93,066 | 1,280 | 91,786 | 98.6% | 72.7x |
-| `cat src/analysis/*.rs` | `code_map(path="src/analysis")` | 93,066 | 1,979 | 91,087 | 97.9% | 47.0x |
-| `find src -name '*.rs' -exec cat` | `code_map(path="src", detail="minimal")` | 116,094 | 1,905 | 114,189 | 98.4% | 60.9x |
-
-Saved tokens = raw tokens - MCP tokens. Percent saved = `1 - MCP/raw`.
 
 ## Overview
 
@@ -38,6 +19,7 @@ Tree-sitter MCP Server exposes powerful code analysis tools through the MCP prot
 - Execute custom tree-sitter queries for advanced analysis
 - Analyze structural changes between file versions (diff-aware analysis)
 - Identify potentially affected code when making changes
+- Adds ~2,071 tokens to the context window when adding the mcp
 
 ## Supported Languages
 
