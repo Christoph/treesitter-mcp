@@ -139,9 +139,13 @@ Choose the right tool for your task:
 - **What data is available in a template?** → `template_context` (Askama template variables)
 
 #### "I'm refactoring/changing code"
+- **Before editing a signature:** `preview_impact` (estimate blast radius first)
 - **Before changes:** `find_usages` (see all usages)
 - **After changes:** `parse_diff` (verify changes at symbol level)
 - **Impact analysis:** `affected_by_diff` (what might break with risk levels)
+- **Which tests should I run?** `relevant_tests` (rank likely tests for one symbol)
+- **Did I only change what I meant to change?** `verify_edit` (compact structural guardrail)
+- **Need reviewer context for a diff?** `review_context` (diff + impact + tests + focused context)
 
 ### Tool Comparison Matrix
 
@@ -156,11 +160,15 @@ Choose the right tool for your task:
 | `view_code` (focused) | Single file | Medium | Fast | Editing specific function |
 | `minimal_edit_context` | Single symbol | Low | Fast | Focused edits with direct deps |
 | `call_graph` | Single symbol | Low-Medium | Medium | Best-effort callers/callees |
+| `preview_impact` | Single symbol + scope | Medium | Medium | Planned signature changes before editing |
 | `find_usages` | Multi-file | Medium-High | Medium | Refactoring, impact analysis |
 | `format_references` | LSP locations | Low-Medium | Fast | Compact context for precise LSP references |
 | `format_diagnostics` | LSP diagnostics | Low-Medium | Fast | Compact diagnostics with owners |
 | `affected_by_diff` | Multi-file | Medium-High | Medium | Post-change validation |
 | `parse_diff` | Single file | Low-Medium | Fast | Verify changes |
+| `relevant_tests` | Single symbol | Low-Medium | Fast | Targeted test selection after edits |
+| `verify_edit` | Single file diff | Low | Fast | Check edit stayed within intended scope |
+| `review_context` | Single file diff | Medium | Medium | Compact review bundle for changed files |
 | `symbol_at_line` | Single file | Low | Fast | Error debugging, scope lookup |
 | `query_pattern` | Single file | Medium | Medium | Complex patterns (advanced) |
 | `template_context` | Single file | Low-Medium | Fast | Askama template editing |
@@ -180,7 +188,11 @@ These tools use syntax-aware matching (best-effort, not compiler-grade):
 - `format_diagnostics`: trusts LSP-provided diagnostics, then adds syntax-aware owner context
 - `minimal_edit_context`: same-file relevance plus direct project-local dependency signatures from imports
 - `call_graph`: project-local call extraction, same-file definitions preferred, not compiler-grade resolution
+- `preview_impact`: virtual signature diff plus syntax-aware impact scan, no file edits required
 - `affected_by_diff`: relies on `find_usages` for impact analysis
+- `relevant_tests`: test discovery via file heuristics plus syntax-aware symbol matches
+- `verify_edit`: structural diff guardrail, not semantic intent verification
+- `review_context`: composition of existing tools; precision depends on the underlying diff/usages context
 - `code_map`: structural overview, scope-aware but not semantically resolved
 - `type_map`: type identification via AST, usage counts are approximate
 
@@ -214,6 +226,20 @@ For compiler-grade symbol resolution (go-to-definition, precise find-references)
 2. Make changes
 3. parse_diff ()                                → Verify changes
 4. affected_by_diff ()                          → Check impact with risk levels
+```
+
+#### Pattern 2b: Planned Signature Change
+```
+1. preview_impact (symbol_name="function_name", new_signature="...") → Estimate fallout first
+2. Make changes
+3. relevant_tests (symbol_name="function_name")                      → Run focused tests
+4. verify_edit (target_symbol="function_name")                       → Confirm edit stayed scoped
+```
+
+#### Pattern 2c: Reviewing a Local Diff
+```
+1. review_context (file_path="src/lib.rs")      → Diff + impact + tests + focused changed-symbol context
+2. view_code / minimal_edit_context as needed   → Drill deeper only where needed
 ```
 
 #### Pattern 3: Debugging Error

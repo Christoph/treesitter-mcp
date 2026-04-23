@@ -9,7 +9,8 @@ use rust_mcp_sdk::tool_box;
 
 use crate::analysis::{
     call_graph, code_map, diff, find_usages, format_diagnostics, format_references,
-    minimal_edit_context, query_pattern, symbol_at_line, view_code,
+    minimal_edit_context, query_pattern, relevant_tests, review_context, symbol_at_line,
+    verify_edit, view_code,
 };
 
 // Helper function for serde default
@@ -294,6 +295,24 @@ pub struct AffectedByDiff {
     pub scope: Option<String>,
 }
 
+/// Preview downstream impact from a planned signature change
+#[mcp_tool(
+    name = "preview_impact",
+    description = "Preview downstream blast radius for a planned signature change before editing the file. Input accepts `file_path`, `symbol_name`, and `new_signature`; optional `scope` limits the search area. Output keys: `p`, `sym`, `before`, `after`, `dh`, `d`, `h`, `affected`; detail rows are `kind|name|from|to` and affected rows reuse `symbol|change|file|line|risk`. USE WHEN: ✅ You want to estimate call-site fallout before changing a function signature ✅ You are comparing alternative signatures and want the least disruptive option."
+)]
+#[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
+pub struct PreviewImpact {
+    /// Path to the source file containing the symbol
+    pub file_path: String,
+    /// Function or method name to analyze
+    pub symbol_name: String,
+    /// Planned replacement signature
+    pub new_signature: String,
+    /// Optional directory to search for affected usages
+    #[serde(default)]
+    pub scope: Option<String>,
+}
+
 /// Execute a custom tree-sitter query pattern on a source file with code context
 #[mcp_tool(
     name = "query_pattern",
@@ -308,6 +327,56 @@ pub struct QueryPattern {
     /// Number of context lines around each match (default: 2)
     #[serde(default)]
     pub context_lines: Option<u32>,
+}
+
+/// Identify likely relevant tests for one symbol
+#[mcp_tool(
+    name = "relevant_tests",
+    description = "Identify test files and test functions most likely to exercise a symbol. Output keys: `sym`, `h`, `tests`; rows are `test_file|test_fn|line|relevance` where relevance is `direct`, `indirect`, or `same_module`. USE WHEN: ✅ After changing a symbol and deciding what tests to run ✅ Narrowing test execution before reading large test output."
+)]
+#[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
+pub struct RelevantTests {
+    /// Path to the source file containing the symbol
+    pub file_path: String,
+    /// Symbol name to analyze
+    pub symbol_name: String,
+}
+
+/// Verify that an edit stayed within the intended structural scope
+#[mcp_tool(
+    name = "verify_edit",
+    description = "Verify that an edit touched the intended symbol and avoided extra structural changes. Output keys: `p`, `cmp`, `ok`, `h`, `checks`; rows are `check|status|detail`. USE WHEN: ✅ After editing one symbol and wanting a compact regression guard ✅ Before committing or moving on to broader follow-up work."
+)]
+#[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
+pub struct VerifyEdit {
+    /// Path to the changed source file
+    pub file_path: String,
+    /// Git revision to compare against (default: "HEAD")
+    #[serde(default)]
+    pub compare_to: Option<String>,
+    /// Optional symbol expected to be changed
+    #[serde(default)]
+    pub target_symbol: Option<String>,
+}
+
+/// Build compact review context for a changed file
+#[mcp_tool(
+    name = "review_context",
+    description = "Assemble compact review context for a changed file by combining structural diff, affected usages, relevant tests, and focused edit context for changed symbols. Output keys: `p`, `cmp`, `ch`, `changes`, `ah`, `affected`, `th`, `tests`, `ctx`; `ctx` maps changed symbols to nested minimal_edit_context payloads. USE WHEN: ✅ Preparing for code review ✅ Gathering high-signal context around a local change without reading whole files."
+)]
+#[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
+pub struct ReviewContext {
+    /// Path to the changed source file
+    pub file_path: String,
+    /// Git revision to compare against (default: "HEAD")
+    #[serde(default)]
+    pub compare_to: Option<String>,
+    /// Optional directory to search for affected usages
+    #[serde(default)]
+    pub scope: Option<String>,
+    /// Maximum tokens for output (default: 2000)
+    #[serde(default)]
+    pub max_tokens: Option<u32>,
 }
 
 // Implement tool execution logic for each tool
@@ -438,6 +507,19 @@ impl AffectedByDiff {
     }
 }
 
+impl PreviewImpact {
+    pub fn call_tool(&self) -> Result<CallToolResult, CallToolError> {
+        let args = serde_json::json!({
+            "file_path": self.file_path,
+            "symbol_name": self.symbol_name,
+            "new_signature": self.new_signature,
+            "scope": self.scope
+        });
+
+        diff::execute_preview_impact(&args).map_err(CallToolError::new)
+    }
+}
+
 impl QueryPattern {
     pub fn call_tool(&self) -> Result<CallToolResult, CallToolError> {
         let args = serde_json::json!({
@@ -447,6 +529,42 @@ impl QueryPattern {
         });
 
         query_pattern::execute(&args).map_err(CallToolError::new)
+    }
+}
+
+impl RelevantTests {
+    pub fn call_tool(&self) -> Result<CallToolResult, CallToolError> {
+        let args = serde_json::json!({
+            "file_path": self.file_path,
+            "symbol_name": self.symbol_name
+        });
+
+        relevant_tests::execute(&args).map_err(CallToolError::new)
+    }
+}
+
+impl VerifyEdit {
+    pub fn call_tool(&self) -> Result<CallToolResult, CallToolError> {
+        let args = serde_json::json!({
+            "file_path": self.file_path,
+            "compare_to": self.compare_to,
+            "target_symbol": self.target_symbol
+        });
+
+        verify_edit::execute(&args).map_err(CallToolError::new)
+    }
+}
+
+impl ReviewContext {
+    pub fn call_tool(&self) -> Result<CallToolResult, CallToolError> {
+        let args = serde_json::json!({
+            "file_path": self.file_path,
+            "compare_to": self.compare_to,
+            "scope": self.scope,
+            "max_tokens": self.max_tokens
+        });
+
+        review_context::execute(&args).map_err(CallToolError::new)
     }
 }
 
@@ -537,7 +655,11 @@ tool_box!(
         SymbolAtLine,
         ParseDiff,
         AffectedByDiff,
+        PreviewImpact,
         QueryPattern,
+        RelevantTests,
+        VerifyEdit,
+        ReviewContext,
         TemplateContext,
         TypeMap
     ]

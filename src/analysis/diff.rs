@@ -12,6 +12,7 @@ use serde::Serialize;
 use serde_json::json;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::fs;
 use std::hash::{Hash, Hasher};
 use std::io;
 use std::path::Path;
@@ -922,130 +923,10 @@ pub fn execute_affected_by_diff(arguments: &Value) -> Result<CallToolResult, io:
     }
 
     // Determine search scope
-    let search_path = if let Some(s) = scope {
-        Path::new(s).to_path_buf()
-    } else {
-        find_project_root(file_path)
-            .unwrap_or_else(|| file_path.parent().unwrap_or(Path::new(".")).to_path_buf())
-    };
-
-    let mut affected_changes = Vec::new();
-
-    // For each changed symbol, find usages
-    for change in &diff_analysis.structural_changes {
-        // Skip removed symbols (no usages to find) and body-only changes (low impact)
-        if change.change_type == ChangeType::Removed {
-            continue;
-        }
-
-        // Find usages of this symbol
-        let usages_args = serde_json::json!({
-            "symbol": change.name,
-            "path": search_path.to_str().unwrap(),
-            "context_lines": 1
-        });
-
-        let usages_result = crate::analysis::find_usages::execute(&usages_args)?;
-        let usages_text = get_result_text(&usages_result);
-        let usages: serde_json::Value = serde_json::from_str(&usages_text).map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("Failed to parse usages: {e}"),
-            )
-        })?;
-
-        let rel_changed_file = path_utils::to_relative_path(file_path_str);
-        let change_owner = resolve_change_owner(file_path, change.line);
-        let usage_rows = usages
-            .get("u")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("");
-
-        // Filter out the definition itself and classify risk
-        let mut potentially_affected = Vec::new();
-
-        for row in usage_rows.lines() {
-            let fields = parse_compact_row(row);
-
-            let usage_file = fields.first().map(String::as_str).unwrap_or("");
-            let usage_line = fields
-                .get(1)
-                .and_then(|s| s.parse::<usize>().ok())
-                .unwrap_or(0);
-            let usage_column = fields
-                .get(2)
-                .and_then(|s| s.parse::<usize>().ok())
-                .unwrap_or(0);
-            let usage_type = fields.get(3).map(String::as_str).unwrap_or("reference");
-            let context = fields.get(4).map(String::as_str).unwrap_or("");
-            let usage_scope = fields.get(5).map(String::as_str).unwrap_or("");
-            let confidence = parse_confidence(fields.get(6).map(String::as_str).unwrap_or("low"));
-            let owner_hint = fields.get(7).map(String::as_str).unwrap_or("");
-
-            // Skip the definition itself
-            if usage_type == "definition" {
-                continue;
-            }
-
-            // Skip usages in the same file at the same location
-            if usage_file == rel_changed_file && usage_line == change.line {
-                continue;
-            }
-
-            let match_confidence = reclassify_confidence_for_change(
-                confidence,
-                change_owner.as_deref(),
-                owner_hint,
-                usage_scope,
-                usage_file,
-                &rel_changed_file,
-            );
-            let (risk, reason) = assess_risk(change, usage_type, match_confidence);
-
-            potentially_affected.push(AffectedUsage {
-                file: usage_file.to_string(),
-                line: usage_line,
-                column: usage_column,
-                usage_type: usage_type.to_string(),
-                code: context.to_string(),
-                confidence: match_confidence,
-                risk,
-                reason,
-            });
-        }
-
-        if !potentially_affected.is_empty() {
-            // Sort by risk (high first)
-            potentially_affected.sort_by(|a, b| {
-                let risk_order = |r: &RiskLevel| match r {
-                    RiskLevel::High => 0,
-                    RiskLevel::Medium => 1,
-                    RiskLevel::Low => 2,
-                };
-                risk_order(&a.risk).cmp(&risk_order(&b.risk))
-            });
-
-            affected_changes.push(AffectedChange {
-                symbol: change.name.clone(),
-                change_type: change.change_type.clone(),
-                change_details: change.after.clone(),
-                potentially_affected,
-            });
-        }
-    }
-
-    let affected_rows = affected_changes
-        .iter()
-        .flat_map(|chg| {
-            let change_key = change_key(&chg.change_type);
-            chg.potentially_affected.iter().map(move |u| {
-                let line = u.line.to_string();
-                let risk = risk_key(&u.risk);
-                format::format_row(&[&chg.symbol, change_key, &u.file, &line, risk])
-            })
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
+    let search_path = resolve_search_path(scope, file_path);
+    let affected_changes =
+        collect_affected_changes_for(file_path, &search_path, &diff_analysis.structural_changes)?;
+    let affected_rows = affected_rows(&affected_changes);
 
     let result = json!({
         "p": diff_analysis.file_path,
@@ -1063,7 +944,77 @@ pub fn execute_affected_by_diff(arguments: &Value) -> Result<CallToolResult, io:
     Ok(CallToolResult::success(result_json))
 }
 
-fn analyze_diff(file_path_str: &str, compare_to: String) -> Result<DiffAnalysis, io::Error> {
+pub fn execute_preview_impact(arguments: &Value) -> Result<CallToolResult, io::Error> {
+    let file_path_str = arguments["file_path"].as_str().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Missing or invalid 'file_path' argument",
+        )
+    })?;
+    let symbol_name = arguments["symbol_name"]
+        .as_str()
+        .or_else(|| arguments["symbol"].as_str())
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Missing or invalid 'symbol_name' argument",
+            )
+        })?;
+    let new_signature = arguments["new_signature"].as_str().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Missing or invalid 'new_signature' argument",
+        )
+    })?;
+    let scope = arguments["scope"].as_str();
+
+    let file_path = Path::new(file_path_str);
+    let current_symbol = find_symbol_in_current_file(file_path, symbol_name)?;
+    let before_signature = current_symbol.signature.clone().unwrap_or_default();
+    let details = analyze_signature_changes(Some(&before_signature), Some(new_signature));
+    let change = StructuralChange {
+        change_type: ChangeType::SignatureChanged,
+        symbol_type: current_symbol.symbol_type,
+        name: current_symbol.name.clone(),
+        line: current_symbol.line,
+        before: Some(before_signature.clone()),
+        after: Some(new_signature.to_string()),
+        details,
+    };
+
+    let search_path = resolve_search_path(scope, file_path);
+    let affected_changes = if before_signature == new_signature {
+        Vec::new()
+    } else {
+        collect_affected_changes_for(file_path, &search_path, &[change])?
+    };
+
+    let details = analyze_signature_changes(Some(&before_signature), Some(new_signature));
+    let result = json!({
+        "p": path_utils::to_relative_path(file_path_str),
+        "sym": current_symbol.name,
+        "before": before_signature,
+        "after": new_signature,
+        "dh": "kind|name|from|to",
+        "d": change_detail_rows(&details),
+        "h": "symbol|change|file|line|risk",
+        "affected": affected_rows(&affected_changes),
+    });
+
+    let result_json = serde_json::to_string(&result).map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Failed to serialize preview impact result: {e}"),
+        )
+    })?;
+
+    Ok(CallToolResult::success(result_json))
+}
+
+pub(crate) fn analyze_diff(
+    file_path_str: &str,
+    compare_to: String,
+) -> Result<DiffAnalysis, io::Error> {
     log::info!("Analyzing diff for: {file_path_str} against {compare_to}");
 
     let file_path = Path::new(file_path_str);
@@ -1165,7 +1116,7 @@ fn risk_key(risk: &RiskLevel) -> &'static str {
     }
 }
 
-fn format_change(change: &StructuralChange) -> String {
+pub(crate) fn format_change(change: &StructuralChange) -> String {
     match change.change_type {
         ChangeType::Added => "added".to_string(),
         ChangeType::Removed => "removed".to_string(),
@@ -1175,6 +1126,21 @@ fn format_change(change: &StructuralChange) -> String {
             _ => "sig_changed".to_string(),
         },
     }
+}
+
+fn change_detail_rows(details: &[ChangeDetail]) -> String {
+    details
+        .iter()
+        .map(|detail| {
+            format::format_row(&[
+                &detail.kind,
+                detail.name.as_deref().unwrap_or(""),
+                detail.from.as_deref().unwrap_or(""),
+                detail.to.as_deref().unwrap_or(""),
+            ])
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn parse_compact_row(row: &str) -> Vec<String> {
@@ -1343,6 +1309,180 @@ fn get_result_text(result: &CallToolResult) -> String {
         }
     }
     String::new()
+}
+
+fn resolve_search_path(scope: Option<&str>, file_path: &Path) -> std::path::PathBuf {
+    if let Some(scope) = scope {
+        Path::new(scope).to_path_buf()
+    } else {
+        find_project_root(file_path)
+            .unwrap_or_else(|| file_path.parent().unwrap_or(Path::new(".")).to_path_buf())
+    }
+}
+
+fn collect_affected_changes_for(
+    file_path: &Path,
+    search_path: &Path,
+    changes: &[StructuralChange],
+) -> Result<Vec<AffectedChange>, io::Error> {
+    let mut affected_changes = Vec::new();
+    let rel_changed_file = path_utils::to_relative_path(&file_path.to_string_lossy());
+
+    for change in changes {
+        if change.change_type == ChangeType::Removed {
+            continue;
+        }
+
+        let usages_args = serde_json::json!({
+            "symbol": change.name,
+            "path": search_path.to_str().unwrap_or("."),
+            "context_lines": 1
+        });
+
+        let usages_result = crate::analysis::find_usages::execute(&usages_args)?;
+        let usages_text = get_result_text(&usages_result);
+        let usages: serde_json::Value = serde_json::from_str(&usages_text).map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Failed to parse usages: {e}"),
+            )
+        })?;
+
+        let change_owner = resolve_change_owner(file_path, change.line);
+        let usage_rows = usages
+            .get("u")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("");
+        let mut potentially_affected = Vec::new();
+
+        for row in usage_rows.lines() {
+            let fields = parse_compact_row(row);
+            let usage_file = fields.first().map(String::as_str).unwrap_or("");
+            let usage_line = fields
+                .get(1)
+                .and_then(|s| s.parse::<usize>().ok())
+                .unwrap_or(0);
+            let usage_column = fields
+                .get(2)
+                .and_then(|s| s.parse::<usize>().ok())
+                .unwrap_or(0);
+            let usage_type = fields.get(3).map(String::as_str).unwrap_or("reference");
+            let context = fields.get(4).map(String::as_str).unwrap_or("");
+            let usage_scope = fields.get(5).map(String::as_str).unwrap_or("");
+            let confidence = parse_confidence(fields.get(6).map(String::as_str).unwrap_or("low"));
+            let owner_hint = fields.get(7).map(String::as_str).unwrap_or("");
+
+            if usage_type == "definition" {
+                continue;
+            }
+
+            if usage_file == rel_changed_file && usage_line == change.line {
+                continue;
+            }
+
+            let match_confidence = reclassify_confidence_for_change(
+                confidence,
+                change_owner.as_deref(),
+                owner_hint,
+                usage_scope,
+                usage_file,
+                &rel_changed_file,
+            );
+            let (risk, reason) = assess_risk(change, usage_type, match_confidence);
+
+            potentially_affected.push(AffectedUsage {
+                file: usage_file.to_string(),
+                line: usage_line,
+                column: usage_column,
+                usage_type: usage_type.to_string(),
+                code: context.to_string(),
+                confidence: match_confidence,
+                risk,
+                reason,
+            });
+        }
+
+        if !potentially_affected.is_empty() {
+            potentially_affected.sort_by(|a, b| {
+                let risk_order = |r: &RiskLevel| match r {
+                    RiskLevel::High => 0,
+                    RiskLevel::Medium => 1,
+                    RiskLevel::Low => 2,
+                };
+                risk_order(&a.risk).cmp(&risk_order(&b.risk))
+            });
+            affected_changes.push(AffectedChange {
+                symbol: change.name.clone(),
+                change_type: change.change_type.clone(),
+                change_details: change.after.clone(),
+                potentially_affected,
+            });
+        }
+    }
+
+    Ok(affected_changes)
+}
+
+fn affected_rows(affected_changes: &[AffectedChange]) -> String {
+    affected_changes
+        .iter()
+        .flat_map(|chg| {
+            let change_key = change_key(&chg.change_type);
+            chg.potentially_affected.iter().map(move |u| {
+                let line = u.line.to_string();
+                let risk = risk_key(&u.risk);
+                format::format_row(&[&chg.symbol, change_key, &u.file, &line, risk])
+            })
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+struct CurrentSymbol {
+    symbol_type: SymbolType,
+    name: String,
+    line: usize,
+    signature: Option<String>,
+}
+
+fn find_symbol_in_current_file(
+    file_path: &Path,
+    symbol_name: &str,
+) -> Result<CurrentSymbol, io::Error> {
+    let language = detect_language(file_path).map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!("Cannot detect language: {e}"),
+        )
+    })?;
+    let current_content = fs::read_to_string(file_path)?;
+    let tree = parse_code(&current_content, language).map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Failed to parse current version: {e}"),
+        )
+    })?;
+    let mut symbols = extract_symbols(&tree, &current_content, language)?
+        .into_values()
+        .filter(|symbol| symbol.name == symbol_name)
+        .collect::<Vec<_>>();
+    symbols.sort_by_key(|symbol| symbol.line);
+    let symbol = symbols.into_iter().next().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            format!(
+                "Symbol '{symbol_name}' not found in {}",
+                file_path.display()
+            ),
+        )
+    })?;
+
+    Ok(CurrentSymbol {
+        symbol_type: symbol.symbol_type,
+        name: symbol.name,
+        line: symbol.line,
+        signature: symbol.signature,
+    })
 }
 
 fn resolve_change_owner(file_path: &Path, line: usize) -> Option<String> {
