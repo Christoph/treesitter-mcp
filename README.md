@@ -2,15 +2,25 @@
 
 AST-first MCP for coding agents. Instead of pasting raw files into the context window, it returns compact structural answers: signatures, usage rows, focused edit context, impact summaries, and review bundles with explicit token budgets.
 
-![Token efficiency comparison: MCP vs raw file reading](docs/token-efficiency-comparison.png)
+![Token efficiency comparison: MCP vs agent-style shell baselines](docs/token-efficiency-comparison.svg)
 
-## Why It Wins
+## What You Get
 
-- **Focused edits average about 5.0x smaller** than reading the whole file.
-- **Call graph tracing averages about 21.1x smaller** than manual multi-file reads.
-- **Repo-wide search averages about 78.1x smaller** than concatenating the search scope.
-- **Directory maps average about 27.7x smaller** than concatenating the whole tree.
-- **The numbers are enforced in tests**, not just claimed in docs.
+Numbers below compare MCP payloads against the shell workflow an agent would actually
+reach for (grep, find + head, targeted reads) — not against cat-everything straw-men.
+
+- **File overview ~2.7× smaller** than `cat file` (signatures instead of bodies).
+- **Focused edit ~5.0× smaller** than `cat file` (one symbol plus direct deps, not the whole file).
+- **Repo search ~4.5× smaller** than `grep -rn -C3 symbol`, with added scope, owner, and usage-type per hit.
+- **Directory map ~3.2× smaller** than `find -type f + head -50` per file, and structured rather than raw text.
+- **Call-graph tracing ~57× smaller** than grepping then cat-ing each matched file (the workflow for "who calls X?").
+- **~2,071 tokens** added to the agent context window to register the server.
+- **Payload-size regressions fail CI** — if a refactor bloats a tool output, the build breaks.
+
+These are indicative averages over 18 runs across Rust, TypeScript, Python, and JavaScript
+fixtures — treat them as "order-of-magnitude", not precise guarantees. Token savings alone
+do not prove a quality win; see [BENCHMARK.md](BENCHMARK.md) for the accuracy-benchmark
+methodology this project is building out.
 
 ## What It Does
 
@@ -45,19 +55,30 @@ If you need the full installation and configuration details, keep reading below.
 ## Token Efficiency Comparison
 
 Measured on the current code after rebuilding the server.
-The baseline side uses standard shell-style raw reads (`cat` or `find ... -exec cat`).
-The MCP side uses the exact JSON payload returned by each tool implementation, which is the same payload shape the built MCP server returns.
+Baselines emulate the shell workflow an agent would actually run (grep, find + head,
+targeted reads) — **not** `cat <every file in scope>`. The MCP side is the exact JSON
+payload returned by each tool, the same shape the built MCP server returns.
 All token counts below are **averages**, not single examples.
 
-| Workflow average | Samples | Standard tool/action | MCP tool | Raw avg tokens | MCP avg tokens | Saved avg tokens | Saved | Smaller |
+| Workflow average | Samples | Agent-style baseline | MCP tool | Raw avg tokens | MCP avg tokens | Saved avg tokens | Saved | Smaller |
 |---|---|---:|---:|---:|---:|---:|
-| Overview average | 4 | `cat <4 source files>` | `view_code(detail="signatures")` | 852 | 314 | 538 | 63.1% | 2.7x |
-| Focused edit average | 4 | `cat <4 source files>` | `minimal_edit_context(symbol_name=...)` | 852 | 170 | 682 | 80.0% | 5.0x |
-| Call graph average | 4 | `cat <4 analysis files>` | `call_graph(symbol_name=...)` | 5,642 | 267 | 5,375 | 95.3% | 21.1x |
-| Repo search average | 3 | `cat src/analysis/*.rs` | `find_usages(symbol=...)` | 98,590 | 1,263 | 97,327 | 98.7% | 78.1x |
-| Directory map average | 3 | `find <3 source trees> -exec cat` | `code_map(detail="minimal")` | 76,364 | 2,760 | 73,604 | 96.4% | 27.7x |
+| Overview average | 4 | `cat <source file>` | `view_code(detail="signatures")` | 852 | 314 | 538 | 63.1% | 2.7x |
+| Focused edit average | 4 | `cat <source file>` | `minimal_edit_context(symbol_name=...)` | 852 | 170 | 682 | 80.0% | 5.0x |
+| Call graph average | 4 | `grep -rln symbol src \| xargs cat` | `call_graph(symbol_name=...)` | 59,513 | 1,044 | 58,469 | 98.2% | 57.0x |
+| Repo search average | 3 | `grep -rn -C3 symbol src/analysis` | `find_usages(symbol=...)` | 3,803 | 837 | 2,966 | 78.0% | 4.5x |
+| Directory map average | 3 | `find -type f + head -50 each file` | `code_map(detail="minimal")` | 8,978 | 2,783 | 6,195 | 69.0% | 3.2x |
 
 Saved avg tokens = raw avg tokens - MCP avg tokens. Percent saved = `1 - MCP/raw`.
+
+Notes:
+- Repo search baseline is `grep -rn -C3`, not bare `grep -l`. Bare grep returns only
+  locations, so it would appear cheaper than MCP for pure locate; the fair comparison
+  is "locate + a few lines of context", which is what `find_usages` returns plus scope
+  and usage-type metadata.
+- Call-graph baseline reads every file whose text contains the symbol, because
+  tracing callers without LSP requires reading those files. This is what makes it so
+  much more expensive than tools that resolve callers structurally.
+- Sample sizes (3–4 per row) are small — treat multipliers as indicative, not precise.
 
 ## Use This Instead of Raw Reads
 
@@ -87,9 +108,16 @@ The averaged benchmark uses 18 total runs:
 
 For each run:
 
-- the **standard baseline** token count is the raw text that a normal shell read would return (`cat file` or concatenated file contents for a directory scope)
+- the **baseline** token count emulates the shell workflow an agent would actually run:
+  - `cat file` for file-overview and focused-edit scenarios
+  - `grep -rn -C3 <symbol> <scope>` for repo search
+  - `grep -rln <symbol> <scope> | xargs cat` for call-graph tracing (read every file that
+    mentions the symbol, since tracing callers without LSP requires reading them)
+  - `find <path> -type f` listing plus `head -n 50 <file>` per source file for directory maps
 - the **MCP token count** is the tool response JSON text
 - both sides are counted with `tiktoken_rs::cl100k_base()`
+- baselines use word-boundary matching to approximate real grep behaviour, and skip
+  files whose language the server does not recognise (same filter the MCP side uses)
 
 ## Overview
 
@@ -127,16 +155,9 @@ Tree-sitter MCP Server exposes powerful code analysis tools through the MCP prot
 
 ### Homebrew (macOS)
 
-Install directly from this repository's formula:
-
 ```bash
-brew install --formula https://raw.githubusercontent.com/Christoph/treesitter-mcp/main/Formula/treesitter-mcp.rb
-```
-
-To install the unreleased `main` branch instead of the pinned release, use:
-
-```bash
-brew install --HEAD --formula https://raw.githubusercontent.com/Christoph/treesitter-mcp/main/Formula/treesitter-mcp.rb
+brew tap christoph/treesitter-mcp
+brew install treesitter-mcp
 ```
 
 ### Release Binaries (Linux and Windows)
