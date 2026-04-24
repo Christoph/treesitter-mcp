@@ -4,28 +4,52 @@
 
 ## Why Use This MCP
 
-- **Focused edits are about 5-6x smaller** than reading the raw source file.
-- **Call graph navigation is about 24x smaller** than reading the source file to trace callers/callees manually.
-- **Repo search and directory overview are about 47-73x smaller** than concatenating matching project files.
-- **The comparison uses real tool output** from `target/debug/treesitter-mcp` over JSON-RPC stdio, not hand-estimated examples.
-- **Token counts use `tiktoken_rs::cl100k_base()`** for both raw baselines and MCP responses.
+- **Focused edits average about 5.0x smaller** than reading the whole file.
+- **Call graph tracing averages about 20.9x smaller** than reading the source file manually.
+- **Repo-wide search averages about 77.8x smaller** than concatenating the search scope.
+- **Directory maps average about 27.7x smaller** than concatenating the whole tree.
+- **Every number below is an average across multiple files/runs**, counted with `tiktoken_rs::cl100k_base()`.
 
 ## Token Efficiency Comparison
 
-Measured on this repository after the plan-completion build on 2026-04-22.
-The standard baseline is raw shell/file reading (`cat` or `find ... -exec cat`).
-The MCP side is the compact response returned by the named MCP tool.
+Measured on the current code after rebuilding the server.
+The baseline side uses standard shell-style raw reads (`cat` or `find ... -exec cat`).
+The MCP side uses the exact JSON payload returned by each tool implementation, which is the same payload shape the built MCP server returns.
+All token counts below are **averages**, not single examples.
 
-| Standard tool/action | MCP tool | Raw tokens | MCP tokens | Saved tokens | Saved | Smaller |
+| Workflow average | Samples | Standard tool/action | MCP tool | Raw avg tokens | MCP avg tokens | Saved avg tokens | Saved | Smaller |
 |---|---|---:|---:|---:|---:|---:|
-| `cat src/analysis/view_code.rs` | `view_code(detail="signatures")` | 9,516 | 1,992 | 7,524 | 79.1% | 4.8x |
-| `cat src/analysis/view_code.rs` | `minimal_edit_context(symbol_name="execute")` | 9,516 | 1,646 | 7,870 | 82.7% | 5.8x |
-| `cat src/analysis/view_code.rs` | `call_graph(symbol_name="execute")` | 9,516 | 390 | 9,126 | 95.9% | 24.4x |
-| `cat src/analysis/*.rs` | `find_usages(symbol="parse_code")` | 93,066 | 1,280 | 91,786 | 98.6% | 72.7x |
-| `cat src/analysis/*.rs` | `code_map(path="src/analysis")` | 93,066 | 1,979 | 91,087 | 97.9% | 47.0x |
-| `find src -name '*.rs' -exec cat` | `code_map(path="src", detail="minimal")` | 116,094 | 1,905 | 114,189 | 98.4% | 60.9x |
+| Overview average | 4 | `cat <4 source files>` | `view_code(detail="signatures")` | 852 | 314 | 538 | 63.1% | 2.7x |
+| Focused edit average | 4 | `cat <4 source files>` | `minimal_edit_context(symbol_name=...)` | 852 | 170 | 682 | 80.0% | 5.0x |
+| Call graph average | 4 | `cat <4 analysis files>` | `call_graph(symbol_name=...)` | 5,572 | 267 | 5,305 | 95.2% | 20.9x |
+| Repo search average | 3 | `cat src/analysis/*.rs` | `find_usages(symbol=...)` | 98,312 | 1,263 | 97,049 | 98.7% | 77.8x |
+| Directory map average | 3 | `find <3 source trees> -exec cat` | `code_map(detail="minimal")` | 76,179 | 2,755 | 73,424 | 96.4% | 27.7x |
 
-Saved tokens = raw tokens - MCP tokens. Percent saved = `1 - MCP/raw`.
+Saved avg tokens = raw avg tokens - MCP avg tokens. Percent saved = `1 - MCP/raw`.
+
+## Why These Tools Beat Default Reads
+
+- `view_code(detail="signatures")` is better than `cat` when you only need structure, because it drops bodies and keeps the API surface.
+- `minimal_edit_context` is better than `cat` for edits because it keeps the target symbol, direct deps, relevant types, and relevant imports instead of the whole file.
+- `call_graph` is better than manual file reading because it returns caller/callee edges directly instead of forcing multi-file tracing.
+- `find_usages` is better than concatenating a whole search scope because it returns only the matched symbol rows with scope and context.
+- `code_map` is better than dumping a directory because it summarizes the tree at the symbol level instead of loading every implementation body.
+
+## Measurement Method
+
+The averaged benchmark uses 18 total runs:
+
+- 4 file-overview runs across Rust, TypeScript, Python, and JavaScript fixture files
+- 4 focused-edit runs across the same four source files
+- 4 call-graph runs across analysis modules in this repository
+- 3 repo-search runs in `src/analysis`
+- 3 directory-map runs across `src`, `src/analysis`, and `tests/fixtures/complex_rust_service/src`
+
+For each run:
+
+- the **standard baseline** token count is the raw text that a normal shell read would return (`cat file` or concatenated file contents for a directory scope)
+- the **MCP token count** is the tool response JSON text
+- both sides are counted with `tiktoken_rs::cl100k_base()`
 
 ## Overview
 
