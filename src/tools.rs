@@ -25,7 +25,7 @@ fn default_one() -> Option<u32> {
 /// View a source file with flexible detail levels and automatic type inclusion
 #[mcp_tool(
     name = "view_code",
-    description = "View file in compact schema (BREAKING). Output keys: `p` (relative path), `h` (header for f/s/c rows), `f` (functions rows), `s` (structs rows), `c` (classes rows), optional deps `deps` (map dep_path -> type rows), plus optional tables: imports `ih`+`im`, trait methods `th`+`tm`, interfaces `ah`+`i`, properties `ph`+`pr`, class implements `ch`+`ci`, class methods `mh`+`cm`, Rust impl methods `bh`+`bm`. Rows are newline-delimited; fields are pipe-delimited and escaped: `\\` -> `\\\\`, `\n` -> `\\n`, `\r` -> `\\r`, `|` -> `\\|`. Meta: `@.t=true` when truncated. DETAIL: 'signatures' (name/line/sig), 'full' (adds doc/code). FOCUS: set focus_symbol to keep code only for that symbol. LSP: pass definition_location from textDocument/definition to include the exact dependency type."
+    description = "View file in compact schema (BREAKING). Output keys: `p` (relative path), `h` (header for f/s/c rows), `f` (functions rows), `s` (structs rows), `c` (classes rows), optional deps `deps` (map dep_path -> type rows), plus optional tables: imports `ih`+`im`, trait methods `th`+`tm`, interfaces `ah`+`i`, properties `ph`+`pr`, class implements `ch`+`ci`, class methods `mh`+`cm`, Rust impl methods `bh`+`bm`. Rows are newline-delimited; fields are pipe-delimited and escaped: `\\` -> `\\\\`, `\n` -> `\\n`, `\r` -> `\\r`, `|` -> `\\|`. Meta: `@.t=true` when truncated. DETAIL: 'signatures' (name/line/sig), 'full' (adds doc/code). COMMENTS: `comment_mode=\"leading\"` prepends the contiguous leading comment block to returned code fields. FOCUS: set focus_symbol to keep code only for that symbol. LSP: pass definition_location from textDocument/definition to include the exact dependency type."
 )]
 #[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
 pub struct ViewCode {
@@ -46,6 +46,12 @@ pub struct ViewCode {
     /// Optional LSP or compact definition location for exact dependency type selection.
     #[serde(default)]
     pub definition_location: Option<ReferenceLocation>,
+
+    /// Optional comment handling for returned code fields.
+    /// - "none" (default): keep current compact behavior
+    /// - "leading": prepend the contiguous leading comment block above returned symbols
+    #[serde(default)]
+    pub comment_mode: Option<String>,
 }
 
 /// Generate a high-level code map of a directory with token budget awareness and detail levels
@@ -210,7 +216,7 @@ pub struct FormatDiagnostics {
 /// Return compact context needed to edit one symbol
 #[mcp_tool(
     name = "minimal_edit_context",
-    description = "Return focused edit context for one symbol. Output keys include `p`, `sym`, `scope`, `h`, `target`, optional `dh`+`deps`, optional `tyh`+`types`, optional `ih`+`imports`, and optional `@.t=true` when truncated. USE WHEN: ✅ Editing one known function/method and need the smallest useful context ✅ Avoiding full-file reads for large files. DON'T USE: ❌ Exploring an unfamiliar file → use view_code or code_map first. Current scope: same-file deps/types/imports plus direct project-local dependency signatures from imports."
+    description = "Return focused edit context for one symbol. Output keys include `p`, `sym`, `scope`, `h`, `target`, optional `dh`+`deps`, optional `tyh`+`types`, optional `ih`+`imports`, and optional `@.t=true` when truncated. USE WHEN: ✅ Editing one known function/method and need the smallest useful context ✅ Avoiding full-file reads for large files. DON'T USE: ❌ Exploring an unfamiliar file → use view_code or code_map first. COMMENTS: `comment_mode=\"leading\"` prepends the contiguous leading comment block to the target code row. Current scope: same-file deps/types/imports plus direct project-local dependency signatures from imports."
 )]
 #[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
 pub struct MinimalEditContext {
@@ -221,6 +227,11 @@ pub struct MinimalEditContext {
     /// Maximum tokens for output (default: 2000)
     #[serde(default)]
     pub max_tokens: Option<u32>,
+    /// Optional comment handling for the target code row.
+    /// - "none" (default): keep current compact behavior
+    /// - "leading": prepend the contiguous leading comment block above the target symbol
+    #[serde(default)]
+    pub comment_mode: Option<String>,
 }
 
 /// Return compact callers/callees for one symbol

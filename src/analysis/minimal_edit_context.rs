@@ -12,8 +12,8 @@ use tree_sitter::{Node, Tree};
 use crate::analysis::dependencies::resolve_dependencies;
 use crate::analysis::path_utils;
 use crate::analysis::shape::{
-    extract_enhanced_shape, EnhancedFileShape, EnhancedFunctionInfo, EnhancedStructInfo,
-    ImportInfo, InterfaceInfo,
+    extract_enhanced_shape, prepend_leading_comments_to_code, CommentMode, EnhancedFileShape,
+    EnhancedFunctionInfo, EnhancedStructInfo, ImportInfo, InterfaceInfo,
 };
 use crate::common::format;
 use crate::mcp_types::{CallToolResult, CallToolResultExt};
@@ -42,6 +42,18 @@ struct SymbolSignature {
     signature: String,
 }
 
+fn parse_comment_mode(arguments: &Value) -> CommentMode {
+    if arguments
+        .get("include_comments")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return CommentMode::Leading;
+    }
+
+    CommentMode::from_option(arguments.get("comment_mode").and_then(Value::as_str))
+}
+
 /// Return compact context needed to edit one symbol.
 pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
     let file_path = arguments["file_path"].as_str().ok_or_else(|| {
@@ -59,6 +71,7 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
                 "Missing or invalid 'symbol_name' argument",
             )
         })?;
+    let comment_mode = parse_comment_mode(arguments);
     let max_tokens = arguments["max_tokens"]
         .as_u64()
         .map(|value| value as usize)
@@ -110,6 +123,14 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
     let target_text = format!("{}\n{}", target.signature, target.code);
     let imports = relevant_imports(&shape.imports, &target_text);
     let types = relevant_types(&shape, &target_text);
+    let target_code = prepend_leading_comments_to_code(
+        &source,
+        target.line,
+        language,
+        Some(target.code.clone()),
+        comment_mode,
+    )
+    .unwrap_or_else(|| target.code.clone());
 
     let mut out = Map::new();
     out.insert(
@@ -119,7 +140,10 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
     out.insert("sym".to_string(), json!(symbol));
     out.insert("scope".to_string(), json!(target.scope));
     out.insert("h".to_string(), json!(TARGET_HEADER));
-    out.insert("target".to_string(), json!(target_to_row(&target)));
+    out.insert(
+        "target".to_string(),
+        json!(target_to_row(&target, target_code.as_str())),
+    );
 
     let dep_rows = signatures_to_rows(&deps);
     if !dep_rows.is_empty() {
@@ -500,9 +524,9 @@ fn token_in_text(token: &str, text: &str) -> bool {
         .any(|part| part == token)
 }
 
-fn target_to_row(target: &TargetSymbol) -> String {
+fn target_to_row(target: &TargetSymbol, code: &str) -> String {
     let line = target.line.to_string();
-    format::format_row(&[&target.name, &line, &target.signature, &target.code])
+    format::format_row(&[&target.name, &line, &target.signature, code])
 }
 
 fn signatures_to_rows(signatures: &[SymbolSignature]) -> String {
@@ -531,11 +555,9 @@ fn enforce_budget(out: &mut Map<String, Value>, max_tokens: usize) -> Result<(),
     let bpe = cl100k_base()
         .map_err(|e| io::Error::other(format!("Failed to initialize tiktoken tokenizer: {e}")))?;
 
-    for keys in [
-        &["imports", "ih"][..],
-        &["types", "tyh"][..],
-        &["deps", "dh"][..],
-    ] {
+    let mut truncated = false;
+
+    loop {
         let json_text = serde_json::to_string(&Value::Object(out.clone())).map_err(|e| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -543,14 +565,62 @@ fn enforce_budget(out: &mut Map<String, Value>, max_tokens: usize) -> Result<(),
             )
         })?;
         if bpe.encode_with_special_tokens(&json_text).len() <= max_tokens {
+            if truncated {
+                out.insert("@".to_string(), json!({"t": true}));
+            }
             return Ok(());
         }
 
-        for key in keys {
-            out.remove(*key);
+        if trim_multiline_field(out, "imports", "ih")
+            || trim_multiline_field(out, "types", "tyh")
+            || trim_multiline_field(out, "deps", "dh")
+        {
+            truncated = true;
+            continue;
         }
+
+        let mut removed_any = false;
+        for keys in [
+            &["imports", "ih"][..],
+            &["types", "tyh"][..],
+            &["deps", "dh"][..],
+        ] {
+            let removed = keys
+                .iter()
+                .fold(false, |acc, key| out.remove(*key).is_some() || acc);
+            if removed {
+                truncated = true;
+                removed_any = true;
+                break;
+            }
+        }
+
+        if removed_any {
+            continue;
+        }
+
         out.insert("@".to_string(), json!({"t": true}));
+        return Ok(());
+    }
+}
+
+fn trim_multiline_field(out: &mut Map<String, Value>, field: &str, header: &str) -> bool {
+    let Some(value) = out.get(field).and_then(Value::as_str) else {
+        return false;
+    };
+    let mut lines = value.lines().collect::<Vec<_>>();
+    if lines.is_empty() {
+        out.remove(field);
+        out.remove(header);
+        return true;
     }
 
-    Ok(())
+    lines.pop();
+    if lines.is_empty() {
+        out.remove(field);
+        out.remove(header);
+    } else {
+        out.insert(field.to_string(), json!(lines.join("\n")));
+    }
+    true
 }

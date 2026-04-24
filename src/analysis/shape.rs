@@ -2038,6 +2038,107 @@ fn extract_code(node: Node, source: &str) -> Result<Option<String>, io::Error> {
     }
 }
 
+pub fn prepend_leading_comments_to_code(
+    source: &str,
+    start_line: usize,
+    language: Language,
+    code: Option<String>,
+    mode: CommentMode,
+) -> Option<String> {
+    let code = code?;
+    if !mode.includes_leading() {
+        return Some(code);
+    }
+
+    let comments = extract_leading_comment_block(source, start_line, language)?;
+    Some(format!("{comments}\n{code}"))
+}
+
+fn extract_leading_comment_block(
+    source: &str,
+    start_line: usize,
+    language: Language,
+) -> Option<String> {
+    let lines: Vec<&str> = source.lines().collect();
+    let mut idx = start_line.checked_sub(2)? as isize;
+    if idx < 0 || idx as usize >= lines.len() {
+        return None;
+    }
+
+    if lines[idx as usize].trim().is_empty() {
+        return None;
+    }
+
+    let mut collected = Vec::new();
+
+    while idx >= 0 {
+        let line = lines[idx as usize];
+        let trimmed = line.trim();
+
+        if trimmed.is_empty() {
+            break;
+        }
+
+        if is_line_comment_text(trimmed, language) {
+            collected.push(line);
+            idx -= 1;
+            continue;
+        }
+
+        if supports_block_comments(language) && trimmed.ends_with("*/") {
+            collected.push(line);
+            idx -= 1;
+
+            while idx >= 0 {
+                let block_line = lines[idx as usize];
+                collected.push(block_line);
+                if block_line.contains("/*") {
+                    idx -= 1;
+                    break;
+                }
+                idx -= 1;
+            }
+            continue;
+        }
+
+        break;
+    }
+
+    if collected.is_empty() {
+        None
+    } else {
+        collected.reverse();
+        Some(collected.join("\n"))
+    }
+}
+
+fn is_line_comment_text(trimmed: &str, language: Language) -> bool {
+    match language {
+        Language::Python => trimmed.starts_with('#'),
+        Language::Rust
+        | Language::JavaScript
+        | Language::TypeScript
+        | Language::Swift
+        | Language::CSharp
+        | Language::Java
+        | Language::Go => trimmed.starts_with("//"),
+        _ => false,
+    }
+}
+
+fn supports_block_comments(language: Language) -> bool {
+    matches!(
+        language,
+        Language::Rust
+            | Language::JavaScript
+            | Language::TypeScript
+            | Language::Swift
+            | Language::CSharp
+            | Language::Java
+            | Language::Go
+    )
+}
+
 /// Extract doc comment from a node
 fn extract_doc_comment(
     node: Node,
@@ -2260,6 +2361,25 @@ pub struct HtmlFileShape {
     /// Style references
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub styles: Vec<StyleInfo>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommentMode {
+    None,
+    Leading,
+}
+
+impl CommentMode {
+    pub fn from_option(value: Option<&str>) -> Self {
+        match value {
+            Some("leading") => CommentMode::Leading,
+            _ => CommentMode::None,
+        }
+    }
+
+    pub fn includes_leading(self) -> bool {
+        matches!(self, CommentMode::Leading)
+    }
 }
 
 // ============================================================================

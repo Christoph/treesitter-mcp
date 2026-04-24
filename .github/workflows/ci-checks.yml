@@ -1,29 +1,75 @@
-name: Rust CI Checks
+name: CI
 
-# Triggers the workflow on pushes and pull requests targeting the main branch
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
 
 jobs:
-  test_and_lint:
-    runs-on: ubuntu-latest # Use a Linux runner for efficiency
+  quality:
+    name: Quality
+    runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Repository
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Rust toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
 
-      - name: Run Unit Tests
+      - name: Restore Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Run test suite
         run: cargo test
-        
-      - name: Run Rust Linter
+
+      - name: Run clippy
         run: cargo clippy -- -D warnings
+
+  token_efficiency:
+    name: Token Efficiency
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Restore Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Verify benchmark thresholds
+        run: cargo test test_average_token_efficiency_for_core_workflows -- --nocapture
+
+      - name: Capture benchmark report
+        run: cargo test report_average_token_benchmarks -- --ignored --nocapture | tee token-benchmarks.txt
+
+      - name: Render benchmark summary
+        run: bash scripts/render_token_benchmark_summary.sh token-benchmarks.txt > token-benchmarks.md
+
+      - name: Publish benchmark summary
+        run: cat token-benchmarks.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload benchmark artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: token-benchmark-summary
+          path: |
+            token-benchmarks.txt
+            token-benchmarks.md

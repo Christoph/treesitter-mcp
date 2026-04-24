@@ -22,9 +22,9 @@ use tiktoken_rs::cl100k_base;
 use crate::analysis::dependencies::resolve_dependencies;
 use crate::analysis::path_utils;
 use crate::analysis::shape::{
-    extract_enhanced_shape, EnhancedClassInfo, EnhancedFileShape, EnhancedFunctionInfo,
-    EnhancedStructInfo, ImplBlockInfo, ImportInfo, InterfaceInfo, MethodInfo, PropertyInfo,
-    TraitInfo,
+    extract_enhanced_shape, prepend_leading_comments_to_code, CommentMode, EnhancedClassInfo,
+    EnhancedFileShape, EnhancedFunctionInfo, EnhancedStructInfo, ImplBlockInfo, ImportInfo,
+    InterfaceInfo, MethodInfo, PropertyInfo, TraitInfo,
 };
 use crate::common::budget;
 use crate::common::budget::BudgetTracker;
@@ -103,6 +103,111 @@ impl DetailLevel {
     }
 }
 
+fn parse_comment_mode(arguments: &Value) -> CommentMode {
+    if arguments
+        .get("include_comments")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return CommentMode::Leading;
+    }
+
+    CommentMode::from_option(arguments.get("comment_mode").and_then(Value::as_str))
+}
+
+fn apply_comment_mode(
+    shape: &mut EnhancedFileShape,
+    source: &str,
+    language: crate::parser::Language,
+    comment_mode: CommentMode,
+) {
+    if comment_mode == CommentMode::None {
+        return;
+    }
+
+    for func in &mut shape.functions {
+        func.code = prepend_leading_comments_to_code(
+            source,
+            func.line,
+            language,
+            func.code.take(),
+            comment_mode,
+        );
+    }
+
+    for struct_info in &mut shape.structs {
+        struct_info.code = prepend_leading_comments_to_code(
+            source,
+            struct_info.line,
+            language,
+            struct_info.code.take(),
+            comment_mode,
+        );
+    }
+
+    for class in &mut shape.classes {
+        class.code = prepend_leading_comments_to_code(
+            source,
+            class.line,
+            language,
+            class.code.take(),
+            comment_mode,
+        );
+        for method in &mut class.methods {
+            method.code = prepend_leading_comments_to_code(
+                source,
+                method.line,
+                language,
+                method.code.take(),
+                comment_mode,
+            );
+        }
+    }
+
+    for interface in &mut shape.interfaces {
+        interface.code = prepend_leading_comments_to_code(
+            source,
+            interface.line,
+            language,
+            interface.code.take(),
+            comment_mode,
+        );
+        for method in &mut interface.methods {
+            method.code = prepend_leading_comments_to_code(
+                source,
+                method.line,
+                language,
+                method.code.take(),
+                comment_mode,
+            );
+        }
+    }
+
+    for tr in &mut shape.traits {
+        for method in &mut tr.methods {
+            method.code = prepend_leading_comments_to_code(
+                source,
+                method.line,
+                language,
+                method.code.take(),
+                comment_mode,
+            );
+        }
+    }
+
+    for block in &mut shape.impl_blocks {
+        for method in &mut block.methods {
+            method.code = prepend_leading_comments_to_code(
+                source,
+                method.line,
+                language,
+                method.code.take(),
+                comment_mode,
+            );
+        }
+    }
+}
+
 pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
     let file_path = arguments["file_path"].as_str().ok_or_else(|| {
         io::Error::new(
@@ -113,6 +218,7 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
 
     let detail = DetailLevel::from_args(arguments);
     let focus_symbol = arguments.get("focus_symbol").and_then(Value::as_str);
+    let comment_mode = parse_comment_mode(arguments);
 
     // Back-compat: tests pass include_deps without tool schema.
     let include_deps = arguments
@@ -170,6 +276,7 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
     if let Some(symbol) = focus_symbol {
         apply_focus(&mut main_shape, symbol);
     }
+    apply_comment_mode(&mut main_shape, &source, language, comment_mode);
 
     // Convert main file path to relative
     let main_path = path_utils::to_relative_path(file_path);
@@ -225,6 +332,7 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
             &referenced,
             detail,
             max_tokens,
+            comment_mode,
         )?;
 
         if !deps_obj.is_empty() {
@@ -753,7 +861,12 @@ fn extract_referenced_type_names(
 fn referenced_type_from_definition_location(
     location: &DefinitionLocation,
 ) -> Result<HashSet<String>, io::Error> {
-    let rows = extract_dependency_types(&location.file, &HashSet::new(), DetailLevel::Signatures)?;
+    let rows = extract_dependency_types(
+        &location.file,
+        &HashSet::new(),
+        DetailLevel::Signatures,
+        CommentMode::None,
+    )?;
     let mut referenced = HashSet::new();
 
     if let Some(row) = rows.iter().find(|row| row.line == location.line) {
@@ -1021,6 +1134,7 @@ fn build_dependency_rows(
     referenced: &HashSet<String>,
     detail: DetailLevel,
     max_tokens: usize,
+    comment_mode: CommentMode,
 ) -> Result<Map<String, Value>, io::Error> {
     if dep_paths.is_empty() {
         return Ok(Map::new());
@@ -1058,7 +1172,7 @@ fn build_dependency_rows(
         }
         visited.insert(canonical);
 
-        let dep_rows = extract_dependency_types(dep_path, referenced, detail)?;
+        let dep_rows = extract_dependency_types(dep_path, referenced, detail, comment_mode)?;
         if dep_rows.is_empty() {
             continue;
         }
@@ -1121,6 +1235,7 @@ fn extract_dependency_types(
     file_path: &Path,
     referenced: &HashSet<String>,
     detail: DetailLevel,
+    comment_mode: CommentMode,
 ) -> Result<Vec<TypeRow>, io::Error> {
     let source = fs::read_to_string(file_path)?;
     let language = detect_language(file_path).map_err(|e| {
@@ -1165,7 +1280,7 @@ fn extract_dependency_types(
             } else {
                 None
             },
-            code: s.code,
+            code: prepend_leading_comments_to_code(&source, s.line, language, s.code, comment_mode),
         });
     }
 
@@ -1180,7 +1295,7 @@ fn extract_dependency_types(
             } else {
                 None
             },
-            code: c.code,
+            code: prepend_leading_comments_to_code(&source, c.line, language, c.code, comment_mode),
         });
     }
 
@@ -1195,7 +1310,7 @@ fn extract_dependency_types(
             } else {
                 None
             },
-            code: i.code,
+            code: prepend_leading_comments_to_code(&source, i.line, language, i.code, comment_mode),
         });
     }
 

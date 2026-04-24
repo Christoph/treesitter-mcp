@@ -1,14 +1,46 @@
 # Tree-sitter MCP Server
 
+AST-first MCP for coding agents. Instead of pasting raw files into the context window, it returns compact structural answers: signatures, usage rows, focused edit context, impact summaries, and review bundles with explicit token budgets.
+
 ![Token efficiency comparison: MCP vs raw file reading](docs/token-efficiency-comparison.png)
 
-## Why Use This MCP
+## Why It Wins
 
 - **Focused edits average about 5.0x smaller** than reading the whole file.
-- **Call graph tracing averages about 20.9x smaller** than reading the source file manually.
-- **Repo-wide search averages about 77.8x smaller** than concatenating the search scope.
+- **Call graph tracing averages about 21.1x smaller** than manual multi-file reads.
+- **Repo-wide search averages about 78.1x smaller** than concatenating the search scope.
 - **Directory maps average about 27.7x smaller** than concatenating the whole tree.
-- **Every number below is an average across multiple files/runs**, counted with `tiktoken_rs::cl100k_base()`.
+- **The numbers are enforced in tests**, not just claimed in docs.
+
+## What It Does
+
+`treesitter-mcp` reduces token load with four repeated patterns:
+
+1. **Structural filtering**: return AST-derived symbols and signatures instead of raw bodies when full code is unnecessary.
+2. **Focused extraction**: return one symbol plus only the dependencies, imports, types, and tests that matter for that task.
+3. **Compact grouping**: use stable, row-oriented schemas so repeated keys and prose do not dominate the payload.
+4. **Budget-aware truncation**: use `tiktoken` counts and explicit `max_tokens` limits to keep results bounded.
+
+This is the core positioning: it is not just a parser, it is a **context compressor for code workflows**.
+
+## Quick Start
+
+Build the binary:
+
+```bash
+cargo build --release
+```
+
+Point your MCP client at `target/release/treesitter-mcp`, then start with a small workflow instead of raw reads:
+
+```text
+1. code_map(path="src", detail="minimal", with_types=true)
+2. view_code(file_path="...", detail="signatures")
+3. minimal_edit_context(file_path="...", symbol_name="...")
+4. review_context(file_path="...") after changes
+```
+
+If you need the full installation and configuration details, keep reading below. For the messaging and roadmap behind this README, see [docs/COMMUNICATION.md](docs/COMMUNICATION.md).
 
 ## Token Efficiency Comparison
 
@@ -21,19 +53,27 @@ All token counts below are **averages**, not single examples.
 |---|---|---:|---:|---:|---:|---:|
 | Overview average | 4 | `cat <4 source files>` | `view_code(detail="signatures")` | 852 | 314 | 538 | 63.1% | 2.7x |
 | Focused edit average | 4 | `cat <4 source files>` | `minimal_edit_context(symbol_name=...)` | 852 | 170 | 682 | 80.0% | 5.0x |
-| Call graph average | 4 | `cat <4 analysis files>` | `call_graph(symbol_name=...)` | 5,572 | 267 | 5,305 | 95.2% | 20.9x |
-| Repo search average | 3 | `cat src/analysis/*.rs` | `find_usages(symbol=...)` | 98,312 | 1,263 | 97,049 | 98.7% | 77.8x |
-| Directory map average | 3 | `find <3 source trees> -exec cat` | `code_map(detail="minimal")` | 76,179 | 2,755 | 73,424 | 96.4% | 27.7x |
+| Call graph average | 4 | `cat <4 analysis files>` | `call_graph(symbol_name=...)` | 5,642 | 267 | 5,375 | 95.3% | 21.1x |
+| Repo search average | 3 | `cat src/analysis/*.rs` | `find_usages(symbol=...)` | 98,590 | 1,263 | 97,327 | 98.7% | 78.1x |
+| Directory map average | 3 | `find <3 source trees> -exec cat` | `code_map(detail="minimal")` | 76,364 | 2,760 | 73,604 | 96.4% | 27.7x |
 
 Saved avg tokens = raw avg tokens - MCP avg tokens. Percent saved = `1 - MCP/raw`.
 
-## Why These Tools Beat Default Reads
+## Use This Instead of Raw Reads
 
-- `view_code(detail="signatures")` is better than `cat` when you only need structure, because it drops bodies and keeps the API surface.
-- `minimal_edit_context` is better than `cat` for edits because it keeps the target symbol, direct deps, relevant types, and relevant imports instead of the whole file.
-- `call_graph` is better than manual file reading because it returns caller/callee edges directly instead of forcing multi-file tracing.
-- `find_usages` is better than concatenating a whole search scope because it returns only the matched symbol rows with scope and context.
-- `code_map` is better than dumping a directory because it summarizes the tree at the symbol level instead of loading every implementation body.
+- `view_code(detail="signatures")` instead of `cat` when you need structure but not bodies.
+- `minimal_edit_context` instead of focused file reads when you are editing one known symbol.
+- `call_graph` instead of reading multiple files to trace one function.
+- `find_usages` instead of concatenating a whole directory to answer one reference question.
+- `code_map` instead of dumping a tree when you only need the project shape.
+- `review_context` instead of manually assembling diff, impact, tests, and changed-symbol context.
+
+## Communication Commitments
+
+- The README leads with measured value, not internal architecture.
+- Benchmarks are reproducible through `cargo test report_average_token_benchmarks -- --ignored --nocapture`.
+- CI publishes a benchmark summary so pull requests show the token story directly in the pipeline.
+- New token-saving ideas are tracked in [docs/COMMUNICATION.md](docs/COMMUNICATION.md), including opportunities still missing from the product.
 
 ## Measurement Method
 
@@ -363,6 +403,9 @@ View a source file with flexible detail levels and automatic type inclusion from
   - When set, returns full code for this symbol + signatures for rest - 3x cheaper
 - `definition_location` (object, optional): LSP `textDocument/definition` result or compact
   `{file,line,col}` location used to include the exact dependency type from that definition
+- `comment_mode` (string, optional, default: `"none"`): Comment handling for returned code fields
+  - `"none"`: Current compact behavior
+  - `"leading"`: Prepend the contiguous leading comment block above returned symbol code
 
 **Auto-Includes**: All struct/class/interface definitions from project dependencies (not external libs)
 
@@ -383,6 +426,7 @@ View a source file with flexible detail levels and automatic type inclusion from
 **Optimization:** 
 - Use `detail="signatures"` for quick overview (10x cheaper)
 - Use `focus_symbol` for focused editing (3x cheaper)
+- Use `comment_mode="leading"` when rationale in comments matters more than raw token minimization
 
 **Typical Workflow:** `code_map` → `view_code`
 
@@ -643,12 +687,16 @@ Return the smallest useful context for editing one known symbol.
 - `file_path` (string, required): Path to the source file
 - `symbol_name` (string, required): Symbol to edit
 - `max_tokens` (integer, optional, default: 2000): Hard output budget
+- `comment_mode` (string, optional, default: `"none"`): Comment handling for the target code row
+  - `"none"`: Current compact behavior
+  - `"leading"`: Prepend the contiguous leading comment block above the target symbol
 
 **Example**:
 ```json
 {
   "file_path": "/path/to/src/workflow.ts",
   "symbol_name": "buildSummary",
+  "comment_mode": "leading",
   "max_tokens": 2000
 }
 ```
@@ -660,6 +708,8 @@ Return the smallest useful context for editing one known symbol.
 - `types`: optional same-file referenced type rows (`kind|name|line|sig`)
 - `imports`: optional relevant import rows (`line|text`)
 - `scope`: enclosing class/impl scope when available
+
+Use `comment_mode="leading"` when the target symbol has important rationale in comments above the declaration.
 
 ---
 

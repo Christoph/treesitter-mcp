@@ -1,4 +1,6 @@
 use serde_json::json;
+use std::fs;
+use tempfile::tempdir;
 
 mod common;
 
@@ -546,4 +548,86 @@ fn test_parse_file_include_code_explicit_false_vs_true() {
     assert!(rows_true
         .iter()
         .any(|r| r.get(code_idx).map(|c| !c.is_empty()).unwrap_or(false)));
+}
+
+#[test]
+fn test_view_code_comment_mode_leading_prepends_comments_to_code() {
+    let dir = tempdir().unwrap();
+    let file_path = dir.path().join("annotated.rs");
+    fs::write(
+        &file_path,
+        r#"
+// Why: callers rely on trimmed names here.
+// Keep this behavior stable for migrations.
+pub fn normalize_name(input: &str) -> String {
+    input.trim().to_string()
+}
+"#,
+    )
+    .unwrap();
+
+    let result = treesitter_mcp::analysis::view_code::execute(&json!({
+        "file_path": file_path.to_str().unwrap(),
+        "detail": "full",
+        "focus_symbol": "normalize_name",
+        "comment_mode": "leading"
+    }))
+    .unwrap();
+    let text = common::get_result_text(&result);
+    let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let header = shape["h"].as_str().unwrap();
+    let code_idx = header
+        .split('|')
+        .position(|column| column == "code")
+        .unwrap();
+    let rows = common::helpers::parse_compact_rows(shape["f"].as_str().unwrap_or(""));
+    let code = rows
+        .iter()
+        .find(|row| row.first().map(|value| value.as_str()) == Some("normalize_name"))
+        .and_then(|row| row.get(code_idx))
+        .cloned()
+        .unwrap();
+
+    assert!(code.starts_with("// Why: callers rely on trimmed names here."));
+    assert!(code.contains("pub fn normalize_name"));
+}
+
+#[test]
+fn test_view_code_comment_mode_none_keeps_leading_comments_out_of_code() {
+    let dir = tempdir().unwrap();
+    let file_path = dir.path().join("annotated.rs");
+    fs::write(
+        &file_path,
+        r#"
+// Why: callers rely on trimmed names here.
+pub fn normalize_name(input: &str) -> String {
+    input.trim().to_string()
+}
+"#,
+    )
+    .unwrap();
+
+    let result = treesitter_mcp::analysis::view_code::execute(&json!({
+        "file_path": file_path.to_str().unwrap(),
+        "detail": "full",
+        "focus_symbol": "normalize_name"
+    }))
+    .unwrap();
+    let text = common::get_result_text(&result);
+    let shape: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let header = shape["h"].as_str().unwrap();
+    let code_idx = header
+        .split('|')
+        .position(|column| column == "code")
+        .unwrap();
+    let rows = common::helpers::parse_compact_rows(shape["f"].as_str().unwrap_or(""));
+    let code = rows
+        .iter()
+        .find(|row| row.first().map(|value| value.as_str()) == Some("normalize_name"))
+        .and_then(|row| row.get(code_idx))
+        .cloned()
+        .unwrap();
+
+    assert!(!code.starts_with("// Why: callers rely on trimmed names here."));
+    assert!(code.starts_with("pub fn normalize_name"));
 }

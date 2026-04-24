@@ -128,6 +128,68 @@ export function unusedExternal(input: string): string {
     assert!(!dep_names.contains(&"unusedExternal"));
 }
 
+#[test]
+fn test_minimal_edit_context_trims_rows_before_dropping_sections() {
+    let dir = tempdir().unwrap();
+    let file_path = dir.path().join("workflow.ts");
+    fs::write(&file_path, large_typescript_fixture()).unwrap();
+
+    let result = treesitter_mcp::analysis::minimal_edit_context::execute(&json!({
+        "file_path": file_path.to_str().unwrap(),
+        "symbol_name": "buildSummary",
+        "max_tokens": 180
+    }))
+    .unwrap();
+    let text = common::get_result_text(&result);
+    let output: serde_json::Value = serde_json::from_str(&text).unwrap();
+
+    assert_eq!(output["sym"], "buildSummary");
+    assert!(output["target"].as_str().unwrap().contains("buildSummary"));
+    assert_eq!(output["@"], json!({"t": true}));
+
+    let kept_context_rows = ["imports", "types", "deps"]
+        .into_iter()
+        .filter_map(|field| output.get(field).and_then(|value| value.as_str()))
+        .map(|rows| rows.lines().count())
+        .sum::<usize>();
+    assert!(
+        kept_context_rows > 0,
+        "tight budgets should keep at least some partial context instead of dropping every section"
+    );
+}
+
+#[test]
+fn test_minimal_edit_context_comment_mode_leading_prepends_comments_to_target_code() {
+    let dir = tempdir().unwrap();
+    let file_path = dir.path().join("workflow.ts");
+    fs::write(
+        &file_path,
+        r#"
+// Why: downstream callers expect canonicalized keys.
+// Keep this in sync with API cache normalization.
+export function buildSummary(input: string): string {
+  return input.trim();
+}
+"#,
+    )
+    .unwrap();
+
+    let result = treesitter_mcp::analysis::minimal_edit_context::execute(&json!({
+        "file_path": file_path.to_str().unwrap(),
+        "symbol_name": "buildSummary",
+        "comment_mode": "leading",
+        "max_tokens": 4000
+    }))
+    .unwrap();
+    let text = common::get_result_text(&result);
+    let output: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let target = common::helpers::parse_compact_row(output["target"].as_str().unwrap());
+    let code = target.get(3).unwrap();
+
+    assert!(code.starts_with("// Why: downstream callers expect canonicalized keys."));
+    assert!(code.contains("function buildSummary"));
+}
+
 fn large_typescript_fixture() -> String {
     let mut source = String::from(
         r#"
