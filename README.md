@@ -124,6 +124,20 @@ Tree-sitter MCP Server exposes powerful code analysis tools through the MCP prot
 - Rust toolchain (1.70 or later)
 - Cargo (comes with Rust)
 
+### Homebrew (macOS)
+
+Install directly from this repository's formula:
+
+```bash
+brew install --formula https://raw.githubusercontent.com/Christoph/treesitter-mcp/main/Formula/treesitter-mcp.rb
+```
+
+To install the unreleased `main` branch instead of the pinned release, use:
+
+```bash
+brew install --HEAD --formula https://raw.githubusercontent.com/Christoph/treesitter-mcp/main/Formula/treesitter-mcp.rb
+```
+
 ### Build from Source
 
 1. Clone the repository:
