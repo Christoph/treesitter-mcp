@@ -56,3 +56,24 @@ jobs:
         with:
           files: ${{ matrix.asset_name }}
           generate_release_notes: true
+
+  homebrew:
+    name: Bump Homebrew formula
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Update formula in tap
+        uses: mislav/bump-homebrew-formula-action@v3
+        with:
+          formula-name: treesitter-mcp
+          formula-path: Formula/treesitter-mcp.rb
+          homebrew-tap: Christoph/homebrew-treesitter-mcp
+          base-branch: main
+          tag-name: ${{ github.ref_name }}
+          download-url: https://github.com/Christoph/treesitter-mcp.git
+          commit-message: |
+            treesitter-mcp {{version}}
+
+            Created by https://github.com/mislav/bump-homebrew-formula-action
+        env:
+          COMMITTER_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
