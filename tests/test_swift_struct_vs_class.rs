@@ -23,7 +23,7 @@ fn check_swift_struct_vs_class() {
             );
 
             // Check for "struct" or "class" keyword
-            for i in 0..decl.child_count() {
+            for i in 0..decl.child_count() as u32 {
                 if let Some(child) = decl.child(i) {
                     let text = child.utf8_text(source.as_bytes()).unwrap_or("");
                     println!("  Child {}: {} = '{}'", i, child.kind(), text);

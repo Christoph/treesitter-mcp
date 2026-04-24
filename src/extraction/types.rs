@@ -6,6 +6,7 @@ use eyre::{bail, Result, WrapErr};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use log::debug;
 use serde::{Deserialize, Serialize};
+use streaming_iterator::StreamingIterator;
 use tree_sitter::{Node, Parser, Query, QueryCursor};
 
 use crate::common::project_files::collect_project_files;
@@ -339,7 +340,8 @@ pub(crate) fn extract_rust_types(
     let file_path = relative_path.to_path_buf();
 
     let mut cursor = QueryCursor::new();
-    for match_ in cursor.matches(&query, tree.root_node(), source_bytes) {
+    let mut matches = cursor.matches(&query, tree.root_node(), source_bytes);
+    while let Some(match_) = matches.next() {
         let mut type_name = String::new();
         let mut kind = TypeKind::TypeAlias;
         let mut def_node = None;
@@ -522,7 +524,8 @@ pub(crate) fn extract_rust_types(
     }
 
     let mut cursor = QueryCursor::new();
-    for match_ in cursor.matches(&query, tree.root_node(), source_bytes) {
+    let mut matches = cursor.matches(&query, tree.root_node(), source_bytes);
+    while let Some(match_) = matches.next() {
         let mut type_name = String::new();
         let mut impl_node = None;
         let mut is_impl = false;
@@ -628,8 +631,9 @@ pub(crate) fn extract_typescript_types(
     let file_path = relative_path.to_path_buf();
     let mut definitions = Vec::new();
     let mut cursor = QueryCursor::new();
+    let mut matches = cursor.matches(&query, tree.root_node(), source_bytes);
 
-    for match_ in cursor.matches(&query, tree.root_node(), source_bytes) {
+    while let Some(match_) = matches.next() {
         let mut name_node = None;
         let mut def_node = None;
         let mut kind = TypeKind::TypeAlias;
@@ -835,8 +839,9 @@ pub(crate) fn extract_python_types(
     let file_path = relative_path.to_path_buf();
     let mut definitions = Vec::new();
     let mut cursor = QueryCursor::new();
+    let mut matches = cursor.matches(&query, tree.root_node(), source_bytes);
 
-    for match_ in cursor.matches(&query, tree.root_node(), source_bytes) {
+    while let Some(match_) = matches.next() {
         let mut name_node = None;
         let mut def_node = None;
         let mut is_special = false;
@@ -1116,7 +1121,7 @@ fn parse_python_typed_dict_fields(args: Node, source: &[u8]) -> Option<Vec<Field
         let key_node = pair.child_by_field_name("key").or_else(|| pair.child(0))?;
         let value_node = pair
             .child_by_field_name("value")
-            .or_else(|| pair.child(pair.child_count().saturating_sub(1)))?;
+            .or_else(|| pair.child(pair.child_count().saturating_sub(1) as u32))?;
 
         let raw_key = key_node.utf8_text(source).ok()?;
         let name = unquote_python_string(raw_key);
@@ -1218,8 +1223,9 @@ fn extract_java_types(source: &str, relative_path: &Path) -> Result<Vec<TypeDefi
     let file_path = relative_path.to_path_buf();
     let mut definitions = Vec::new();
     let mut cursor = QueryCursor::new();
+    let mut matches = cursor.matches(&query, tree.root_node(), source_bytes);
 
-    for match_ in cursor.matches(&query, tree.root_node(), source_bytes) {
+    while let Some(match_) = matches.next() {
         let mut name_node = None;
         let mut def_node = None;
         let mut kind = TypeKind::Class;
@@ -1356,8 +1362,9 @@ pub(crate) fn extract_go_types(source: &str, relative_path: &Path) -> Result<Vec
     let file_path = relative_path.to_path_buf();
     let mut definitions = Vec::new();
     let mut cursor = QueryCursor::new();
+    let mut matches = cursor.matches(&query, tree.root_node(), source_bytes);
 
-    for match_ in cursor.matches(&query, tree.root_node(), source_bytes) {
+    while let Some(match_) = matches.next() {
         let mut name_node = None;
         let mut def_node = None;
         let mut kind = TypeKind::Struct;
@@ -1541,8 +1548,9 @@ fn extract_csharp_types(source: &str, relative_path: &Path) -> Result<Vec<TypeDe
     let file_path = relative_path.to_path_buf();
     let mut definitions = Vec::new();
     let mut cursor = QueryCursor::new();
+    let mut matches = cursor.matches(&query, tree.root_node(), source_bytes);
 
-    for match_ in cursor.matches(&query, tree.root_node(), source_bytes) {
+    while let Some(match_) = matches.next() {
         let mut name_node = None;
         let mut def_node = None;
         let mut kind = TypeKind::Class;

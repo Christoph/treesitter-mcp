@@ -5,6 +5,7 @@
 
 use crate::parser::Language;
 use std::io;
+use streaming_iterator::StreamingIterator;
 use tree_sitter::{Node, Query, QueryCursor, Tree};
 
 /// Enhanced function information with signature and documentation
@@ -244,9 +245,9 @@ fn extract_rust_enhanced(
     })?;
 
     let mut cursor = QueryCursor::new();
-    let matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
+    let mut matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
 
-    for match_ in matches {
+    while let Some(match_) = matches.next() {
         for capture in match_.captures {
             let node = capture.node;
             let name_idx = capture.index;
@@ -367,9 +368,9 @@ fn extract_python_enhanced(
     })?;
 
     let mut cursor = QueryCursor::new();
-    let matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
+    let mut matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
 
-    for match_ in matches {
+    while let Some(match_) = matches.next() {
         for capture in match_.captures {
             let node = capture.node;
             let name_idx = capture.index;
@@ -518,13 +519,13 @@ fn extract_js_enhanced(
     })?;
 
     let mut cursor = QueryCursor::new();
-    let matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
+    let mut matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
 
     // Track processed nodes to avoid duplicates
     let mut processed_func_nodes = std::collections::HashSet::new();
     let mut processed_class_nodes = std::collections::HashSet::new();
 
-    for match_ in matches {
+    while let Some(match_) = matches.next() {
         for capture in match_.captures {
             let node = capture.node;
             let name_idx = capture.index;
@@ -743,9 +744,9 @@ fn extract_swift_enhanced(
     })?;
 
     let mut cursor = QueryCursor::new();
-    let matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
+    let mut matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
 
-    for match_ in matches {
+    while let Some(match_) = matches.next() {
         for capture in match_.captures {
             let node = capture.node;
             let name_idx = capture.index;
@@ -939,13 +940,13 @@ fn extract_csharp_enhanced(
     })?;
 
     let mut cursor = QueryCursor::new();
-    let matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
+    let mut matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
 
     let mut processed_method_nodes = std::collections::HashSet::new();
     let mut processed_class_nodes = std::collections::HashSet::new();
     let mut processed_property_nodes = std::collections::HashSet::new();
 
-    for match_ in matches {
+    while let Some(match_) = matches.next() {
         for capture in match_.captures {
             let node = capture.node;
             let name_idx = capture.index;
@@ -1241,12 +1242,12 @@ fn extract_java_enhanced(
     })?;
 
     let mut cursor = QueryCursor::new();
-    let matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
+    let mut matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
 
     let mut processed_method_nodes = std::collections::HashSet::new();
     let mut processed_class_nodes = std::collections::HashSet::new();
 
-    for match_ in matches {
+    while let Some(match_) = matches.next() {
         for capture in match_.captures {
             let node = capture.node;
             let name_idx = capture.index;
@@ -1413,12 +1414,12 @@ fn extract_go_enhanced(
     })?;
 
     let mut cursor = QueryCursor::new();
-    let matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
+    let mut matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
 
     let mut processed_function_nodes = std::collections::HashSet::new();
     let mut processed_type_nodes = std::collections::HashSet::new();
 
-    for match_ in matches {
+    while let Some(match_) = matches.next() {
         for capture in match_.captures {
             let node = capture.node;
             let capture_name = query.capture_names()[capture.index as usize];
@@ -2752,9 +2753,9 @@ pub fn extract_html_shape(
     .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("Query error: {e}")))?;
 
     let mut cursor = QueryCursor::new();
-    let matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
+    let mut matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
 
-    for match_ in matches {
+    while let Some(match_) = matches.next() {
         for capture in match_.captures {
             let node = capture.node;
             let capture_name = query.capture_names()[capture.index as usize];

@@ -282,6 +282,7 @@ fn extract_rust_symbols(
     source: &str,
     symbols: &mut HashMap<String, ExtractedSymbol>,
 ) -> Result<(), io::Error> {
+    use streaming_iterator::StreamingIterator;
     use tree_sitter::{Query, QueryCursor};
 
     let query = Query::new(
@@ -297,9 +298,9 @@ fn extract_rust_symbols(
     .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("Query error: {e}")))?;
 
     let mut cursor = QueryCursor::new();
-    let matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
+    let mut matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
 
-    for match_ in matches {
+    while let Some(match_) = matches.next() {
         for capture in match_.captures {
             let capture_name = query.capture_names()[capture.index as usize];
             let node = capture.node;
@@ -340,6 +341,7 @@ fn extract_python_symbols(
     source: &str,
     symbols: &mut HashMap<String, ExtractedSymbol>,
 ) -> Result<(), io::Error> {
+    use streaming_iterator::StreamingIterator;
     use tree_sitter::{Query, QueryCursor};
 
     let query = Query::new(
@@ -352,9 +354,9 @@ fn extract_python_symbols(
     .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("Query error: {e}")))?;
 
     let mut cursor = QueryCursor::new();
-    let matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
+    let mut matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
 
-    for match_ in matches {
+    while let Some(match_) = matches.next() {
         for capture in match_.captures {
             let capture_name = query.capture_names()[capture.index as usize];
             let node = capture.node;
@@ -391,6 +393,7 @@ fn extract_js_symbols(
     source: &str,
     symbols: &mut HashMap<String, ExtractedSymbol>,
 ) -> Result<(), io::Error> {
+    use streaming_iterator::StreamingIterator;
     use tree_sitter::{Query, QueryCursor};
 
     let query = Query::new(
@@ -404,9 +407,9 @@ fn extract_js_symbols(
     .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("Query error: {e}")))?;
 
     let mut cursor = QueryCursor::new();
-    let matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
+    let mut matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
 
-    for match_ in matches {
+    while let Some(match_) = matches.next() {
         for capture in match_.captures {
             let capture_name = query.capture_names()[capture.index as usize];
             let node = capture.node;
@@ -444,6 +447,7 @@ fn extract_ts_symbols(
     source: &str,
     symbols: &mut HashMap<String, ExtractedSymbol>,
 ) -> Result<(), io::Error> {
+    use streaming_iterator::StreamingIterator;
     use tree_sitter::{Query, QueryCursor};
 
     let query = Query::new(
@@ -458,9 +462,9 @@ fn extract_ts_symbols(
     .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("Query error: {e}")))?;
 
     let mut cursor = QueryCursor::new();
-    let matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
+    let mut matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
 
-    for match_ in matches {
+    while let Some(match_) = matches.next() {
         for capture in match_.captures {
             let capture_name = query.capture_names()[capture.index as usize];
             let node = capture.node;
@@ -499,6 +503,7 @@ fn extract_go_symbols(
     source: &str,
     symbols: &mut HashMap<String, ExtractedSymbol>,
 ) -> Result<(), io::Error> {
+    use streaming_iterator::StreamingIterator;
     use tree_sitter::{Node, Query, QueryCursor};
 
     fn find_parent_by_kind<'a>(mut node: Node<'a>, kind: &str) -> Option<Node<'a>> {
@@ -522,9 +527,9 @@ fn extract_go_symbols(
     .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("Query error: {e}")))?;
 
     let mut cursor = QueryCursor::new();
-    let matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
+    let mut matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
 
-    for match_ in matches {
+    while let Some(match_) = matches.next() {
         for capture in match_.captures {
             let capture_name = query.capture_names()[capture.index as usize];
             let node = capture.node;
