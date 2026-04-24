@@ -651,12 +651,8 @@ fn extract_js_enhanced(
                                 };
 
                                 // Extract methods from class body
-                                let methods = extract_class_methods(
-                                    node,
-                                    source,
-                                    language,
-                                    include_code,
-                                )?;
+                                let methods =
+                                    extract_class_methods(node, source, language, include_code)?;
 
                                 classes.push(EnhancedClassInfo {
                                     name: name.to_string(),
@@ -1296,8 +1292,7 @@ fn extract_java_enhanced(
                                 };
 
                                 // Extract implements interfaces
-                                let implements =
-                                    extract_java_implemented_interfaces(node, source);
+                                let implements = extract_java_implemented_interfaces(node, source);
 
                                 // Extract methods from class
                                 let methods =
