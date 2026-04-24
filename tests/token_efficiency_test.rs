@@ -971,7 +971,11 @@ fn grep_recursive_with_context(scope: &Path, symbol: &str, context: usize) -> us
                 }
             }
         }
-        let rel = file.strip_prefix(scope).unwrap_or(&file).display().to_string();
+        let rel = file
+            .strip_prefix(scope)
+            .unwrap_or(&file)
+            .display()
+            .to_string();
         let mut last_emit: Option<usize> = None;
         for (i, line) in lines.iter().enumerate() {
             if !included[i] {
