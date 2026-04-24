@@ -685,8 +685,8 @@ fn test_average_token_efficiency_for_core_workflows() {
         .find(|bench| bench.name == "Call graph average")
         .unwrap();
     assert!(
-        call_graph.saved_pct() >= 90.0,
-        "call graph average should save at least 90%, got {:.1}%",
+        call_graph.saved_pct() >= 80.0,
+        "call graph average should save at least 80% vs grep-then-cat, got {:.1}%",
         call_graph.saved_pct()
     );
 
@@ -695,8 +695,8 @@ fn test_average_token_efficiency_for_core_workflows() {
         .find(|bench| bench.name == "Repo search average")
         .unwrap();
     assert!(
-        find_usages.saved_pct() >= 95.0,
-        "repo search average should save at least 95%, got {:.1}%",
+        find_usages.saved_pct() >= 30.0,
+        "repo search average should save at least 30% vs grep -C3, got {:.1}%",
         find_usages.saved_pct()
     );
 
@@ -705,8 +705,8 @@ fn test_average_token_efficiency_for_core_workflows() {
         .find(|bench| bench.name == "Directory map average")
         .unwrap();
     assert!(
-        code_map.saved_pct() >= 90.0,
-        "directory map average should save at least 90%, got {:.1}%",
+        code_map.saved_pct() >= 50.0,
+        "directory map average should save at least 50% vs find+head, got {:.1}%",
         code_map.saved_pct()
     );
 }
@@ -811,14 +811,24 @@ fn focused_edit_average_benchmark() -> AggregateBenchmark {
 
 fn call_graph_average_benchmark() -> AggregateBenchmark {
     let root = workspace_root();
+    let scope = root.join("src");
+    // Mid-fanout workhorses: defined once, called from a handful of sites.
+    // Avoids trivial symbols (no savings story) and near-keyword symbols like
+    // "execute" (present in ~15 files, inflates the baseline artificially).
     let scenarios = vec![
-        (root.join("src/analysis/view_code.rs"), "execute"),
-        (root.join("src/analysis/minimal_edit_context.rs"), "execute"),
-        (root.join("src/analysis/call_graph.rs"), "execute"),
-        (root.join("src/analysis/code_map.rs"), "execute"),
+        (root.join("src/parser/mod.rs"), "parse_code"),
+        (root.join("src/parser/mod.rs"), "detect_language"),
+        (root.join("src/analysis/shape.rs"), "extract_enhanced_shape"),
+        (root.join("src/analysis/shape.rs"), "extract_html_shape"),
     ];
 
-    let raw_tokens = average_tokens(scenarios.iter().map(|(path, _)| raw_file_tokens(path)));
+    // Realistic baseline: agent greps for callers, then Reads each matched file to see context.
+    // Emulates: `grep -rln <symbol> src | xargs cat`.
+    let raw_tokens = average_tokens(
+        scenarios
+            .iter()
+            .map(|(_, symbol)| grep_then_read_matched_files(&scope, symbol)),
+    );
     let mcp_tokens = average_tokens(scenarios.iter().map(|(path, symbol)| {
         let result = treesitter_mcp::analysis::call_graph::execute(&json!({
             "file_path": path.to_str().unwrap(),
@@ -833,7 +843,7 @@ fn call_graph_average_benchmark() -> AggregateBenchmark {
 
     AggregateBenchmark {
         name: "Call graph average",
-        default_tool: "cat <4 analysis files>",
+        default_tool: "grep -rln symbol src | xargs cat",
         mcp_tool: "call_graph(symbol_name=...)",
         sample_count: scenarios.len(),
         raw_tokens,
@@ -843,14 +853,21 @@ fn call_graph_average_benchmark() -> AggregateBenchmark {
 
 fn repo_search_average_benchmark() -> AggregateBenchmark {
     let scope = workspace_root().join("src/analysis");
-    let scenarios = ["parse_code", "execute", "detect_language"];
-    let raw_scope_tokens = raw_directory_tokens(&scope);
-    let raw_tokens = average_tokens(scenarios.iter().map(|_| raw_scope_tokens));
+    // Symbols with meaningful fanout inside src/analysis but not pervasive.
+    let scenarios = ["parse_code", "detect_language", "collect_project_files"];
+
+    // Realistic baseline: `grep -rn -C3 <symbol> src/analysis` — locate + context lines.
+    // This is the tool an agent reaches for instead of cat'ing every file.
+    let raw_tokens = average_tokens(
+        scenarios
+            .iter()
+            .map(|symbol| grep_recursive_with_context(&scope, symbol, 3)),
+    );
     let mcp_tokens = average_tokens(scenarios.iter().map(|symbol| {
         let result = treesitter_mcp::analysis::find_usages::execute(&json!({
             "symbol": symbol,
             "path": scope.to_str().unwrap(),
-            "context_lines": 1,
+            "context_lines": 3,
             "max_context_lines": 60,
             "max_tokens": 4000
         }))
@@ -860,7 +877,7 @@ fn repo_search_average_benchmark() -> AggregateBenchmark {
 
     AggregateBenchmark {
         name: "Repo search average",
-        default_tool: "cat src/analysis/*.rs",
+        default_tool: "grep -rn -C3 symbol src/analysis",
         mcp_tool: "find_usages(symbol=...)",
         sample_count: scenarios.len(),
         raw_tokens,
@@ -876,7 +893,13 @@ fn directory_map_average_benchmark() -> AggregateBenchmark {
         root.join("tests/fixtures/complex_rust_service/src"),
     ];
 
-    let raw_tokens = average_tokens(scenarios.iter().map(|path| raw_directory_tokens(path)));
+    // Realistic baseline: `find <path> -type f` listing + `head -50 <file>` per source file.
+    // This is the lightest shell workflow that still surfaces some symbols per file.
+    let raw_tokens = average_tokens(
+        scenarios
+            .iter()
+            .map(|path| find_listing_plus_head(path, 50)),
+    );
     let mcp_tokens = average_tokens(scenarios.iter().map(|path| {
         let result = treesitter_mcp::analysis::code_map::execute(&json!({
             "path": path.to_str().unwrap(),
@@ -889,7 +912,7 @@ fn directory_map_average_benchmark() -> AggregateBenchmark {
 
     AggregateBenchmark {
         name: "Directory map average",
-        default_tool: "find <3 source trees> -exec cat",
+        default_tool: "find -type f + head -50 each file",
         mcp_tool: "code_map(detail=\"minimal\")",
         sample_count: scenarios.len(),
         raw_tokens,
@@ -920,13 +943,120 @@ fn raw_file_tokens(path: &Path) -> usize {
     tiktoken_count(&fs::read_to_string(path).unwrap())
 }
 
-fn raw_directory_tokens(path: &Path) -> usize {
-    let files = treesitter_mcp::common::project_files::collect_project_files(path).unwrap();
-    let combined = files
+fn source_files(path: &Path) -> Vec<PathBuf> {
+    treesitter_mcp::common::project_files::collect_project_files(path)
+        .unwrap()
         .into_iter()
         .filter(|file| treesitter_mcp::parser::detect_language(file).is_ok())
-        .map(|file| fs::read_to_string(file).unwrap())
-        .collect::<Vec<_>>()
-        .join("\n");
+        .collect()
+}
+
+/// Emulates `grep -rn -C<context> <symbol> <scope>` with word-boundary matching.
+/// Counts tokens of the combined grep output (file:line:content rows with `--` separators).
+fn grep_recursive_with_context(scope: &Path, symbol: &str, context: usize) -> usize {
+    let mut out = String::new();
+    for file in source_files(scope) {
+        let content = match fs::read_to_string(&file) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let lines: Vec<&str> = content.lines().collect();
+        let mut included = vec![false; lines.len()];
+        for (i, line) in lines.iter().enumerate() {
+            if line_contains_word(line, symbol) {
+                let start = i.saturating_sub(context);
+                let end = (i + context + 1).min(lines.len());
+                for j in start..end {
+                    included[j] = true;
+                }
+            }
+        }
+        let rel = file.strip_prefix(scope).unwrap_or(&file).display().to_string();
+        let mut last_emit: Option<usize> = None;
+        for (i, line) in lines.iter().enumerate() {
+            if !included[i] {
+                continue;
+            }
+            if let Some(last) = last_emit {
+                if i > last + 1 {
+                    out.push_str("--\n");
+                }
+            }
+            out.push_str(&format!("{}:{}:{}\n", rel, i + 1, line));
+            last_emit = Some(i);
+        }
+    }
+    tiktoken_count(&out)
+}
+
+/// Emulates `grep -rln <symbol> <scope> | xargs cat` — reads every file whose
+/// text contains the symbol. Represents the agent workflow: locate candidates,
+/// then dump full files to understand calls.
+fn grep_then_read_matched_files(scope: &Path, symbol: &str) -> usize {
+    let mut combined = String::new();
+    for file in source_files(scope) {
+        let Ok(content) = fs::read_to_string(&file) else {
+            continue;
+        };
+        if content.lines().any(|line| line_contains_word(line, symbol)) {
+            combined.push_str(&content);
+            combined.push('\n');
+        }
+    }
     tiktoken_count(&combined)
+}
+
+/// Emulates `find <path> -type f` (paths only) plus `head -n <n> <file>` for each
+/// source file. This is the cheap "sample the tree" workflow an agent uses when
+/// it needs project shape without reading every file in full.
+fn find_listing_plus_head(path: &Path, head_lines: usize) -> usize {
+    let files = source_files(path);
+    let mut out = String::new();
+    for file in &files {
+        out.push_str(&file.display().to_string());
+        out.push('\n');
+    }
+    for file in &files {
+        let Ok(content) = fs::read_to_string(file) else {
+            continue;
+        };
+        out.push_str("==> ");
+        out.push_str(&file.display().to_string());
+        out.push_str(" <==\n");
+        for (i, line) in content.lines().enumerate() {
+            if i >= head_lines {
+                break;
+            }
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    tiktoken_count(&out)
+}
+
+fn line_contains_word(line: &str, needle: &str) -> bool {
+    let bytes = line.as_bytes();
+    let needle_bytes = needle.as_bytes();
+    if needle_bytes.is_empty() {
+        return false;
+    }
+    let mut start = 0;
+    while let Some(idx) = line[start..].find(needle) {
+        let abs = start + idx;
+        let before_ok = abs == 0 || !is_word_char(bytes[abs - 1]);
+        let after = abs + needle_bytes.len();
+        let after_ok = after >= bytes.len() || !is_word_char(bytes[after]);
+        if before_ok && after_ok {
+            return true;
+        }
+        start = abs + needle_bytes.len();
+        if start >= line.len() {
+            break;
+        }
+    }
+    false
+}
+
+fn is_word_char(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_'
 }
