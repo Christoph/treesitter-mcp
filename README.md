@@ -33,7 +33,98 @@ methodology this project is building out.
 
 This is the core positioning: it is not just a parser, it is a **context compressor for code workflows**.
 
-## Quick Start
+## Installation
+
+### Homebrew (macOS)
+
+```bash
+brew tap christoph/treesitter-mcp
+brew install treesitter-mcp
+
+claude mcp add --scope project treesitter-mcp -- /opt/homebrew/bin/treesitter-mcp
+```
+
+### Release Binaries (Linux and Windows)
+
+Prebuilt release binaries are available on the [GitHub Releases](https://github.com/Christoph/treesitter-mcp/releases/latest) page.
+
+- Linux: download the release archive for your target, extract it, and point your MCP client at the `treesitter-mcp` binary
+- Windows: download the Windows release archive, extract it, and point your MCP client at `treesitter-mcp.exe`
+
+### Other Source Builds
+
+If you are not using Homebrew or a release binary, the same `cargo build --release` flow also works on other supported platforms with a working Rust toolchain.
+
+## Configuration
+
+### Claude Code CLI
+
+Add the server to the current project:
+
+```bash
+claude mcp add --scope project treesitter-mcp -- /ABSOLUTE/PATH/TO/treesitter-mcp
+```
+
+You can verify that Claude Code sees it with:
+
+```bash
+claude mcp list
+```
+
+Or add it directly in a project-level `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "treesitter-mcp": {
+      "command": "/ABSOLUTE/PATH/TO/treesitter-mcp",
+      "args": []
+    }
+  }
+}
+```
+
+Once connected, ask Claude Code to use it explicitly, for example:
+
+```text
+Use treesitter-mcp to map the src directory, then inspect the service layer before proposing changes.
+```
+
+### Codex
+
+Add the server to `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.treesitter-mcp]
+command = "/ABSOLUTE/PATH/TO/treesitter-mcp"
+```
+
+Then restart Codex and confirm it is available:
+
+```bash
+codex mcp list
+```
+
+Once configured, prompt Codex to use the MCP directly, for example:
+
+```text
+Use treesitter-mcp to find all usages of UserService, then show the smallest edit context for update_user.
+```
+
+### Other MCP Clients
+
+For any other MCP client, configure it to run the binary directly:
+
+```bash
+/path/to/treesitter-mcp
+```
+
+Alternatively, you can run it via Cargo (slower startup):
+
+```bash
+cargo run --release --manifest-path /path/to/treesitter-mcp/Cargo.toml
+```
+
 
 Build the binary:
 
@@ -49,6 +140,8 @@ Point your MCP client at `target/release/treesitter-mcp`, then start with a smal
 3. minimal_edit_context(file_path="...", symbol_name="...")
 4. review_context(file_path="...") after changes
 ```
+
+## Quick Start
 
 If you need the full installation and configuration details, keep reading below. For the messaging and roadmap behind this README, see [docs/COMMUNICATION.md](docs/COMMUNICATION.md).
 
@@ -145,122 +238,6 @@ Tree-sitter MCP Server exposes powerful code analysis tools through the MCP prot
 - **Java** (.java)
 - **Go** (.go)
 
-## Installation
-
-### Distribution
-
-- macOS: install via Homebrew
-- Linux: use a release binary, or self-build if you prefer
-- Windows: use a release binary
-
-### Homebrew (macOS)
-
-```bash
-brew tap christoph/treesitter-mcp
-brew install treesitter-mcp
-```
-
-### Release Binaries (Linux and Windows)
-
-Prebuilt release binaries are available on the [GitHub Releases](https://github.com/Christoph/treesitter-mcp/releases/latest) page.
-
-- Linux: download the release archive for your target, extract it, and point your MCP client at the `treesitter-mcp` binary
-- Windows: download the Windows release archive, extract it, and point your MCP client at `treesitter-mcp.exe`
-
-### Linux Self-Build
-
-If you prefer to build locally on Linux, install the Rust toolchain first and then build from source:
-
-1. Clone the repository:
-   ```bash
-   git clone <repository-url>
-   cd treesitter-mcp
-   ```
-
-2. Build the release binary:
-   ```bash
-   cargo build --release
-   ```
-
-   The compiled binary will be located at `target/release/treesitter-mcp`.
-
-### Other Source Builds
-
-If you are not using Homebrew or a release binary, the same `cargo build --release` flow also works on other supported platforms with a working Rust toolchain.
-
-## Configuration
-
-### Claude Code CLI
-
-Add the server to the current project:
-
-```bash
-claude mcp add --scope project treesitter-mcp -- /ABSOLUTE/PATH/TO/treesitter-mcp
-```
-
-You can verify that Claude Code sees it with:
-
-```bash
-claude mcp list
-```
-
-Or add it directly in a project-level `.mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "treesitter-mcp": {
-      "command": "/ABSOLUTE/PATH/TO/treesitter-mcp",
-      "args": []
-    }
-  }
-}
-```
-
-Once connected, ask Claude Code to use it explicitly, for example:
-
-```text
-Use treesitter-mcp to map the src directory, then inspect the service layer before proposing changes.
-```
-
-### Codex
-
-Add the server to `~/.codex/config.toml`:
-
-```toml
-[mcp_servers.treesitter-mcp]
-command = "/ABSOLUTE/PATH/TO/treesitter-mcp"
-```
-
-Then restart Codex and confirm it is available:
-
-```bash
-codex mcp list
-```
-
-Once configured, prompt Codex to use the MCP directly, for example:
-
-```text
-Use treesitter-mcp to find all usages of UserService, then show the smallest edit context for update_user.
-```
-
-### Other MCP Clients
-
-For any other MCP client, configure it to run the binary directly:
-
-```bash
-/path/to/treesitter-mcp
-```
-
-Alternatively, you can run it via Cargo (slower startup):
-
-```bash
-cargo run --release --manifest-path /path/to/treesitter-mcp/Cargo.toml
-```
-
-## Running Manually
-
-The server communicates via `stdio` (standard input/output). You can run it manually to verify it starts (it will wait for JSON-RPC messages):
 ## Available Tools
 
 ### Quick Tool Selection Guide
