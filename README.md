@@ -62,6 +62,7 @@ Tree-sitter MCP Server exposes powerful code analysis tools through the MCP prot
 - Execute custom tree-sitter queries for advanced analysis
 - Analyze structural changes between file versions (diff-aware analysis)
 - Identify potentially affected code when making changes
+- Adds ~2,071 tokens to the context window when adding the mcp
 
 ## Supported Languages
 
@@ -217,6 +218,7 @@ These tools use syntax-aware matching (best-effort, not compiler-grade):
 - `relevant_tests`: test discovery via file heuristics plus syntax-aware symbol matches
 - `verify_edit`: structural diff guardrail, not semantic intent verification
 - `review_context`: composition of existing tools; precision depends on the underlying diff/usages context
+- `affected_by_diff`: relies on `find_usages` for impact analysis
 - `code_map`: structural overview, scope-aware but not semantically resolved
 - `type_map`: type identification via AST, usage counts are approximate
 

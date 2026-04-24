@@ -1484,7 +1484,6 @@ fn find_symbol_in_current_file(
         signature: symbol.signature,
     })
 }
-
 fn resolve_change_owner(file_path: &Path, line: usize) -> Option<String> {
     let args = json!({
         "file_path": file_path.to_str()?,
