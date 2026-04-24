@@ -19,6 +19,7 @@ use serde_json::json;
 use serde_json::Value;
 use std::fs;
 use std::io;
+use streaming_iterator::StreamingIterator;
 use tree_sitter::{Query, QueryCursor};
 
 pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
@@ -71,13 +72,13 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
     })?;
 
     let mut cursor = QueryCursor::new();
-    let matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
+    let mut matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
 
     let rel_path = path_utils::to_relative_path(file_path);
     let header = "file|line|col|text";
     let mut out = CompactOutput::new(header);
 
-    for query_match in matches {
+    while let Some(query_match) = matches.next() {
         let mut first_capture = None;
 
         for capture in query_match.captures {

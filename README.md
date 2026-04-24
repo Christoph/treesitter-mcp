@@ -1,12 +1,95 @@
 # Tree-sitter MCP Server
 
+AST-first MCP for coding agents. Instead of pasting raw files into the context window, it returns compact structural answers: signatures, usage rows, focused edit context, impact summaries, and review bundles with explicit token budgets.
+
 ![Token efficiency comparison: MCP vs raw file reading](docs/token-efficiency-comparison.png)
 
-- **Focused edits are about 5-6x smaller** than reading the raw source file.
-- **Call graph navigation is about 24x smaller** than reading the source file to trace callers/callees manually.
-- **Repo search and directory overview are about 47-73x smaller** than concatenating matching project files.
-- **The comparison uses real tool output** from `target/debug/treesitter-mcp` over JSON-RPC stdio, not hand-estimated examples.
-- **Token counts use `tiktoken_rs::cl100k_base()`** for both raw baselines and MCP responses.
+## Why It Wins
+
+- **Focused edits average about 5.0x smaller** than reading the whole file.
+- **Call graph tracing averages about 21.1x smaller** than manual multi-file reads.
+- **Repo-wide search averages about 78.1x smaller** than concatenating the search scope.
+- **Directory maps average about 27.7x smaller** than concatenating the whole tree.
+- **The numbers are enforced in tests**, not just claimed in docs.
+
+## What It Does
+
+`treesitter-mcp` reduces token load with four repeated patterns:
+
+1. **Structural filtering**: return AST-derived symbols and signatures instead of raw bodies when full code is unnecessary.
+2. **Focused extraction**: return one symbol plus only the dependencies, imports, types, and tests that matter for that task.
+3. **Compact grouping**: use stable, row-oriented schemas so repeated keys and prose do not dominate the payload.
+4. **Budget-aware truncation**: use `tiktoken` counts and explicit `max_tokens` limits to keep results bounded.
+
+This is the core positioning: it is not just a parser, it is a **context compressor for code workflows**.
+
+## Quick Start
+
+Build the binary:
+
+```bash
+cargo build --release
+```
+
+Point your MCP client at `target/release/treesitter-mcp`, then start with a small workflow instead of raw reads:
+
+```text
+1. code_map(path="src", detail="minimal", with_types=true)
+2. view_code(file_path="...", detail="signatures")
+3. minimal_edit_context(file_path="...", symbol_name="...")
+4. review_context(file_path="...") after changes
+```
+
+If you need the full installation and configuration details, keep reading below. For the messaging and roadmap behind this README, see [docs/COMMUNICATION.md](docs/COMMUNICATION.md).
+
+## Token Efficiency Comparison
+
+Measured on the current code after rebuilding the server.
+The baseline side uses standard shell-style raw reads (`cat` or `find ... -exec cat`).
+The MCP side uses the exact JSON payload returned by each tool implementation, which is the same payload shape the built MCP server returns.
+All token counts below are **averages**, not single examples.
+
+| Workflow average | Samples | Standard tool/action | MCP tool | Raw avg tokens | MCP avg tokens | Saved avg tokens | Saved | Smaller |
+|---|---|---:|---:|---:|---:|---:|
+| Overview average | 4 | `cat <4 source files>` | `view_code(detail="signatures")` | 852 | 314 | 538 | 63.1% | 2.7x |
+| Focused edit average | 4 | `cat <4 source files>` | `minimal_edit_context(symbol_name=...)` | 852 | 170 | 682 | 80.0% | 5.0x |
+| Call graph average | 4 | `cat <4 analysis files>` | `call_graph(symbol_name=...)` | 5,642 | 267 | 5,375 | 95.3% | 21.1x |
+| Repo search average | 3 | `cat src/analysis/*.rs` | `find_usages(symbol=...)` | 98,590 | 1,263 | 97,327 | 98.7% | 78.1x |
+| Directory map average | 3 | `find <3 source trees> -exec cat` | `code_map(detail="minimal")` | 76,364 | 2,760 | 73,604 | 96.4% | 27.7x |
+
+Saved avg tokens = raw avg tokens - MCP avg tokens. Percent saved = `1 - MCP/raw`.
+
+## Use This Instead of Raw Reads
+
+- `view_code(detail="signatures")` instead of `cat` when you need structure but not bodies.
+- `minimal_edit_context` instead of focused file reads when you are editing one known symbol.
+- `call_graph` instead of reading multiple files to trace one function.
+- `find_usages` instead of concatenating a whole directory to answer one reference question.
+- `code_map` instead of dumping a tree when you only need the project shape.
+- `review_context` instead of manually assembling diff, impact, tests, and changed-symbol context.
+
+## Communication Commitments
+
+- The README leads with measured value, not internal architecture.
+- Benchmarks are reproducible through `cargo test report_average_token_benchmarks -- --ignored --nocapture`.
+- CI publishes a benchmark summary so pull requests show the token story directly in the pipeline.
+- New token-saving ideas are tracked in [docs/COMMUNICATION.md](docs/COMMUNICATION.md), including opportunities still missing from the product.
+
+## Measurement Method
+
+The averaged benchmark uses 18 total runs:
+
+- 4 file-overview runs across Rust, TypeScript, Python, and JavaScript fixture files
+- 4 focused-edit runs across the same four source files
+- 4 call-graph runs across analysis modules in this repository
+- 3 repo-search runs in `src/analysis`
+- 3 directory-map runs across `src`, `src/analysis`, and `tests/fixtures/complex_rust_service/src`
+
+For each run:
+
+- the **standard baseline** token count is the raw text that a normal shell read would return (`cat file` or concatenated file contents for a directory scope)
+- the **MCP token count** is the tool response JSON text
+- both sides are counted with `tiktoken_rs::cl100k_base()`
 
 ## Overview
 
@@ -36,12 +119,36 @@ Tree-sitter MCP Server exposes powerful code analysis tools through the MCP prot
 
 ## Installation
 
-### Prerequisites
+### Distribution
 
-- Rust toolchain (1.70 or later)
-- Cargo (comes with Rust)
+- macOS: install via Homebrew
+- Linux: use a release binary, or self-build if you prefer
+- Windows: use a release binary
 
-### Build from Source
+### Homebrew (macOS)
+
+Install directly from this repository's formula:
+
+```bash
+brew install --formula https://raw.githubusercontent.com/Christoph/treesitter-mcp/main/Formula/treesitter-mcp.rb
+```
+
+To install the unreleased `main` branch instead of the pinned release, use:
+
+```bash
+brew install --HEAD --formula https://raw.githubusercontent.com/Christoph/treesitter-mcp/main/Formula/treesitter-mcp.rb
+```
+
+### Release Binaries (Linux and Windows)
+
+Prebuilt release binaries are available on the [GitHub Releases](https://github.com/Christoph/treesitter-mcp/releases/latest) page.
+
+- Linux: download the release archive for your target, extract it, and point your MCP client at the `treesitter-mcp` binary
+- Windows: download the Windows release archive, extract it, and point your MCP client at `treesitter-mcp.exe`
+
+### Linux Self-Build
+
+If you prefer to build locally on Linux, install the Rust toolchain first and then build from source:
 
 1. Clone the repository:
    ```bash
@@ -56,16 +163,27 @@ Tree-sitter MCP Server exposes powerful code analysis tools through the MCP prot
 
    The compiled binary will be located at `target/release/treesitter-mcp`.
 
+### Other Source Builds
+
+If you are not using Homebrew or a release binary, the same `cargo build --release` flow also works on other supported platforms with a working Rust toolchain.
+
 ## Configuration
 
-### Claude Desktop
+### Claude Code CLI
 
-To configure the server for Claude Desktop, edit your configuration file:
+Add the server to the current project:
 
-- **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
-- **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
+```bash
+claude mcp add --scope project treesitter-mcp -- /ABSOLUTE/PATH/TO/treesitter-mcp
+```
 
-Add the `treesitter-mcp` entry to `mcpServers`:
+You can verify that Claude Code sees it with:
+
+```bash
+claude mcp list
+```
+
+Or add it directly in a project-level `.mcp.json`:
 
 ```json
 {
@@ -78,7 +196,32 @@ Add the `treesitter-mcp` entry to `mcpServers`:
 }
 ```
 
-*Note: Replace `/ABSOLUTE/PATH/TO/` with the full absolute path to your cloned repository.*
+Once connected, ask Claude Code to use it explicitly, for example:
+
+```text
+Use treesitter-mcp to map the src directory, then inspect the service layer before proposing changes.
+```
+
+### Codex
+
+Add the server to `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.treesitter-mcp]
+command = "/ABSOLUTE/PATH/TO/treesitter-mcp"
+```
+
+Then restart Codex and confirm it is available:
+
+```bash
+codex mcp list
+```
+
+Once configured, prompt Codex to use the MCP directly, for example:
+
+```text
+Use treesitter-mcp to find all usages of UserService, then show the smallest edit context for update_user.
+```
 
 ### Other MCP Clients
 
@@ -121,9 +264,13 @@ Choose the right tool for your task:
 - **What data is available in a template?** → `template_context` (Askama template variables)
 
 #### "I'm refactoring/changing code"
+- **Before editing a signature:** `preview_impact` (estimate blast radius first)
 - **Before changes:** `find_usages` (see all usages)
 - **After changes:** `parse_diff` (verify changes at symbol level)
 - **Impact analysis:** `affected_by_diff` (what might break with risk levels)
+- **Which tests should I run?** `relevant_tests` (rank likely tests for one symbol)
+- **Did I only change what I meant to change?** `verify_edit` (compact structural guardrail)
+- **Need reviewer context for a diff?** `review_context` (diff + impact + tests + focused context)
 
 ### Tool Comparison Matrix
 
@@ -138,11 +285,15 @@ Choose the right tool for your task:
 | `view_code` (focused) | Single file | Medium | Fast | Editing specific function |
 | `minimal_edit_context` | Single symbol | Low | Fast | Focused edits with direct deps |
 | `call_graph` | Single symbol | Low-Medium | Medium | Best-effort callers/callees |
+| `preview_impact` | Single symbol + scope | Medium | Medium | Planned signature changes before editing |
 | `find_usages` | Multi-file | Medium-High | Medium | Refactoring, impact analysis |
 | `format_references` | LSP locations | Low-Medium | Fast | Compact context for precise LSP references |
 | `format_diagnostics` | LSP diagnostics | Low-Medium | Fast | Compact diagnostics with owners |
 | `affected_by_diff` | Multi-file | Medium-High | Medium | Post-change validation |
 | `parse_diff` | Single file | Low-Medium | Fast | Verify changes |
+| `relevant_tests` | Single symbol | Low-Medium | Fast | Targeted test selection after edits |
+| `verify_edit` | Single file diff | Low | Fast | Check edit stayed within intended scope |
+| `review_context` | Single file diff | Medium | Medium | Compact review bundle for changed files |
 | `symbol_at_line` | Single file | Low | Fast | Error debugging, scope lookup |
 | `query_pattern` | Single file | Medium | Medium | Complex patterns (advanced) |
 | `template_context` | Single file | Low-Medium | Fast | Askama template editing |
@@ -162,6 +313,11 @@ These tools use syntax-aware matching (best-effort, not compiler-grade):
 - `format_diagnostics`: trusts LSP-provided diagnostics, then adds syntax-aware owner context
 - `minimal_edit_context`: same-file relevance plus direct project-local dependency signatures from imports
 - `call_graph`: project-local call extraction, same-file definitions preferred, not compiler-grade resolution
+- `preview_impact`: virtual signature diff plus syntax-aware impact scan, no file edits required
+- `affected_by_diff`: relies on `find_usages` for impact analysis
+- `relevant_tests`: test discovery via file heuristics plus syntax-aware symbol matches
+- `verify_edit`: structural diff guardrail, not semantic intent verification
+- `review_context`: composition of existing tools; precision depends on the underlying diff/usages context
 - `affected_by_diff`: relies on `find_usages` for impact analysis
 - `code_map`: structural overview, scope-aware but not semantically resolved
 - `type_map`: type identification via AST, usage counts are approximate
@@ -196,6 +352,20 @@ For compiler-grade symbol resolution (go-to-definition, precise find-references)
 2. Make changes
 3. parse_diff ()                                → Verify changes
 4. affected_by_diff ()                          → Check impact with risk levels
+```
+
+#### Pattern 2b: Planned Signature Change
+```
+1. preview_impact (symbol_name="function_name", new_signature="...") → Estimate fallout first
+2. Make changes
+3. relevant_tests (symbol_name="function_name")                      → Run focused tests
+4. verify_edit (target_symbol="function_name")                       → Confirm edit stayed scoped
+```
+
+#### Pattern 2c: Reviewing a Local Diff
+```
+1. review_context (file_path="src/lib.rs")      → Diff + impact + tests + focused changed-symbol context
+2. view_code / minimal_edit_context as needed   → Drill deeper only where needed
 ```
 
 #### Pattern 3: Debugging Error
@@ -293,6 +463,9 @@ View a source file with flexible detail levels and automatic type inclusion from
   - When set, returns full code for this symbol + signatures for rest - 3x cheaper
 - `definition_location` (object, optional): LSP `textDocument/definition` result or compact
   `{file,line,col}` location used to include the exact dependency type from that definition
+- `comment_mode` (string, optional, default: `"none"`): Comment handling for returned code fields
+  - `"none"`: Current compact behavior
+  - `"leading"`: Prepend the contiguous leading comment block above returned symbol code
 
 **Auto-Includes**: All struct/class/interface definitions from project dependencies (not external libs)
 
@@ -313,6 +486,7 @@ View a source file with flexible detail levels and automatic type inclusion from
 **Optimization:** 
 - Use `detail="signatures"` for quick overview (10x cheaper)
 - Use `focus_symbol` for focused editing (3x cheaper)
+- Use `comment_mode="leading"` when rationale in comments matters more than raw token minimization
 
 **Typical Workflow:** `code_map` → `view_code`
 
@@ -573,12 +747,16 @@ Return the smallest useful context for editing one known symbol.
 - `file_path` (string, required): Path to the source file
 - `symbol_name` (string, required): Symbol to edit
 - `max_tokens` (integer, optional, default: 2000): Hard output budget
+- `comment_mode` (string, optional, default: `"none"`): Comment handling for the target code row
+  - `"none"`: Current compact behavior
+  - `"leading"`: Prepend the contiguous leading comment block above the target symbol
 
 **Example**:
 ```json
 {
   "file_path": "/path/to/src/workflow.ts",
   "symbol_name": "buildSummary",
+  "comment_mode": "leading",
   "max_tokens": 2000
 }
 ```
@@ -590,6 +768,8 @@ Return the smallest useful context for editing one known symbol.
 - `types`: optional same-file referenced type rows (`kind|name|line|sig`)
 - `imports`: optional relevant import rows (`line|text`)
 - `scope`: enclosing class/impl scope when available
+
+Use `comment_mode="leading"` when the target symbol has important rationale in comments above the declaration.
 
 ---
 

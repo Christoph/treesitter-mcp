@@ -16,6 +16,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use streaming_iterator::StreamingIterator;
 use tree_sitter::{Query, QueryCursor, Tree};
 
 #[allow(dead_code)]
@@ -96,9 +97,9 @@ fn extract_python_shape(tree: &Tree, source: &str) -> Result<FileShape, io::Erro
     })?;
 
     let mut cursor = QueryCursor::new();
-    let matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
+    let mut matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
 
-    for match_ in matches {
+    while let Some(match_) = matches.next() {
         for capture in match_.captures {
             let node = capture.node;
             let name = capture.index;
@@ -176,9 +177,9 @@ fn extract_rust_shape(tree: &Tree, source: &str) -> Result<FileShape, io::Error>
     })?;
 
     let mut cursor = QueryCursor::new();
-    let matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
+    let mut matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
 
-    for match_ in matches {
+    while let Some(match_) = matches.next() {
         for capture in match_.captures {
             let node = capture.node;
             let name = capture.index;
@@ -256,9 +257,9 @@ fn extract_swift_shape(tree: &Tree, source: &str) -> Result<FileShape, io::Error
     })?;
 
     let mut cursor = QueryCursor::new();
-    let matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
+    let mut matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
 
-    for match_ in matches {
+    while let Some(match_) = matches.next() {
         for capture in match_.captures {
             let node = capture.node;
             let name = capture.index;
@@ -289,7 +290,7 @@ fn extract_swift_shape(tree: &Tree, source: &str) -> Result<FileShape, io::Error
                     // Search for "struct" or "class" keyword among the children
                     let is_struct = if let Some(parent) = node.parent() {
                         let mut found_struct = false;
-                        for i in 0..parent.child_count() {
+                        for i in 0..parent.child_count() as u32 {
                             if let Some(child) = parent.child(i) {
                                 if let Ok(keyword) = child.utf8_text(source.as_bytes()) {
                                     if keyword == "struct" {

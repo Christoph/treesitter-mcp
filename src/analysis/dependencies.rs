@@ -7,6 +7,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use streaming_iterator::StreamingIterator;
 use tree_sitter::{Query, QueryCursor};
 
 use crate::parser::Language;
@@ -84,9 +85,9 @@ pub fn find_rust_dependencies(source: &str, file_path: &Path, project_root: &Pat
     };
 
     let mut cursor = QueryCursor::new();
-    let matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
+    let mut matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
 
-    for match_ in matches {
+    while let Some(match_) = matches.next() {
         for capture in match_.captures {
             if let Ok(mod_name) = capture.node.utf8_text(source.as_bytes()) {
                 // Try foo.rs
@@ -233,9 +234,9 @@ pub fn find_python_dependencies(
     };
 
     let mut cursor = QueryCursor::new();
-    let matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
+    let mut matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
 
-    for match_ in matches {
+    while let Some(match_) = matches.next() {
         for capture in match_.captures {
             if let Ok(module) = capture.node.utf8_text(source.as_bytes()) {
                 push_python_module(&mut deps, module, dir, project_root);
@@ -317,9 +318,9 @@ pub fn find_js_ts_dependencies(
     };
 
     let mut cursor = QueryCursor::new();
-    let matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
+    let mut matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
 
-    for match_ in matches {
+    while let Some(match_) = matches.next() {
         for capture in match_.captures {
             if let Ok(import_spec) = capture.node.utf8_text(source.as_bytes()) {
                 // Remove quotes
@@ -399,8 +400,9 @@ pub fn find_go_dependencies(source: &str, file_path: &Path, project_root: &Path)
     let module_path = read_go_module_path(project_root);
     let current_file = fs::canonicalize(file_path).unwrap_or_else(|_| file_path.to_path_buf());
     let mut cursor = QueryCursor::new();
+    let mut matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
 
-    for match_ in cursor.matches(&query, tree.root_node(), source.as_bytes()) {
+    while let Some(match_) = matches.next() {
         for capture in match_.captures {
             let Ok(raw) = capture.node.utf8_text(source.as_bytes()) else {
                 continue;

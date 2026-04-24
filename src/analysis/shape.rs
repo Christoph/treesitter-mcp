@@ -5,6 +5,7 @@
 
 use crate::parser::Language;
 use std::io;
+use streaming_iterator::StreamingIterator;
 use tree_sitter::{Node, Query, QueryCursor, Tree};
 
 /// Enhanced function information with signature and documentation
@@ -244,9 +245,9 @@ fn extract_rust_enhanced(
     })?;
 
     let mut cursor = QueryCursor::new();
-    let matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
+    let mut matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
 
-    for match_ in matches {
+    while let Some(match_) = matches.next() {
         for capture in match_.captures {
             let node = capture.node;
             let name_idx = capture.index;
@@ -367,9 +368,9 @@ fn extract_python_enhanced(
     })?;
 
     let mut cursor = QueryCursor::new();
-    let matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
+    let mut matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
 
-    for match_ in matches {
+    while let Some(match_) = matches.next() {
         for capture in match_.captures {
             let node = capture.node;
             let name_idx = capture.index;
@@ -518,13 +519,13 @@ fn extract_js_enhanced(
     })?;
 
     let mut cursor = QueryCursor::new();
-    let matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
+    let mut matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
 
     // Track processed nodes to avoid duplicates
     let mut processed_func_nodes = std::collections::HashSet::new();
     let mut processed_class_nodes = std::collections::HashSet::new();
 
-    for match_ in matches {
+    while let Some(match_) = matches.next() {
         for capture in match_.captures {
             let node = capture.node;
             let name_idx = capture.index;
@@ -562,35 +563,33 @@ fn extract_js_enhanced(
                         }
                     }
                 }
-                "func" => {
+                "func" if node.kind() == "function_declaration" => {
                     // TypeScript: capture the whole function_declaration node
-                    if node.kind() == "function_declaration" {
-                        let node_id = node.id();
-                        if !processed_func_nodes.contains(&node_id) {
-                            processed_func_nodes.insert(node_id);
-                            // Find the function name
-                            if let Some(name_node) = node.child_by_field_name("name") {
-                                if let Ok(name) = name_node.utf8_text(source.as_bytes()) {
-                                    let line = node.start_position().row + 1;
-                                    let end_line = node.end_position().row + 1;
-                                    let signature = extract_signature(node, source)?;
-                                    let doc = extract_doc_comment(node, source, language)?;
-                                    let code = if include_code {
-                                        extract_code(node, source)?
-                                    } else {
-                                        None
-                                    };
+                    let node_id = node.id();
+                    if !processed_func_nodes.contains(&node_id) {
+                        processed_func_nodes.insert(node_id);
+                        // Find the function name
+                        if let Some(name_node) = node.child_by_field_name("name") {
+                            if let Ok(name) = name_node.utf8_text(source.as_bytes()) {
+                                let line = node.start_position().row + 1;
+                                let end_line = node.end_position().row + 1;
+                                let signature = extract_signature(node, source)?;
+                                let doc = extract_doc_comment(node, source, language)?;
+                                let code = if include_code {
+                                    extract_code(node, source)?
+                                } else {
+                                    None
+                                };
 
-                                    functions.push(EnhancedFunctionInfo {
-                                        name: name.to_string(),
-                                        signature,
-                                        line,
-                                        end_line,
-                                        doc,
-                                        code,
-                                        annotations: vec![],
-                                    });
-                                }
+                                functions.push(EnhancedFunctionInfo {
+                                    name: name.to_string(),
+                                    signature,
+                                    line,
+                                    end_line,
+                                    doc,
+                                    code,
+                                    annotations: vec![],
+                                });
                             }
                         }
                     }
@@ -635,43 +634,37 @@ fn extract_js_enhanced(
                         }
                     }
                 }
-                "class" => {
+                "class" if node.kind() == "class_declaration" => {
                     // TypeScript: capture the whole class_declaration node
-                    if node.kind() == "class_declaration" {
-                        let node_id = node.id();
-                        if !processed_class_nodes.contains(&node_id) {
-                            processed_class_nodes.insert(node_id);
-                            if let Some(name_node) = node.child_by_field_name("name") {
-                                if let Ok(name) = name_node.utf8_text(source.as_bytes()) {
-                                    let line = node.start_position().row + 1;
-                                    let end_line = node.end_position().row + 1;
-                                    let doc = extract_doc_comment(node, source, language)?;
-                                    let code = if include_code {
-                                        extract_code(node, source)?
-                                    } else {
-                                        None
-                                    };
+                    let node_id = node.id();
+                    if !processed_class_nodes.contains(&node_id) {
+                        processed_class_nodes.insert(node_id);
+                        if let Some(name_node) = node.child_by_field_name("name") {
+                            if let Ok(name) = name_node.utf8_text(source.as_bytes()) {
+                                let line = node.start_position().row + 1;
+                                let end_line = node.end_position().row + 1;
+                                let doc = extract_doc_comment(node, source, language)?;
+                                let code = if include_code {
+                                    extract_code(node, source)?
+                                } else {
+                                    None
+                                };
 
-                                    // Extract methods from class body
-                                    let methods = extract_class_methods(
-                                        node,
-                                        source,
-                                        language,
-                                        include_code,
-                                    )?;
+                                // Extract methods from class body
+                                let methods =
+                                    extract_class_methods(node, source, language, include_code)?;
 
-                                    classes.push(EnhancedClassInfo {
-                                        name: name.to_string(),
-                                        line,
-                                        end_line,
-                                        doc,
-                                        code,
-                                        methods,
-                                        implements: vec![],
-                                        properties: vec![],
-                                        fields: vec![],
-                                    });
-                                }
+                                classes.push(EnhancedClassInfo {
+                                    name: name.to_string(),
+                                    line,
+                                    end_line,
+                                    doc,
+                                    code,
+                                    methods,
+                                    implements: vec![],
+                                    properties: vec![],
+                                    fields: vec![],
+                                });
                             }
                         }
                     }
@@ -743,9 +736,9 @@ fn extract_swift_enhanced(
     })?;
 
     let mut cursor = QueryCursor::new();
-    let matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
+    let mut matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
 
-    for match_ in matches {
+    while let Some(match_) = matches.next() {
         for capture in match_.captures {
             let node = capture.node;
             let name_idx = capture.index;
@@ -939,13 +932,13 @@ fn extract_csharp_enhanced(
     })?;
 
     let mut cursor = QueryCursor::new();
-    let matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
+    let mut matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
 
     let mut processed_method_nodes = std::collections::HashSet::new();
     let mut processed_class_nodes = std::collections::HashSet::new();
     let mut processed_property_nodes = std::collections::HashSet::new();
 
-    for match_ in matches {
+    while let Some(match_) = matches.next() {
         for capture in match_.captures {
             let node = capture.node;
             let name_idx = capture.index;
@@ -985,49 +978,11 @@ fn extract_csharp_enhanced(
                         }
                     }
                 }
-                "class" => {
-                    if node.kind() == "class_declaration" {
-                        let node_id = node.id();
-                        if !processed_class_nodes.contains(&node_id) {
-                            processed_class_nodes.insert(node_id);
+                "class" if node.kind() == "class_declaration" => {
+                    let node_id = node.id();
+                    if !processed_class_nodes.contains(&node_id) {
+                        processed_class_nodes.insert(node_id);
 
-                            if let Some(name_node) = node.child_by_field_name("name") {
-                                if let Ok(name) = name_node.utf8_text(source.as_bytes()) {
-                                    let line = node.start_position().row + 1;
-                                    let end_line = node.end_position().row + 1;
-                                    let doc = extract_doc_comment(node, source, Language::CSharp)?;
-                                    let code = if include_code {
-                                        extract_code(node, source)?
-                                    } else {
-                                        None
-                                    };
-
-                                    // Extract implements interfaces from base_list
-                                    let implements =
-                                        extract_csharp_implemented_interfaces(node, source);
-
-                                    // Extract methods from class
-                                    let methods =
-                                        extract_csharp_class_methods(node, source, include_code)?;
-
-                                    classes.push(EnhancedClassInfo {
-                                        name: name.to_string(),
-                                        line,
-                                        end_line,
-                                        doc,
-                                        code,
-                                        methods,
-                                        implements,
-                                        properties: vec![],
-                                        fields: vec![],
-                                    });
-                                }
-                            }
-                        }
-                    }
-                }
-                "interface" => {
-                    if node.kind() == "interface_declaration" {
                         if let Some(name_node) = node.child_by_field_name("name") {
                             if let Ok(name) = name_node.utf8_text(source.as_bytes()) {
                                 let line = node.start_position().row + 1;
@@ -1039,20 +994,54 @@ fn extract_csharp_enhanced(
                                     None
                                 };
 
-                                // Extract methods from interface
-                                let methods =
-                                    extract_csharp_interface_methods(node, source, include_code)?;
+                                // Extract implements interfaces from base_list
+                                let implements =
+                                    extract_csharp_implemented_interfaces(node, source);
 
-                                interfaces.push(InterfaceInfo {
+                                // Extract methods from class
+                                let methods =
+                                    extract_csharp_class_methods(node, source, include_code)?;
+
+                                classes.push(EnhancedClassInfo {
                                     name: name.to_string(),
                                     line,
                                     end_line,
                                     doc,
                                     code,
                                     methods,
+                                    implements,
                                     properties: vec![],
+                                    fields: vec![],
                                 });
                             }
+                        }
+                    }
+                }
+                "interface" if node.kind() == "interface_declaration" => {
+                    if let Some(name_node) = node.child_by_field_name("name") {
+                        if let Ok(name) = name_node.utf8_text(source.as_bytes()) {
+                            let line = node.start_position().row + 1;
+                            let end_line = node.end_position().row + 1;
+                            let doc = extract_doc_comment(node, source, Language::CSharp)?;
+                            let code = if include_code {
+                                extract_code(node, source)?
+                            } else {
+                                None
+                            };
+
+                            // Extract methods from interface
+                            let methods =
+                                extract_csharp_interface_methods(node, source, include_code)?;
+
+                            interfaces.push(InterfaceInfo {
+                                name: name.to_string(),
+                                line,
+                                end_line,
+                                doc,
+                                code,
+                                methods,
+                                properties: vec![],
+                            });
                         }
                     }
                 }
@@ -1241,12 +1230,12 @@ fn extract_java_enhanced(
     })?;
 
     let mut cursor = QueryCursor::new();
-    let matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
+    let mut matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
 
     let mut processed_method_nodes = std::collections::HashSet::new();
     let mut processed_class_nodes = std::collections::HashSet::new();
 
-    for match_ in matches {
+    while let Some(match_) = matches.next() {
         for capture in match_.captures {
             let node = capture.node;
             let name_idx = capture.index;
@@ -1286,49 +1275,11 @@ fn extract_java_enhanced(
                         }
                     }
                 }
-                "class" => {
-                    if node.kind() == "class_declaration" {
-                        let node_id = node.id();
-                        if !processed_class_nodes.contains(&node_id) {
-                            processed_class_nodes.insert(node_id);
+                "class" if node.kind() == "class_declaration" => {
+                    let node_id = node.id();
+                    if !processed_class_nodes.contains(&node_id) {
+                        processed_class_nodes.insert(node_id);
 
-                            if let Some(name_node) = node.child_by_field_name("name") {
-                                if let Ok(name) = name_node.utf8_text(source.as_bytes()) {
-                                    let line = node.start_position().row + 1;
-                                    let end_line = node.end_position().row + 1;
-                                    let doc = extract_doc_comment(node, source, Language::Java)?;
-                                    let code = if include_code {
-                                        extract_code(node, source)?
-                                    } else {
-                                        None
-                                    };
-
-                                    // Extract implements interfaces
-                                    let implements =
-                                        extract_java_implemented_interfaces(node, source);
-
-                                    // Extract methods from class
-                                    let methods =
-                                        extract_java_class_methods(node, source, include_code)?;
-
-                                    classes.push(EnhancedClassInfo {
-                                        name: name.to_string(),
-                                        line,
-                                        end_line,
-                                        doc,
-                                        code,
-                                        methods,
-                                        implements,
-                                        properties: vec![],
-                                        fields: vec![],
-                                    });
-                                }
-                            }
-                        }
-                    }
-                }
-                "interface" => {
-                    if node.kind() == "interface_declaration" {
                         if let Some(name_node) = node.child_by_field_name("name") {
                             if let Ok(name) = name_node.utf8_text(source.as_bytes()) {
                                 let line = node.start_position().row + 1;
@@ -1340,20 +1291,53 @@ fn extract_java_enhanced(
                                     None
                                 };
 
-                                // Extract methods from interface
-                                let methods =
-                                    extract_java_interface_methods(node, source, include_code)?;
+                                // Extract implements interfaces
+                                let implements = extract_java_implemented_interfaces(node, source);
 
-                                interfaces.push(InterfaceInfo {
+                                // Extract methods from class
+                                let methods =
+                                    extract_java_class_methods(node, source, include_code)?;
+
+                                classes.push(EnhancedClassInfo {
                                     name: name.to_string(),
                                     line,
                                     end_line,
                                     doc,
                                     code,
                                     methods,
+                                    implements,
                                     properties: vec![],
+                                    fields: vec![],
                                 });
                             }
+                        }
+                    }
+                }
+                "interface" if node.kind() == "interface_declaration" => {
+                    if let Some(name_node) = node.child_by_field_name("name") {
+                        if let Ok(name) = name_node.utf8_text(source.as_bytes()) {
+                            let line = node.start_position().row + 1;
+                            let end_line = node.end_position().row + 1;
+                            let doc = extract_doc_comment(node, source, Language::Java)?;
+                            let code = if include_code {
+                                extract_code(node, source)?
+                            } else {
+                                None
+                            };
+
+                            // Extract methods from interface
+                            let methods =
+                                extract_java_interface_methods(node, source, include_code)?;
+
+                            interfaces.push(InterfaceInfo {
+                                name: name.to_string(),
+                                line,
+                                end_line,
+                                doc,
+                                code,
+                                methods,
+                                properties: vec![],
+                            });
                         }
                     }
                 }
@@ -1413,12 +1397,12 @@ fn extract_go_enhanced(
     })?;
 
     let mut cursor = QueryCursor::new();
-    let matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
+    let mut matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
 
     let mut processed_function_nodes = std::collections::HashSet::new();
     let mut processed_type_nodes = std::collections::HashSet::new();
 
-    for match_ in matches {
+    while let Some(match_) = matches.next() {
         for capture in match_.captures {
             let node = capture.node;
             let capture_name = query.capture_names()[capture.index as usize];
@@ -2038,6 +2022,107 @@ fn extract_code(node: Node, source: &str) -> Result<Option<String>, io::Error> {
     }
 }
 
+pub fn prepend_leading_comments_to_code(
+    source: &str,
+    start_line: usize,
+    language: Language,
+    code: Option<String>,
+    mode: CommentMode,
+) -> Option<String> {
+    let code = code?;
+    if !mode.includes_leading() {
+        return Some(code);
+    }
+
+    let comments = extract_leading_comment_block(source, start_line, language)?;
+    Some(format!("{comments}\n{code}"))
+}
+
+fn extract_leading_comment_block(
+    source: &str,
+    start_line: usize,
+    language: Language,
+) -> Option<String> {
+    let lines: Vec<&str> = source.lines().collect();
+    let mut idx = start_line.checked_sub(2)? as isize;
+    if idx < 0 || idx as usize >= lines.len() {
+        return None;
+    }
+
+    if lines[idx as usize].trim().is_empty() {
+        return None;
+    }
+
+    let mut collected = Vec::new();
+
+    while idx >= 0 {
+        let line = lines[idx as usize];
+        let trimmed = line.trim();
+
+        if trimmed.is_empty() {
+            break;
+        }
+
+        if is_line_comment_text(trimmed, language) {
+            collected.push(line);
+            idx -= 1;
+            continue;
+        }
+
+        if supports_block_comments(language) && trimmed.ends_with("*/") {
+            collected.push(line);
+            idx -= 1;
+
+            while idx >= 0 {
+                let block_line = lines[idx as usize];
+                collected.push(block_line);
+                if block_line.contains("/*") {
+                    idx -= 1;
+                    break;
+                }
+                idx -= 1;
+            }
+            continue;
+        }
+
+        break;
+    }
+
+    if collected.is_empty() {
+        None
+    } else {
+        collected.reverse();
+        Some(collected.join("\n"))
+    }
+}
+
+fn is_line_comment_text(trimmed: &str, language: Language) -> bool {
+    match language {
+        Language::Python => trimmed.starts_with('#'),
+        Language::Rust
+        | Language::JavaScript
+        | Language::TypeScript
+        | Language::Swift
+        | Language::CSharp
+        | Language::Java
+        | Language::Go => trimmed.starts_with("//"),
+        _ => false,
+    }
+}
+
+fn supports_block_comments(language: Language) -> bool {
+    matches!(
+        language,
+        Language::Rust
+            | Language::JavaScript
+            | Language::TypeScript
+            | Language::Swift
+            | Language::CSharp
+            | Language::Java
+            | Language::Go
+    )
+}
+
 /// Extract doc comment from a node
 fn extract_doc_comment(
     node: Node,
@@ -2260,6 +2345,25 @@ pub struct HtmlFileShape {
     /// Style references
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub styles: Vec<StyleInfo>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommentMode {
+    None,
+    Leading,
+}
+
+impl CommentMode {
+    pub fn from_option(value: Option<&str>) -> Self {
+        match value {
+            Some("leading") => CommentMode::Leading,
+            _ => CommentMode::None,
+        }
+    }
+
+    pub fn includes_leading(self) -> bool {
+        matches!(self, CommentMode::Leading)
+    }
 }
 
 // ============================================================================
@@ -2632,9 +2736,9 @@ pub fn extract_html_shape(
     .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("Query error: {e}")))?;
 
     let mut cursor = QueryCursor::new();
-    let matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
+    let mut matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
 
-    for match_ in matches {
+    while let Some(match_) = matches.next() {
         for capture in match_.captures {
             let node = capture.node;
             let capture_name = query.capture_names()[capture.index as usize];

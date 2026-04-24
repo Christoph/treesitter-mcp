@@ -1,116 +1,24 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1680" height="1680" viewBox="0 0 1680 1680" role="img" aria-labelledby="title desc">
-  <title id="title">Token Efficiency: MCP vs Raw File Reading</title>
-  <desc id="desc">Square comparison graphic showing standard shell/file-read baselines versus treesitter-mcp tools, tokens saved, percent saved, and measurement method.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="1680" height="1880" viewBox="0 0 1680 1880" role="img" aria-labelledby="title desc">
+  <title id="title">Average token efficiency: treesitter-mcp vs default shell reads</title>
+  <desc id="desc">Average benchmark across 18 runs comparing raw shell-style file reads against compact treesitter-mcp tool responses, measured with tiktoken_rs cl100k_base.</desc>
   <defs>
     <style>
       .bg { fill: #f7fafc; }
-      .card { fill: #fff; stroke: #dbe5f0; stroke-width: 1.4; }
+      .card { fill: #ffffff; stroke: #dbe5f0; stroke-width: 1.4; }
       .blueCard { fill: #eff6ff; stroke: #bfdbfe; stroke-width: 1.2; }
       .greenCard { fill: #ecfdf5; stroke: #a7f3d0; stroke-width: 1.2; }
       .title { font: 800 52px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #172033; }
       .subtitle { font: 400 24px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #617089; }
-      .section { font: 800 32px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #172033; }
-      .label { font: 800 15px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #617089; letter-spacing: .5px; }
+      .section { font: 800 30px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #172033; }
+      .label { font: 800 15px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #617089; letter-spacing: .4px; }
       .text { font: 500 20px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #172033; }
       .small { font: 500 17px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #617089; }
       .mono { font: 650 18px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fill: #243049; }
       .metric { font: 800 34px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #172033; }
-      .metricBlue { font: 800 34px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #2563eb; }
-      .metricGreen { font: 800 34px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #059669; }
-      .kpiLabel { font: 800 18px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #2563eb; }
-      .kpiValue { font: 800 48px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #172033; }
-      .kpiTail { font: 500 17px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #617089; }
-      .green { fill: #059669; }
-      .blue { fill: #2563eb; }
-      .barBg { fill: #eef2f7; }
-      .barRaw { fill: #cbd5e1; }
-    </style>
-  </defs>
-
-  <rect class="bg" width="1680" height="1680"/>
-
-  <rect class="card" x="56" y="48" width="1568" height="260" rx="30"/>
-  <text class="title" x="96" y="120">Token Efficiency: MCP vs Raw File Reading</text>
-  <text class="subtitle" x="98" y="164">Measured on this repository with tiktoken-rs. Raw baselines are standard shell/file-read actions;</text>
-  <text class="subtitle" x="98" y="200">MCP output was captured from the built server over JSON-RPC stdio.</text>
-
-  <rect class="blueCard" x="96" y="230" width="420" height="54" rx="16"/>
-  <text class="kpiLabel" x="150" y="264">FOCUSED EDITS</text><text class="kpiValue" x="300" y="275">5.8x</text><text class="kpiTail" x="425" y="267">smaller</text>
-  <rect class="blueCard" x="630" y="230" width="420" height="54" rx="16"/>
-  <text class="kpiLabel" x="690" y="264">REPO SEARCH</text><text class="kpiValue" x="830" y="275">72.7x</text><text class="kpiTail" x="982" y="267">smaller</text>
-  <rect class="blueCard" x="1164" y="230" width="420" height="54" rx="16"/>
-  <text class="kpiLabel" x="1218" y="264">WHOLE SRC MAP</text><text class="kpiValue" x="1382" y="275">60.9x</text><text class="kpiTail" x="1528" y="267">smaller</text>
-
-  <text class="section" x="72" y="370">How it was measured</text>
-  <rect class="greenCard" x="72" y="398" width="1536" height="150" rx="20"/>
-  <text class="text" x="104" y="438">Standard tool/action: raw shell/file reads, e.g. <tspan class="mono">cat src/analysis/view_code.rs</tspan>, <tspan class="mono">cat src/analysis/*.rs</tspan>, or <tspan class="mono">find ... -exec cat</tspan>.</text>
-  <text class="text" x="104" y="476">MCP side: compact outputs from <tspan class="mono">view_code</tspan>, <tspan class="mono">minimal_edit_context</tspan>, <tspan class="mono">call_graph</tspan>, <tspan class="mono">find_usages</tspan>, and <tspan class="mono">code_map</tspan>.</text>
-  <text class="text" x="104" y="514">Both raw text and MCP responses were counted after capture with <tspan class="mono">tiktoken_rs::cl100k_base()</tspan>.</text>
-
-  <text class="section" x="72" y="612">Measured comparison</text>
-
-  <!-- Card helper layout: x/y, baseline, tool, raw, mcp, saved, saved%, smaller, raw bar width, mcp bar width -->
-  <rect class="card" x="72" y="646" width="736" height="260" rx="22"/>
-  <text class="label" x="104" y="690">STANDARD TOOL/ACTION</text><text class="mono" x="104" y="720">cat src/analysis/view_code.rs</text>
-  <text class="label" x="104" y="760">MCP TOOL</text><text class="mono" x="104" y="790">view_code(detail="signatures")</text>
-  <text class="label" x="104" y="840">RAW</text><text class="metric" x="104" y="878">9,516</text>
-  <text class="label" x="244" y="840">MCP</text><text class="metric" x="244" y="878">1,992</text>
-  <text class="label" x="384" y="840">SAVED</text><text class="metric" x="384" y="878">7,524</text>
-  <text class="label" x="548" y="840">SAVED %</text><text class="metricGreen" x="548" y="878">79.1%</text>
-  <text class="label" x="104" y="818">FOOTPRINT</text><rect class="barBg" x="244" y="805" width="300" height="14" rx="7"/><rect class="barRaw" x="244" y="805" width="25" height="14" rx="7"/><rect class="blue" x="244" y="805" width="5" height="14" rx="2"/>
-  <text class="label" x="646" y="760">SMALLER</text><text class="metricBlue" x="646" y="798" text-anchor="middle">4.8x</text>
-
-  <rect class="card" x="872" y="646" width="736" height="260" rx="22"/>
-  <text class="label" x="904" y="690">STANDARD TOOL/ACTION</text><text class="mono" x="904" y="720">cat src/analysis/view_code.rs</text>
-  <text class="label" x="904" y="760">MCP TOOL</text><text class="mono" x="904" y="790">minimal_edit_context(symbol_name="execute")</text>
-  <text class="label" x="904" y="840">RAW</text><text class="metric" x="904" y="878">9,516</text>
-  <text class="label" x="1044" y="840">MCP</text><text class="metric" x="1044" y="878">1,646</text>
-  <text class="label" x="1184" y="840">SAVED</text><text class="metric" x="1184" y="878">7,870</text>
-  <text class="label" x="1348" y="840">SAVED %</text><text class="metricGreen" x="1348" y="878">82.7%</text>
-  <text class="label" x="904" y="818">FOOTPRINT</text><rect class="barBg" x="1044" y="805" width="300" height="14" rx="7"/><rect class="barRaw" x="1044" y="805" width="25" height="14" rx="7"/><rect class="blue" x="1044" y="805" width="4" height="14" rx="2"/>
-  <text class="label" x="1446" y="760">SMALLER</text><text class="metricBlue" x="1446" y="798" text-anchor="middle">5.8x</text>
-
-  <rect class="card" x="72" y="936" width="736" height="260" rx="22"/>
-  <text class="label" x="104" y="980">STANDARD TOOL/ACTION</text><text class="mono" x="104" y="1010">cat src/analysis/view_code.rs</text>
-  <text class="label" x="104" y="1050">MCP TOOL</text><text class="mono" x="104" y="1080">call_graph(symbol_name="execute")</text>
-  <text class="label" x="104" y="1130">RAW</text><text class="metric" x="104" y="1168">9,516</text>
-  <text class="label" x="244" y="1130">MCP</text><text class="metric" x="244" y="1168">390</text>
-  <text class="label" x="384" y="1130">SAVED</text><text class="metric" x="384" y="1168">9,126</text>
-  <text class="label" x="548" y="1130">SAVED %</text><text class="metricGreen" x="548" y="1168">95.9%</text>
-  <text class="label" x="104" y="1108">FOOTPRINT</text><rect class="barBg" x="244" y="1095" width="300" height="14" rx="7"/><rect class="barRaw" x="244" y="1095" width="25" height="14" rx="7"/><rect class="blue" x="244" y="1095" width="2" height="14" rx="1"/>
-  <text class="label" x="646" y="1050">SMALLER</text><text class="metricBlue" x="646" y="1088" text-anchor="middle">24.4x</text>
-
-  <rect class="card" x="872" y="936" width="736" height="260" rx="22"/>
-  <text class="label" x="904" y="980">STANDARD TOOL/ACTION</text><text class="mono" x="904" y="1010">cat src/analysis/*.rs</text>
-  <text class="label" x="904" y="1050">MCP TOOL</text><text class="mono" x="904" y="1080">find_usages(symbol="parse_code")</text>
-  <text class="label" x="904" y="1130">RAW</text><text class="metric" x="904" y="1168">93,066</text>
-  <text class="label" x="1044" y="1130">MCP</text><text class="metric" x="1044" y="1168">1,280</text>
-  <text class="label" x="1184" y="1130">SAVED</text><text class="metric" x="1184" y="1168">91,786</text>
-  <text class="label" x="1348" y="1130">SAVED %</text><text class="metricGreen" x="1348" y="1168">98.6%</text>
-  <text class="label" x="904" y="1108">FOOTPRINT</text><rect class="barBg" x="1044" y="1095" width="300" height="14" rx="7"/><rect class="barRaw" x="1044" y="1095" width="241" height="14" rx="7"/><rect class="blue" x="1044" y="1095" width="3" height="14" rx="1"/>
-  <text class="label" x="1446" y="1050">SMALLER</text><text class="metricBlue" x="1446" y="1088" text-anchor="middle">72.7x</text>
-
-  <rect class="card" x="72" y="1226" width="736" height="260" rx="22"/>
-  <text class="label" x="104" y="1270">STANDARD TOOL/ACTION</text><text class="mono" x="104" y="1300">cat src/analysis/*.rs</text>
-  <text class="label" x="104" y="1340">MCP TOOL</text><text class="mono" x="104" y="1370">code_map(path="src/analysis")</text>
-  <text class="label" x="104" y="1420">RAW</text><text class="metric" x="104" y="1458">93,066</text>
-  <text class="label" x="244" y="1420">MCP</text><text class="metric" x="244" y="1458">1,979</text>
-  <text class="label" x="384" y="1420">SAVED</text><text class="metric" x="384" y="1458">91,087</text>
-  <text class="label" x="548" y="1420">SAVED %</text><text class="metricGreen" x="548" y="1458">97.9%</text>
-  <text class="label" x="104" y="1398">FOOTPRINT</text><rect class="barBg" x="244" y="1385" width="300" height="14" rx="7"/><rect class="barRaw" x="244" y="1385" width="241" height="14" rx="7"/><rect class="blue" x="244" y="1385" width="5" height="14" rx="2"/>
-  <text class="label" x="646" y="1340">SMALLER</text><text class="metricBlue" x="646" y="1378" text-anchor="middle">47.0x</text>
-
-  <rect class="card" x="872" y="1226" width="736" height="260" rx="22"/>
-  <text class="label" x="904" y="1270">STANDARD TOOL/ACTION</text><text class="mono" x="904" y="1300">find src -name '*.rs' -exec cat</text>
-  <text class="label" x="904" y="1340">MCP TOOL</text><text class="mono" x="904" y="1370">code_map(path="src", detail="minimal")</text>
-  <text class="label" x="904" y="1420">RAW</text><text class="metric" x="904" y="1458">116,094</text>
-  <text class="label" x="1044" y="1420">MCP</text><text class="metric" x="1044" y="1458">1,905</text>
-  <text class="label" x="1184" y="1420">SAVED</text><text class="metric" x="1184" y="1458">114,189</text>
-  <text class="label" x="1348" y="1420">SAVED %</text><text class="metricGreen" x="1348" y="1458">98.4%</text>
-  <text class="label" x="904" y="1398">FOOTPRINT</text><rect class="barBg" x="1044" y="1385" width="300" height="14" rx="7"/><rect class="barRaw" x="1044" y="1385" width="300" height="14" rx="7"/><rect class="blue" x="1044" y="1385" width="5" height="14" rx="2"/>
-  <text class="label" x="1446" y="1340">SMALLER</text><text class="metricBlue" x="1446" y="1378" text-anchor="middle">60.9x</text>
-
-  <text class="small" x="72" y="1546">Saved tokens = raw tokens - MCP tokens. Percent saved = 1 - MCP/raw. Values were measured after the plan completion build on 2026-04-22.</text>
-  <rect class="blue" x="72" y="1582" width="20" height="20" rx="5"/><text class="small" x="104" y="1598">MCP output footprint</text>
-  <rect class="barRaw" x="300" y="1582" width="20" height="20" rx="5"/><text class="small" x="332" y="1598">raw source footprint</text>
+      .metricBlue { font: 800 36px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #2563eb; }
+      .metricGreen { font: 800 36px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #059669; }
+      .chipLabel { font: 800 18px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #2563eb; }
+      .chipValue { font: 800 46px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #172033; }
+      .chipTail { font: 500 17px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #617089; }
+      .bullet { fill: #2563eb; }
 </svg>

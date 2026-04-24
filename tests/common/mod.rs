@@ -4,19 +4,44 @@ pub mod helpers;
 
 /// Get path to a fixture file
 pub fn fixture_path(lang: &str, file: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("fixtures")
-        .join(format!("{}_project", lang))
-        .join(file)
+    let mut path = fixture_dir(lang);
+    if !file.is_empty() {
+        path = path.join(file);
+    }
+    canonicalize_if_exists(path)
 }
 
 /// Get path to a fixture directory
 pub fn fixture_dir(lang: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let fixtures_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
-        .join("fixtures")
-        .join(format!("{}_project", lang))
+        .join("fixtures");
+
+    let mut candidates = vec![lang.to_string()];
+    if !lang.ends_with("_project") {
+        candidates.push(format!("{}_project", lang));
+    }
+
+    for candidate in candidates {
+        let path = fixtures_root.join(candidate);
+        if path.exists() {
+            return canonicalize_if_exists(path);
+        }
+    }
+
+    panic!(
+        "Fixture directory not found for '{}'. Looked under {}",
+        lang,
+        fixtures_root.display()
+    );
+}
+
+fn canonicalize_if_exists(path: PathBuf) -> PathBuf {
+    if path.exists() {
+        path.canonicalize().unwrap_or(path)
+    } else {
+        path
+    }
 }
 
 /// Helper to extract text from CallToolResult

@@ -10,10 +10,13 @@ pub mod format_references;
 pub mod minimal_edit_context;
 pub mod path_utils;
 pub mod query_pattern;
+pub mod relevant_tests;
+pub mod review_context;
 pub mod shape;
 pub mod symbol_at_line;
 pub mod type_map;
 pub mod usage_counter;
+pub mod verify_edit;
 pub mod view_code;
 
 #[cfg(test)]

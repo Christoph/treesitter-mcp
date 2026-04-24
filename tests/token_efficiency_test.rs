@@ -7,6 +7,7 @@ mod common;
 
 use serde_json::json;
 use std::fs;
+use std::path::{Path, PathBuf};
 use tempfile::tempdir;
 
 // ============================================================================
@@ -621,4 +622,311 @@ fn assert_tiktoken_budget(text: &str, max_tokens: usize, context: &str) {
 fn tiktoken_count(text: &str) -> usize {
     let bpe = tiktoken_rs::cl100k_base().unwrap();
     bpe.encode_with_special_tokens(text).len()
+}
+
+#[derive(Debug, Clone)]
+struct AggregateBenchmark {
+    name: &'static str,
+    default_tool: &'static str,
+    mcp_tool: &'static str,
+    sample_count: usize,
+    raw_tokens: usize,
+    mcp_tokens: usize,
+}
+
+impl AggregateBenchmark {
+    fn saved_tokens(&self) -> usize {
+        self.raw_tokens.saturating_sub(self.mcp_tokens)
+    }
+
+    fn saved_pct(&self) -> f64 {
+        if self.raw_tokens == 0 {
+            0.0
+        } else {
+            100.0 * self.saved_tokens() as f64 / self.raw_tokens as f64
+        }
+    }
+
+    fn smaller_factor(&self) -> f64 {
+        if self.mcp_tokens == 0 {
+            0.0
+        } else {
+            self.raw_tokens as f64 / self.mcp_tokens as f64
+        }
+    }
+}
+
+#[test]
+fn test_average_token_efficiency_for_core_workflows() {
+    let benchmarks = average_token_benchmarks();
+
+    let overview = benchmarks
+        .iter()
+        .find(|bench| bench.name == "Overview average")
+        .unwrap();
+    assert!(
+        overview.saved_pct() >= 45.0,
+        "overview average should save at least 45%, got {:.1}%",
+        overview.saved_pct()
+    );
+
+    let focused = benchmarks
+        .iter()
+        .find(|bench| bench.name == "Focused edit average")
+        .unwrap();
+    assert!(
+        focused.saved_pct() >= 70.0,
+        "focused edit average should save at least 70%, got {:.1}%",
+        focused.saved_pct()
+    );
+
+    let call_graph = benchmarks
+        .iter()
+        .find(|bench| bench.name == "Call graph average")
+        .unwrap();
+    assert!(
+        call_graph.saved_pct() >= 90.0,
+        "call graph average should save at least 90%, got {:.1}%",
+        call_graph.saved_pct()
+    );
+
+    let find_usages = benchmarks
+        .iter()
+        .find(|bench| bench.name == "Repo search average")
+        .unwrap();
+    assert!(
+        find_usages.saved_pct() >= 95.0,
+        "repo search average should save at least 95%, got {:.1}%",
+        find_usages.saved_pct()
+    );
+
+    let code_map = benchmarks
+        .iter()
+        .find(|bench| bench.name == "Directory map average")
+        .unwrap();
+    assert!(
+        code_map.saved_pct() >= 90.0,
+        "directory map average should save at least 90%, got {:.1}%",
+        code_map.saved_pct()
+    );
+}
+
+#[test]
+#[ignore = "manual benchmark reporter for README/image refresh"]
+fn report_average_token_benchmarks() {
+    for bench in average_token_benchmarks() {
+        println!(
+            "{}|{}|{}|{}|{}|{}|{:.1}%|{:.1}x",
+            bench.name,
+            bench.sample_count,
+            bench.default_tool,
+            bench.mcp_tool,
+            bench.raw_tokens,
+            bench.mcp_tokens,
+            bench.saved_pct(),
+            bench.smaller_factor()
+        );
+    }
+}
+
+fn average_token_benchmarks() -> Vec<AggregateBenchmark> {
+    vec![
+        overview_average_benchmark(),
+        focused_edit_average_benchmark(),
+        call_graph_average_benchmark(),
+        repo_search_average_benchmark(),
+        directory_map_average_benchmark(),
+    ]
+}
+
+fn overview_average_benchmark() -> AggregateBenchmark {
+    let scenarios = vec![
+        fixture_file("rust_project", "src/calculator.rs"),
+        fixture_file("typescript_project", "calculator.ts"),
+        fixture_file("python_project", "calculator.py"),
+        fixture_file("javascript_project", "calculator.js"),
+    ];
+
+    let raw_tokens = average_tokens(scenarios.iter().map(|path| raw_file_tokens(path)));
+    let mcp_tokens = average_tokens(scenarios.iter().map(|path| {
+        let result = treesitter_mcp::analysis::view_code::execute(&json!({
+            "file_path": path.to_str().unwrap(),
+            "detail": "signatures",
+            "include_deps": false
+        }))
+        .unwrap();
+        tiktoken_count(&common::get_result_text(&result))
+    }));
+
+    AggregateBenchmark {
+        name: "Overview average",
+        default_tool: "cat <4 source files>",
+        mcp_tool: "view_code(detail=\"signatures\")",
+        sample_count: scenarios.len(),
+        raw_tokens,
+        mcp_tokens,
+    }
+}
+
+fn focused_edit_average_benchmark() -> AggregateBenchmark {
+    let scenarios = vec![
+        (
+            fixture_file("rust_project", "src/calculator.rs"),
+            "perform_sequence",
+        ),
+        (
+            fixture_file("typescript_project", "calculator.ts"),
+            "applyOperation",
+        ),
+        (
+            fixture_file("python_project", "calculator.py"),
+            "apply_operation",
+        ),
+        (
+            fixture_file("javascript_project", "calculator.js"),
+            "applyOperation",
+        ),
+    ];
+
+    let raw_tokens = average_tokens(scenarios.iter().map(|(path, _)| raw_file_tokens(path)));
+    let mcp_tokens = average_tokens(scenarios.iter().map(|(path, symbol)| {
+        let result = treesitter_mcp::analysis::minimal_edit_context::execute(&json!({
+            "file_path": path.to_str().unwrap(),
+            "symbol_name": symbol,
+            "max_tokens": 4000
+        }))
+        .unwrap();
+        tiktoken_count(&common::get_result_text(&result))
+    }));
+
+    AggregateBenchmark {
+        name: "Focused edit average",
+        default_tool: "cat <4 source files>",
+        mcp_tool: "minimal_edit_context(symbol_name=...)",
+        sample_count: scenarios.len(),
+        raw_tokens,
+        mcp_tokens,
+    }
+}
+
+fn call_graph_average_benchmark() -> AggregateBenchmark {
+    let root = workspace_root();
+    let scenarios = vec![
+        (root.join("src/analysis/view_code.rs"), "execute"),
+        (root.join("src/analysis/minimal_edit_context.rs"), "execute"),
+        (root.join("src/analysis/call_graph.rs"), "execute"),
+        (root.join("src/analysis/code_map.rs"), "execute"),
+    ];
+
+    let raw_tokens = average_tokens(scenarios.iter().map(|(path, _)| raw_file_tokens(path)));
+    let mcp_tokens = average_tokens(scenarios.iter().map(|(path, symbol)| {
+        let result = treesitter_mcp::analysis::call_graph::execute(&json!({
+            "file_path": path.to_str().unwrap(),
+            "symbol_name": symbol,
+            "direction": "both",
+            "depth": 1,
+            "max_tokens": 4000
+        }))
+        .unwrap();
+        tiktoken_count(&common::get_result_text(&result))
+    }));
+
+    AggregateBenchmark {
+        name: "Call graph average",
+        default_tool: "cat <4 analysis files>",
+        mcp_tool: "call_graph(symbol_name=...)",
+        sample_count: scenarios.len(),
+        raw_tokens,
+        mcp_tokens,
+    }
+}
+
+fn repo_search_average_benchmark() -> AggregateBenchmark {
+    let scope = workspace_root().join("src/analysis");
+    let scenarios = ["parse_code", "execute", "detect_language"];
+    let raw_scope_tokens = raw_directory_tokens(&scope);
+    let raw_tokens = average_tokens(scenarios.iter().map(|_| raw_scope_tokens));
+    let mcp_tokens = average_tokens(scenarios.iter().map(|symbol| {
+        let result = treesitter_mcp::analysis::find_usages::execute(&json!({
+            "symbol": symbol,
+            "path": scope.to_str().unwrap(),
+            "context_lines": 1,
+            "max_context_lines": 60,
+            "max_tokens": 4000
+        }))
+        .unwrap();
+        tiktoken_count(&common::get_result_text(&result))
+    }));
+
+    AggregateBenchmark {
+        name: "Repo search average",
+        default_tool: "cat src/analysis/*.rs",
+        mcp_tool: "find_usages(symbol=...)",
+        sample_count: scenarios.len(),
+        raw_tokens,
+        mcp_tokens,
+    }
+}
+
+fn directory_map_average_benchmark() -> AggregateBenchmark {
+    let root = workspace_root();
+    let scenarios = vec![
+        root.join("src"),
+        root.join("src/analysis"),
+        root.join("tests/fixtures/complex_rust_service/src"),
+    ];
+
+    let raw_tokens = average_tokens(scenarios.iter().map(|path| raw_directory_tokens(path)));
+    let mcp_tokens = average_tokens(scenarios.iter().map(|path| {
+        let result = treesitter_mcp::analysis::code_map::execute(&json!({
+            "path": path.to_str().unwrap(),
+            "detail": "minimal",
+            "max_tokens": 4000
+        }))
+        .unwrap();
+        tiktoken_count(&common::get_result_text(&result))
+    }));
+
+    AggregateBenchmark {
+        name: "Directory map average",
+        default_tool: "find <3 source trees> -exec cat",
+        mcp_tool: "code_map(detail=\"minimal\")",
+        sample_count: scenarios.len(),
+        raw_tokens,
+        mcp_tokens,
+    }
+}
+
+fn average_tokens<I>(values: I) -> usize
+where
+    I: IntoIterator<Item = usize>,
+{
+    let values = values.into_iter().collect::<Vec<_>>();
+    values.iter().sum::<usize>() / values.len().max(1)
+}
+
+fn workspace_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+}
+
+fn fixture_file(project: &str, file: &str) -> PathBuf {
+    workspace_root()
+        .join("tests/fixtures")
+        .join(project)
+        .join(file)
+}
+
+fn raw_file_tokens(path: &Path) -> usize {
+    tiktoken_count(&fs::read_to_string(path).unwrap())
+}
+
+fn raw_directory_tokens(path: &Path) -> usize {
+    let files = treesitter_mcp::common::project_files::collect_project_files(path).unwrap();
+    let combined = files
+        .into_iter()
+        .filter(|file| treesitter_mcp::parser::detect_language(file).is_ok())
+        .map(|file| fs::read_to_string(file).unwrap())
+        .collect::<Vec<_>>()
+        .join("\n");
+    tiktoken_count(&combined)
 }
