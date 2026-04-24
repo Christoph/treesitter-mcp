@@ -119,10 +119,11 @@ Tree-sitter MCP Server exposes powerful code analysis tools through the MCP prot
 
 ## Installation
 
-### Prerequisites
+### Distribution
 
-- Rust toolchain (1.70 or later)
-- Cargo (comes with Rust)
+- macOS: install via Homebrew
+- Linux: use a release binary, or self-build if you prefer
+- Windows: use a release binary
 
 ### Homebrew (macOS)
 
@@ -138,7 +139,16 @@ To install the unreleased `main` branch instead of the pinned release, use:
 brew install --HEAD --formula https://raw.githubusercontent.com/Christoph/treesitter-mcp/main/Formula/treesitter-mcp.rb
 ```
 
-### Build from Source
+### Release Binaries (Linux and Windows)
+
+Prebuilt release binaries are available on the [GitHub Releases](https://github.com/Christoph/treesitter-mcp/releases/latest) page.
+
+- Linux: download the release archive for your target, extract it, and point your MCP client at the `treesitter-mcp` binary
+- Windows: download the Windows release archive, extract it, and point your MCP client at `treesitter-mcp.exe`
+
+### Linux Self-Build
+
+If you prefer to build locally on Linux, install the Rust toolchain first and then build from source:
 
 1. Clone the repository:
    ```bash
@@ -153,16 +163,27 @@ brew install --HEAD --formula https://raw.githubusercontent.com/Christoph/treesi
 
    The compiled binary will be located at `target/release/treesitter-mcp`.
 
+### Other Source Builds
+
+If you are not using Homebrew or a release binary, the same `cargo build --release` flow also works on other supported platforms with a working Rust toolchain.
+
 ## Configuration
 
-### Claude Desktop
+### Claude Code CLI
 
-To configure the server for Claude Desktop, edit your configuration file:
+Add the server to the current project:
 
-- **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
-- **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
+```bash
+claude mcp add --scope project treesitter-mcp -- /ABSOLUTE/PATH/TO/treesitter-mcp
+```
 
-Add the `treesitter-mcp` entry to `mcpServers`:
+You can verify that Claude Code sees it with:
+
+```bash
+claude mcp list
+```
+
+Or add it directly in a project-level `.mcp.json`:
 
 ```json
 {
@@ -175,7 +196,32 @@ Add the `treesitter-mcp` entry to `mcpServers`:
 }
 ```
 
-*Note: Replace `/ABSOLUTE/PATH/TO/` with the full absolute path to your cloned repository.*
+Once connected, ask Claude Code to use it explicitly, for example:
+
+```text
+Use treesitter-mcp to map the src directory, then inspect the service layer before proposing changes.
+```
+
+### Codex
+
+Add the server to `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.treesitter-mcp]
+command = "/ABSOLUTE/PATH/TO/treesitter-mcp"
+```
+
+Then restart Codex and confirm it is available:
+
+```bash
+codex mcp list
+```
+
+Once configured, prompt Codex to use the MCP directly, for example:
+
+```text
+Use treesitter-mcp to find all usages of UserService, then show the smallest edit context for update_user.
+```
 
 ### Other MCP Clients
 
