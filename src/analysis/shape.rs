@@ -563,35 +563,33 @@ fn extract_js_enhanced(
                         }
                     }
                 }
-                "func" => {
+                "func" if node.kind() == "function_declaration" => {
                     // TypeScript: capture the whole function_declaration node
-                    if node.kind() == "function_declaration" {
-                        let node_id = node.id();
-                        if !processed_func_nodes.contains(&node_id) {
-                            processed_func_nodes.insert(node_id);
-                            // Find the function name
-                            if let Some(name_node) = node.child_by_field_name("name") {
-                                if let Ok(name) = name_node.utf8_text(source.as_bytes()) {
-                                    let line = node.start_position().row + 1;
-                                    let end_line = node.end_position().row + 1;
-                                    let signature = extract_signature(node, source)?;
-                                    let doc = extract_doc_comment(node, source, language)?;
-                                    let code = if include_code {
-                                        extract_code(node, source)?
-                                    } else {
-                                        None
-                                    };
+                    let node_id = node.id();
+                    if !processed_func_nodes.contains(&node_id) {
+                        processed_func_nodes.insert(node_id);
+                        // Find the function name
+                        if let Some(name_node) = node.child_by_field_name("name") {
+                            if let Ok(name) = name_node.utf8_text(source.as_bytes()) {
+                                let line = node.start_position().row + 1;
+                                let end_line = node.end_position().row + 1;
+                                let signature = extract_signature(node, source)?;
+                                let doc = extract_doc_comment(node, source, language)?;
+                                let code = if include_code {
+                                    extract_code(node, source)?
+                                } else {
+                                    None
+                                };
 
-                                    functions.push(EnhancedFunctionInfo {
-                                        name: name.to_string(),
-                                        signature,
-                                        line,
-                                        end_line,
-                                        doc,
-                                        code,
-                                        annotations: vec![],
-                                    });
-                                }
+                                functions.push(EnhancedFunctionInfo {
+                                    name: name.to_string(),
+                                    signature,
+                                    line,
+                                    end_line,
+                                    doc,
+                                    code,
+                                    annotations: vec![],
+                                });
                             }
                         }
                     }
@@ -636,43 +634,41 @@ fn extract_js_enhanced(
                         }
                     }
                 }
-                "class" => {
+                "class" if node.kind() == "class_declaration" => {
                     // TypeScript: capture the whole class_declaration node
-                    if node.kind() == "class_declaration" {
-                        let node_id = node.id();
-                        if !processed_class_nodes.contains(&node_id) {
-                            processed_class_nodes.insert(node_id);
-                            if let Some(name_node) = node.child_by_field_name("name") {
-                                if let Ok(name) = name_node.utf8_text(source.as_bytes()) {
-                                    let line = node.start_position().row + 1;
-                                    let end_line = node.end_position().row + 1;
-                                    let doc = extract_doc_comment(node, source, language)?;
-                                    let code = if include_code {
-                                        extract_code(node, source)?
-                                    } else {
-                                        None
-                                    };
+                    let node_id = node.id();
+                    if !processed_class_nodes.contains(&node_id) {
+                        processed_class_nodes.insert(node_id);
+                        if let Some(name_node) = node.child_by_field_name("name") {
+                            if let Ok(name) = name_node.utf8_text(source.as_bytes()) {
+                                let line = node.start_position().row + 1;
+                                let end_line = node.end_position().row + 1;
+                                let doc = extract_doc_comment(node, source, language)?;
+                                let code = if include_code {
+                                    extract_code(node, source)?
+                                } else {
+                                    None
+                                };
 
-                                    // Extract methods from class body
-                                    let methods = extract_class_methods(
-                                        node,
-                                        source,
-                                        language,
-                                        include_code,
-                                    )?;
+                                // Extract methods from class body
+                                let methods = extract_class_methods(
+                                    node,
+                                    source,
+                                    language,
+                                    include_code,
+                                )?;
 
-                                    classes.push(EnhancedClassInfo {
-                                        name: name.to_string(),
-                                        line,
-                                        end_line,
-                                        doc,
-                                        code,
-                                        methods,
-                                        implements: vec![],
-                                        properties: vec![],
-                                        fields: vec![],
-                                    });
-                                }
+                                classes.push(EnhancedClassInfo {
+                                    name: name.to_string(),
+                                    line,
+                                    end_line,
+                                    doc,
+                                    code,
+                                    methods,
+                                    implements: vec![],
+                                    properties: vec![],
+                                    fields: vec![],
+                                });
                             }
                         }
                     }
@@ -986,49 +982,11 @@ fn extract_csharp_enhanced(
                         }
                     }
                 }
-                "class" => {
-                    if node.kind() == "class_declaration" {
-                        let node_id = node.id();
-                        if !processed_class_nodes.contains(&node_id) {
-                            processed_class_nodes.insert(node_id);
+                "class" if node.kind() == "class_declaration" => {
+                    let node_id = node.id();
+                    if !processed_class_nodes.contains(&node_id) {
+                        processed_class_nodes.insert(node_id);
 
-                            if let Some(name_node) = node.child_by_field_name("name") {
-                                if let Ok(name) = name_node.utf8_text(source.as_bytes()) {
-                                    let line = node.start_position().row + 1;
-                                    let end_line = node.end_position().row + 1;
-                                    let doc = extract_doc_comment(node, source, Language::CSharp)?;
-                                    let code = if include_code {
-                                        extract_code(node, source)?
-                                    } else {
-                                        None
-                                    };
-
-                                    // Extract implements interfaces from base_list
-                                    let implements =
-                                        extract_csharp_implemented_interfaces(node, source);
-
-                                    // Extract methods from class
-                                    let methods =
-                                        extract_csharp_class_methods(node, source, include_code)?;
-
-                                    classes.push(EnhancedClassInfo {
-                                        name: name.to_string(),
-                                        line,
-                                        end_line,
-                                        doc,
-                                        code,
-                                        methods,
-                                        implements,
-                                        properties: vec![],
-                                        fields: vec![],
-                                    });
-                                }
-                            }
-                        }
-                    }
-                }
-                "interface" => {
-                    if node.kind() == "interface_declaration" {
                         if let Some(name_node) = node.child_by_field_name("name") {
                             if let Ok(name) = name_node.utf8_text(source.as_bytes()) {
                                 let line = node.start_position().row + 1;
@@ -1040,20 +998,54 @@ fn extract_csharp_enhanced(
                                     None
                                 };
 
-                                // Extract methods from interface
-                                let methods =
-                                    extract_csharp_interface_methods(node, source, include_code)?;
+                                // Extract implements interfaces from base_list
+                                let implements =
+                                    extract_csharp_implemented_interfaces(node, source);
 
-                                interfaces.push(InterfaceInfo {
+                                // Extract methods from class
+                                let methods =
+                                    extract_csharp_class_methods(node, source, include_code)?;
+
+                                classes.push(EnhancedClassInfo {
                                     name: name.to_string(),
                                     line,
                                     end_line,
                                     doc,
                                     code,
                                     methods,
+                                    implements,
                                     properties: vec![],
+                                    fields: vec![],
                                 });
                             }
+                        }
+                    }
+                }
+                "interface" if node.kind() == "interface_declaration" => {
+                    if let Some(name_node) = node.child_by_field_name("name") {
+                        if let Ok(name) = name_node.utf8_text(source.as_bytes()) {
+                            let line = node.start_position().row + 1;
+                            let end_line = node.end_position().row + 1;
+                            let doc = extract_doc_comment(node, source, Language::CSharp)?;
+                            let code = if include_code {
+                                extract_code(node, source)?
+                            } else {
+                                None
+                            };
+
+                            // Extract methods from interface
+                            let methods =
+                                extract_csharp_interface_methods(node, source, include_code)?;
+
+                            interfaces.push(InterfaceInfo {
+                                name: name.to_string(),
+                                line,
+                                end_line,
+                                doc,
+                                code,
+                                methods,
+                                properties: vec![],
+                            });
                         }
                     }
                 }
@@ -1287,49 +1279,11 @@ fn extract_java_enhanced(
                         }
                     }
                 }
-                "class" => {
-                    if node.kind() == "class_declaration" {
-                        let node_id = node.id();
-                        if !processed_class_nodes.contains(&node_id) {
-                            processed_class_nodes.insert(node_id);
+                "class" if node.kind() == "class_declaration" => {
+                    let node_id = node.id();
+                    if !processed_class_nodes.contains(&node_id) {
+                        processed_class_nodes.insert(node_id);
 
-                            if let Some(name_node) = node.child_by_field_name("name") {
-                                if let Ok(name) = name_node.utf8_text(source.as_bytes()) {
-                                    let line = node.start_position().row + 1;
-                                    let end_line = node.end_position().row + 1;
-                                    let doc = extract_doc_comment(node, source, Language::Java)?;
-                                    let code = if include_code {
-                                        extract_code(node, source)?
-                                    } else {
-                                        None
-                                    };
-
-                                    // Extract implements interfaces
-                                    let implements =
-                                        extract_java_implemented_interfaces(node, source);
-
-                                    // Extract methods from class
-                                    let methods =
-                                        extract_java_class_methods(node, source, include_code)?;
-
-                                    classes.push(EnhancedClassInfo {
-                                        name: name.to_string(),
-                                        line,
-                                        end_line,
-                                        doc,
-                                        code,
-                                        methods,
-                                        implements,
-                                        properties: vec![],
-                                        fields: vec![],
-                                    });
-                                }
-                            }
-                        }
-                    }
-                }
-                "interface" => {
-                    if node.kind() == "interface_declaration" {
                         if let Some(name_node) = node.child_by_field_name("name") {
                             if let Ok(name) = name_node.utf8_text(source.as_bytes()) {
                                 let line = node.start_position().row + 1;
@@ -1341,20 +1295,54 @@ fn extract_java_enhanced(
                                     None
                                 };
 
-                                // Extract methods from interface
-                                let methods =
-                                    extract_java_interface_methods(node, source, include_code)?;
+                                // Extract implements interfaces
+                                let implements =
+                                    extract_java_implemented_interfaces(node, source);
 
-                                interfaces.push(InterfaceInfo {
+                                // Extract methods from class
+                                let methods =
+                                    extract_java_class_methods(node, source, include_code)?;
+
+                                classes.push(EnhancedClassInfo {
                                     name: name.to_string(),
                                     line,
                                     end_line,
                                     doc,
                                     code,
                                     methods,
+                                    implements,
                                     properties: vec![],
+                                    fields: vec![],
                                 });
                             }
+                        }
+                    }
+                }
+                "interface" if node.kind() == "interface_declaration" => {
+                    if let Some(name_node) = node.child_by_field_name("name") {
+                        if let Ok(name) = name_node.utf8_text(source.as_bytes()) {
+                            let line = node.start_position().row + 1;
+                            let end_line = node.end_position().row + 1;
+                            let doc = extract_doc_comment(node, source, Language::Java)?;
+                            let code = if include_code {
+                                extract_code(node, source)?
+                            } else {
+                                None
+                            };
+
+                            // Extract methods from interface
+                            let methods =
+                                extract_java_interface_methods(node, source, include_code)?;
+
+                            interfaces.push(InterfaceInfo {
+                                name: name.to_string(),
+                                line,
+                                end_line,
+                                doc,
+                                code,
+                                methods,
+                                properties: vec![],
+                            });
                         }
                     }
                 }

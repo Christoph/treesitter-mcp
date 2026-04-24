@@ -585,9 +585,12 @@ fn enforce_budget(out: &mut Map<String, Value>, max_tokens: usize) -> Result<(),
             &["types", "tyh"][..],
             &["deps", "dh"][..],
         ] {
-            let removed = keys
-                .iter()
-                .fold(false, |acc, key| out.remove(*key).is_some() || acc);
+            let mut removed = false;
+            for key in keys {
+                if out.remove(*key).is_some() {
+                    removed = true;
+                }
+            }
             if removed {
                 truncated = true;
                 removed_any = true;
